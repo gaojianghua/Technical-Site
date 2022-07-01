@@ -1,5 +1,4 @@
 # Vue2原理
-
 ## snabbdom
 
 著名的虚拟dom库, diff算法的鼻祖, vue源码借鉴了snabbdom

@@ -1,4 +1,5 @@
-# node环境
+# Node
+## node环境
 
 安装node的版本管理工具nvm:
 

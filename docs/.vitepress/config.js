@@ -1,11 +1,16 @@
 export default {
     lang: "zh-CN",
-    title: "Woffly",
-    description: "Woffly",
+    title: "Wolffy",
+    description: "Wolffy",
     lastUpdated: true,
+    head: [
+        ['link', { rel: 'icon', href: '/wolffy.ico' }],
+        ['meta', { property: 'og:type', content: 'website' }],
+        ['meta', { property: 'og:title', content: '高江华' }],
+    ],
     themeConfig: {
-        siteTitle: "Woffly",
-        logo: "/woffly.png",
+        siteTitle: "Wolffy",
+        logo: "/wolffy.png",
         sidebar: {
             "/guide/": sidebarGuide(),
         },
@@ -57,6 +62,8 @@ function sidebarGuide() {
                 { text: "JavaScript", link: "/guide/javascript" },
                 { text: "Vue", link: "/guide/vue" },
                 { text: "React", link: "/guide/react" },
+                { text: "Vite", link: "/guide/vite" },
+                { text: "WebPack", link: "/guide/webpack" },
             ],
         },
         {
@@ -112,6 +119,17 @@ function sidebarGuide() {
             items: [
                 { text: "Design Patterns", link: "/guide/design-patterns" },
                 { text: "JavaScript Extension", link: "/guide/javascript-extension" },
+                { text: "Web Security", link: "/guide/web-security" },
+                { text: "WebAssembly", link: "/guide/webAssembly" },
+                { text: "WebRTC", link: "/guide/webrtc" },
+            ],
+        },
+        {
+            text: "工具",
+            collapsible: true,
+            items: [
+                { text: "Nvm", link: "/guide/nvm" },
+                { text: "PM2", link: "/guide/pm2" },
             ],
         },
     ];

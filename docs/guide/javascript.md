@@ -1,4 +1,5 @@
-# 数据类型检测
+# JavaScript
+## 数据类型检测
 
 1. typeof
    - typeof null => "object"

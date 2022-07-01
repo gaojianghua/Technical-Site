@@ -1,6 +1,4 @@
 # JS扩展知识
-
-
 ~~~js
 //临时窗口的开启与关闭
 win = window.open('http://www.baidu.com', 'cwin', 'width=500, height=500, top=200, left=300', false)
