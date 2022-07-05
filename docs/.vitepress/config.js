@@ -1,6 +1,7 @@
 export default {
     lang: "zh-CN",
     title: "Wolffy",
+    base: "/docs/",
     description: "Wolffy",
     lastUpdated: true,
     head: [
@@ -43,13 +44,14 @@ export default {
         }
     },
 };
+
 function sidebarGuide() {
-    return [
+    const menus = [
         {
             text: "常识",
             collapsible: true,
             items: [
-                { text: "Process To Thread", link: "/guide/process-to-thread" },
+                { text: "Process To Thread", link: "/docs/guide/process-to-thread" },
                 { text: "URL To CRP", link: "/guide/url-to-crp" },
             ],
         },
@@ -130,7 +132,9 @@ function sidebarGuide() {
             items: [
                 { text: "Nvm", link: "/guide/nvm" },
                 { text: "PM2", link: "/guide/pm2" },
+                { text: "Git", link: "/guide/git" },
             ],
         },
-    ];
+    ]
+    return menus;
 }
