@@ -10,8 +10,14 @@ hero:
       text: 快速开始
       link: /guide/process-to-thread
     - theme: alt
-      text: 个人博客
-      link: http://gaojianghua.cn/blog
+      text: 博客社区
+      link: http://gaojianghua.cn/blog/
+    - theme: alt
+      text: Wolffy印记
+      link: http://gaojianghua.cn/wolffy/
+    - theme: alt
+      text: 服务官网
+      link: http://gaojianghua.cn/
 
 features:
   - icon: ⚡️
