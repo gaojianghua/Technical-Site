@@ -5,7 +5,7 @@ export default {
     description: "Wolffy",
     lastUpdated: true,
     head: [
-        ['link', { rel: 'icon', href: '/wolffy.ico' }],
+        ['link', { rel: 'icon', href: './wolffy.ico' }],
         ['meta', { property: 'og:type', content: 'website' }],
         ['meta', { property: 'og:title', content: '高江华' }],
     ],
