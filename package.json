@@ -10,6 +10,7 @@
   },
   "devDependencies": {
     "vitepress": "^1.0.0-alpha.4",
-    "vue": "^3.2.37"
+    "vue": "^3.2.37",
+    "vuepress-plugin-sitemap": "^2.3.1"
   }
 }

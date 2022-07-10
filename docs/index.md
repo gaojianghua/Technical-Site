@@ -1,6 +1,8 @@
 ---
 layout: home
 
+h1: wolffy
+
 hero:
   name: Mr. Gao's Document
   text: 一份受用一生的文档
@@ -11,14 +13,29 @@ hero:
       link: /guide/process-to-thread
     - theme: alt
       text: 博客社区
-      link: http://gaojianghua.cn/blog/
+      link: https://gaojianghua.cn/blog/
     - theme: alt
       text: Wolffy印记
-      link: http://gaojianghua.cn/wolffy/
+      link: https://gaojianghua.cn/wolffy/
     - theme: alt
       text: 服务官网
-      link: http://gaojianghua.cn/
-
+      link: https://gaojianghua.cn/
+head:
+  - - meta
+    - name: keywords
+      content: Vue, React, Taro, ReactNative, Webpack, Vite, UniApp, 小程序, H5, Docker, GitGoLang, Node, Nest, Mysql, Redis, 数据结构, 算法
+  - - meta
+    - name: robots
+      content: all
+  - - meta
+    - name: author
+      content: 高江华, g598670138@163.com
+  - - meta
+    - http-equiv: x-dns-prefetch-control
+      content: on
+  - - meta
+    - http-equiv: cache-control
+      content: no-cache
 features:
   - icon: ⚡️
     title: 持续迭代
