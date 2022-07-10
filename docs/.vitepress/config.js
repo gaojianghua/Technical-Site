@@ -44,23 +44,7 @@ export default {
             apiKey: 'a18e2f4cc5665f6602c5631fd868adfd',
             indexName: 'vitepress',
         },
-    },
-    plugins: [
-        [
-            '@vuepress/last-updated',
-            {
-                transformer: (timestamp, lang) => {
-                    return new Date(timestamp).toLocaleDateString();
-                },
-            },
-        ],
-        [
-            'sitemap',
-            {
-                hostname: 'https://gaojianghua.cn/docs/',
-            },
-        ],
-    ],
+    }
 };
 
 function sidebarGuide() {
@@ -69,7 +53,7 @@ function sidebarGuide() {
             text: '常识',
             collapsible: true,
             items: [
-                { text: 'Process To Thread', link: '/docs/guide/process-to-thread' },
+                { text: 'Process To Thread', link: '/guide/process-to-thread' },
                 { text: 'URL To CRP', link: '/guide/url-to-crp' },
             ],
         },
