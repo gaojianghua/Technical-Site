@@ -7,13 +7,13 @@ export default {
     lastUpdated: true,
     ignoreDeadLinks: true,
     head: [
-        ['link', { rel: 'icon', href: './wolffy.ico' }],
+        ['link', { rel: 'icon', href: 'https://gaojianghua.oss-cn-hangzhou.aliyuncs.com/home/wolffy.ico' }],
         ['meta', { property: 'og:type', content: 'website' }],
         ['meta', { property: 'og:title', content: '高江华' }],
     ],
     themeConfig: {
         siteTitle: 'Wolffy',
-        logo: '/wolffy.png',
+        logo: 'https://gaojianghua.oss-cn-hangzhou.aliyuncs.com/home/wolffy.png',
         sidebar: {
             '/guide/': sidebarGuide(),
         },
@@ -64,10 +64,12 @@ function sidebarGuide() {
                 { text: 'HTML', link: '/guide/html' },
                 { text: 'CSS', link: '/guide/css' },
                 { text: 'JavaScript', link: '/guide/javascript' },
+                { text: 'TypeScript', link: '/guide/typescript' },
                 { text: 'Vue', link: '/guide/vue' },
                 { text: 'React', link: '/guide/react' },
                 { text: 'Vite', link: '/guide/vite' },
                 { text: 'WebPack', link: '/guide/webpack' },
+                { text: 'Test', link: '/guide/test' },
             ],
         },
         {
