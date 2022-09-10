@@ -1,7 +1,7 @@
 export default {
     lang: 'zh-CN',
     title: 'Wolffy',
-    base: '/docs/',
+    base: '/',
     description:
         '技术博客--前端后端运维知识点收录: Vue, React, Taro, ReactNative, Webpack, Vite, UniApp, 小程序, H5, Docker, GitGoLang, Node, Nest, Mysql, Redis, 数据结构, 算法',
     lastUpdated: true,
