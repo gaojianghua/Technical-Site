@@ -60,8 +60,8 @@
 
      - 本地缓存: cookie / localStorage / sessionStorage
        - cookie: 存储内容很少, 上限4KB, cookie信息会默认在客户端和服务端传来传去 [内容信息多会影响前后端通信的速度], 不稳定 [基于安全卫士等可以将其清楚掉], 用户可以禁用cookie
-       - localStorage : 存储内容上限5KB, 持久存储, 稳定, 和服务器端无关
-       - sessionStorage: 存储内容上限5KB, 页面关闭则消失, 稳定, 和服务器端无关
+       - localStorage : 存储内容上限5MB, 持久存储, 稳定, 和服务器端无关
+       - sessionStorage: 存储内容上限5MB, 页面关闭则消失, 稳定, 和服务器端无关
 
 
 
