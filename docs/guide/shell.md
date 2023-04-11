@@ -1142,3 +1142,20 @@
   #环境变量PS3是使用select命令时，系统输入菜单的提示符
   #环境变量PS4默认为+。它是使用 Bash 的-x参数执行脚本时，每一行命令在执行前都会先打印出来，并且在行首出现的那个提示符
   ~~~
+## CURL命令
+- 获取网页源码
+  ~~~shell
+  curl <网页地址>
+  #常用参数如下：
+  -o <filename> #缓存网页源码到指定文件
+  -i #显示网页头部信息(headers), 包括网页代码
+  -I #只显示头部信息
+  -v #显示http通信的整个过程
+  -X (GET | POST | PUT | DELETE) #默认 HTTP 动词为 GET，使用参数 -X 可以支持其他的动词类型
+  -H "Content-Type:application/json"  #添加头部信息
+  --user name:password  #http需要认证的时候使用
+  -d  #携带参数：key/value，适用POST PUT DELETE
+  -G  #携带的参数将放在url后面
+  -k  #允许连接到没有证书(H)的SSL站点
+  -#  #将传输进度显示为进度条
+  ~~~
