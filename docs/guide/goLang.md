@@ -23,7 +23,7 @@
 
 7. 使用https://goproxy.io国内代理安装go插件,执行下方命令
 
-   ~~~js
+   ~~~go
    go env -w GO111MODULE=on
    go env -w GOPROXY=https://goproxy.cn,direct
    ~~~
@@ -234,6 +234,11 @@ fmt.Printf("%v", &num)//num的内存地址
 fmt.Printf("%v", ptr)//num的内存地址
 fmt.Printf("%v", &ptr)//ptr的内存地址
 fmt.Printf("%v", *ptr)//取出存储的num地址里的值,也就是10
+
+指针初始化：// &i为指针地址，i为值地址，*I为具体值
+var i *int; 
+i = new(int); 
+*i = 1
 ~~~
 
 

@@ -568,6 +568,23 @@
     echo 输入不符合要求
   fi
   #if主判断条件, elif次判断条件, fi结束符, then满足判断条件的主体内容
+  #示例
+  # 上一条命令是否不等于0
+  if [ $? -ne 0 ]; then
+      echo "failed"
+    else
+      echo "succeed"
+  fi
+  # 上一条命令状态是否等于0
+  if [ $? -eq 0 ]; then
+      echo "succeed"
+    else
+      echo "failed"
+  fi
+  # 建议的代码风格: 如果命令未执行成,就打印执行失败
+  if ! make mytarget; then
+    echo "Build failed"
+  fi
   ~~~
 - case判断
   ~~~shell
