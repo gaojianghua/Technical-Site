@@ -34,10 +34,10 @@
   3. 将 public 目录拷贝到 wolffy/standalone 目录中, 将 .next/static 目录拷贝到 wolffy/standalone/.next 目录中
   4. 打开 nginx 配置文件: nginx.conf 将如下配置添加进去
     # 定义根目录变量
-	set $root /home/wolffy/standalone;
+	set $root html/wolffy/standalone;
 	root $root;
-	access_log /home/wolffy/access.log;
-	error_log /home/wolffy/error.log;
+	access_log html/wolffy/access.log;
+	error_log html/wolffy/error.log;
 	# 匹配前端路由url，将请求转发至SSR服务器
 	location / {
 		proxy_pass http://localhost:5000;
