@@ -1,14 +1,13 @@
 # UniApp
+## 模板
+[uniapp模板](https://github.com/gaojianghua/uniapp-tmp "uniapp模板")
 ## 优缺点
-
 - 优
   - 一套代码，多端运行
   - 插件市场，生态强大
   - 成本较低，效率较高
 - 缺
   - 性能较差，兼容较差
-
-
 
 ## nvue
 
@@ -47,10 +46,10 @@ weex渲染引擎:
 
 6. 默认布局为: 
 
-   ```css
+   ~~~css
    display: flex;
    flex-direction: column;
-   ```
+   ~~~
 
 7. 存放文字必须使用标签: 
     ~~~html
@@ -68,9 +67,9 @@ weex渲染引擎:
 
 4. 默认盒子属性并且不可修改: 
 
-   ```css
+   ~~~css
    box-sizing: border-box;
-   ```
+   ~~~
 
 5. 不支持背景图片, 需使用定位实现
 

@@ -13,13 +13,13 @@ hero:
       link: /guide/process-to-thread
     - theme: alt
       text: 博客社区
-      link: https://gaojianghua.cn/blog/
+      link: https://blog.gaojianghua.cn
     - theme: alt
       text: Wolffy印记
-      link: https://gaojianghua.cn/wolffy/
+      link: https://wolffy.gaojianghua.cn
     - theme: alt
       text: 服务官网
-      link: https://gaojianghua.cn/
+      link: https://gaojianghua.cn
 head:
   - - meta
     - name: keywords

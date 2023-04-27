@@ -45,3 +45,8 @@
 - `-o --output `：标准输出日志文件的路径。
 - `-e --error `：错误输出日志文件的路径。
 - `--interpreter `：the interpreter pm2 should use for executing app (bash, python...)。比如你用的coffee script来编写应用。
+
+- 指定端口启动项目
+  ~~~shell
+  PORT=8000 pm2 start server.js --name wolffy
+  ~~~
