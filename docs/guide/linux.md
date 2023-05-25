@@ -1,4 +1,18 @@
 # Linux
+
+## CentOS 7.0及以上常用命令
+- 防火墙
+  ~~~shell
+  firewall-cmd --zone=public --add-port=8080/tcp --permanent # 开放8080端口
+  firewall-cmd --zone=public --remove-port=8080/tcp --permanent #关闭8080端口
+  firewall-cmd --reload # 重启防火墙立即生效
+  firewall-cmd --zone=public --list-ports # 查看所有开发的端口
+  firewall-cmd --state # 查看防火墙状态
+  systemctl stop firewalld.service # 关闭防火墙
+  systemctl start firewalld.service # 开启防火墙
+  netstat -lnpt |grep 3306 # 查看端口占用 (centos7默认没有 netstat 命令，需要安装 net-tools 工具，yum install -y net-tools)
+  ~~~
+
 ## Linux命令
 ~~~shell
 ln -s 文件路径  软连接路径 				类似快捷方式	
