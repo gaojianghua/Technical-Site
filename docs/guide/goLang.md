@@ -1333,5 +1333,5 @@ message Trip {			//以下分别为第几字段
 执行命令
 
 ~~~
-protoc --go_out=. *.proto
+protoc --go_out=. --go-grpc_out=. user.proto
 ~~~
