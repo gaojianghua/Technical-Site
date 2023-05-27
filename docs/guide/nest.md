@@ -510,3 +510,362 @@ Nest (NestJS) 是一个用于构建高效、可扩展的 Node.js 服务器端应
 - Middleware 是 Express 的概念，在最外层，到了某个路由之后，会先调用 Guard，Guard 用于判断路由有没有权限访问，然后会调用 Interceptor，对 Contoller 前后扩展一些逻辑，在到达目标 Controller 之前，还会调用 Pipe 来对参数做检验和转换。所有的 HttpException 的异常都会被 ExceptionFilter 处理，返回不同的响应。
 
 ## 内置装饰器
+- @Module: Nest提供了一套模块系统，用于声明模块。
+- @Controller: 声明模块中的controller
+- @Injectable: 声明模块中的provider
+- @Inject: 指定注入provider的token
+- @Optional: 声明可选，没有对应的provider也可正常创建对象
+- @Catch: 指定处理的异常
+- @UseFilters: 注册异常过滤器
+- @UseGuards: 注册路由守卫
+- @UseInterceptors: 注册拦截器
+- @UsePipes: 注册管道
+- @Query: 取 url 后面的参数，如：(?id=1&name=gaojianghua)
+- @Param: 取路径中的参数，如：(/gaojianghua/:id)中的id
+- @Body: 取 body 中的参数
+- @Headers: 取请求头信息
+- @Ip: 取消 IP 
+- @HostParam: 取域名部分的参数
+- @Req | @Request: 注入 request 对象，可以取请求中的任何参数
+- @Res | @Response: 注入 response 对象，Nest不会把返回值做为响应内容，需手动通过 res.end() 响应或者设置 response 的配置属性 passthrough 为true告诉Nest通过返回值来响应。
+- @Session: 拿到 session 对象，使用时需安装(npm install express-session)
+- @Get: 指定接口请求方式为 GET
+- @Post: 指定接口请求方式为 POST
+- @Put: 指定接口请求方式为 PUT
+- @Delete: 指定接口请求方式为 DELETE
+- @Patch: 指定接口请求方式为 PATCH
+- @Options: 指定接口请求方式为 OPTIONS
+- @Head: 指定接口请求方式为 HEAD
+- @SetMetadata: 指定 metadata 元数据
+- @Next: 请求转发，Nest 不会处理注入 @Next 的 handler 的返回值。
+- @HttpCode: 指定返回响应的状态码
+- @Header: 修改响应头信息
+- @Redirect: 指定重定向的 URL
+- @Render: 指定html渲染模板
+  ~~~js
+  // 安装模板引擎：npm install --save hbs
+  import { NestFactory } from '@nestjs/core';
+  import { AppModule } from './app.module';
+  import { NestExpressApplication } from '@nestjs/platform-express';
+  import { join } from 'path';
+  
+  async function bootstrap() {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  
+  app.useStaticAssets(join(__dirname, '..', 'public')); // 静态资源路径
+  app.setBaseViewsDir(join(__dirname, '..', 'views'));  // 模板文件路径
+  app.setViewEngine('hbs'); // 指定模板引擎
+  
+  await app.listen(3000);
+  }
+  bootstrap();
+  // 写好模板文件内容后，指定模板和数据
+  @Get('user')
+  @Render('user')  // user 模板文件名
+  user() {
+    retuen {name: 'gaojianghua', age: 28}
+  }
+  ~~~
+## 装饰器扩展
+- 自定义装饰器
+  ~~~js
+  // 自定义单独在home中使用的SetMetadata装饰器
+  import { SetMetadata } from '@nestjs/common'
+  export const HomeSetMetadata = (...args: string[]) => SetMetadata('home', args)
+  // 使用
+  @Get()
+  @HomeSetMetadata('gaojianghua')
+  @UseGuards(HomeGuard)
+  home() {
+    return
+  }
+  // 在Guard中取出metadata
+  import { CanActivate, ExecutionContext, Inject, Injectable } from '@nestjs/common';
+  import { Reflector } from '@nestjs/core';
+  import { Observable } from 'rxjs';
+  
+  @Injectable()
+  export class HomeGuard implements CanActivate {
+    @Inject(Reflector)
+    private reflector: Reflector;
+  
+    canActivate(context: ExecutionContext): boolean | Promise<boolean> | Observable<boolean> {
+      console.log(this.reflector.get('aaa', context.getHandler()));
+      return true;
+    }
+  }
+  ~~~
+- 合并装饰器
+  ~~~js
+  import { applyDecorators, Get, UseGuards } from '@nestjs/common';
+  import { Home } from './home.decorator';
+  import { HomeGuard } from './home.guard';
+  
+  export function HomeMerge(path, role) {
+  return applyDecorators(
+    Get(path),
+    Home(role),
+    UseGuards(HomeGuard)
+    )
+  }
+  // @HomeMerge('home', 'gaojianghua') 等同于 @Get() @HomeSetMetadata('gaojianghua') @UseGuards(HomeGuard)
+  // 使用
+  @HomeMerge('home', 'gaojianghua')
+  home() {
+    return
+  }
+  ~~~
+- 自定义参数装饰器
+  ~~~js
+  // data 是传入的参数，而 ExecutionContext 可以取出 request、response 对象
+  import { createParamDecorator, ExecutionContext } from '@nestjs/common'
+  export const HomeData = createParamDecorator((data: string, ctx: ExecutionContext) => {
+    return data
+  })
+  // 通过 ctx 我们还能自己实现一些内置获取参数的装饰器，如：@Headers
+  import { createParamDecorator, ExecutionContext } from '@nestjs/common';
+  import { Request } from 'express';
+  
+  export const MyHeaders = createParamDecorator(
+    (key: string, ctx: ExecutionContext) => {
+      const request: Request = ctx.switchToHttp().getRequest();
+      return key ? request.headers[key] : request.headers;
+    }
+  );
+  ~~~
+  
+## ExecutionContext: 切换不同上下文
+  ~~~js
+  // ArgumentHost 是用于切换 http、ws、rpc 等上下文类型的，可以根据上下文类型取到对应的 argument。
+  import { ArgumentsHost, Catch, ExceptionFilter } from '@nestjs/common';
+  import { Response } from 'express';
+  import { HomeException } from './HomeException';
+  
+  @Catch(HomeException)
+  export class HomeAFilter implements ExceptionFilter {
+    catch(exception: HomeException, host: ArgumentsHost) {
+      if(host.getType() === 'http') {
+        const ctx = host.switchToHttp();
+        const response = ctx.getResponse<Response>();
+        const request = ctx.getRequest<Request>();
+  
+        response
+                .status(500)
+                .json({
+                  aaa: exception.aaa,
+                  bbb: exception.bbb
+                });
+      } else if(host.getType() === 'ws') {
+  
+      } else if(host.getType() === 'rpc') {
+  
+      }
+    }
+  }
+  // Guard 和 Interceptor 中的用法
+  // ExecutionContext 是 ArgumentHost 的子类，扩展了 getClass、getHandler 方法。
+  // Guard、Interceptor 的逻辑可能要根据目标 class、handler 有没有某些装饰而决定怎么处理。
+  import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
+  import { Reflector } from '@nestjs/core';
+  import { Observable } from 'rxjs';
+  import { Role } from './role';
+  
+  @Injectable()
+  export class AaaGuard implements CanActivate {
+    constructor(private reflector: Reflector) {}
+  
+  canActivate(context: ExecutionContext): boolean | Promise<boolean> | Observable<boolean> {
+    const requiredRoles = this.reflector.get<Role[]>('roles', context.getHandler());
+  
+    if (!requiredRoles) {
+      return true;
+    }
+  
+    const { user } = context.switchToHttp().getRequest();
+      return requiredRoles.some((role) => user && user.roles?.includes(role));
+    }
+  }
+  ~~~
+## Nest 核心实现原理
+- 通过装饰器给 class 或者对象添加 metadata，并且开启 ts 的 emitDecoratorMetadata 来自动添加类型相关的 metadata，然后运行的时候通过这些元数据来实现依赖的扫描，对象的创建等等功能。
+- Nest 的装饰器都是依赖 Reflect 的 metadata 的 API 实现的，而且还提供了一个 @SetMetadata 的装饰器让我们可以给 class、method 添加一些 metadata。
+- 通过 reflector 上的 api 可以拿到 metadata
+  ~~~js
+  // reflector 上有四个方法
+  get()     //获取 metadata 数据
+  getAll()  // 返回一个 metadata 的数组。
+  getAllAndMerge()  // 会把 metadata 合并为一个对象或者数组。
+  getAllAndOverride()   // 会返回第一个非空的 metadata。
+  ~~~
+## 循环依赖
+- Module的循环依赖
+  ~~~js
+  // A 模块
+  @Module({
+    imports: [BbbModule]
+  })
+  export class AaaModule {}
+  // B 模块
+  @Module({
+    imports: [AaaModule]
+  })
+  export class BbbModule {}
+  // 上面的示例执行后会报错 undefined
+  // 因为 Nest 创建 Module 的时候会递归创建它的依赖，而它的依赖又依赖了这个 Module，所以没法创建成功，拿到的就是 undefined。
+  // 使用 forwardRef 关联两个模块
+  // A 模块
+  @Module({
+    imports: [forwardRef(() => BbbModule)]
+  })
+  export class AaaModule {}
+  // B 模块
+  @Module({
+    imports: [forwardRef(() => AaaModule)]
+  })
+  export class BbbModule {}
+  ~~~
+- Provider的循环依赖
+  ~~~js
+  // A 服务
+  @Injectable()
+  export class AaaService {
+    constructor(private bbbService: BbbService) {}
+  }
+  // B 服务
+  @Injectable()
+  export class BbbService {
+    constructor(private aaaService: AaaService) {}
+  }
+  // 上面的示例执行后会报错 无法解析
+  // 不能使用默认的注入方式，需要通过 @Inject 手动指定注入的 token 并使用 forwardRef 的方式注入。
+  // A 服务
+  @Injectable()
+  export class AaaService {
+    constructor(@Inject(forwardRef(() => BbbService)) private bbbService: BbbService) {}
+  }
+  // B 服务
+  @Injectable()
+  export class BbbService {
+    constructor(@Inject(forwardRef(() => AaaService)) private aaaService: AaaService) {}
+  }
+  ~~~
+## 创建动态模块
+- 自定义静态方法生成
+  ~~~js
+  // 给 BbbModule 加一个 register 的静态方法，返回模块定义的对象
+  import { DynamicModule, Module } from '@nestjs/common';
+  import { BbbService } from './bbb.service';
+  import { BbbController } from './bbb.controller';
+  
+  @Module({})
+  export class BbbModule {
+  
+    static register(options: Record<string, any>): DynamicModule {
+      return {
+        module: BbbModule,
+        providers: [
+          {
+            provide: 'CONFIG_OPTIONS',
+            useValue: options,
+          },
+          BbbService,
+        ],
+        exports: []
+      };
+    }
+  }
+  // import 的时候通过 register 方法传入参数，返回值就是模块定义。
+  // Nest 约定了 3 种方法名:
+  // register：用一次模块传一次配置，比如这次调用是 BbbModule.register({aaa:1})，下一次就是 BbbModule.register({aaa:2}) 了
+  // forRoot：配置一次模块用多次，比如 XxxModule.forRoot({}) 一次，之后就一直用这个 Module，一般在 AppModule 里 import
+  // forFeature：用了 forRoot 固定了整体模块，用于局部的时候，可能需要再传一些配置，比如用 forRoot 指定了数据库链接信息，再用 forFeature 指定某个模块访问哪个数据库和表。
+  @Module({
+    imports: [BbbModule.register({name: 'gaojianghua', age: 28})],
+    controllers: [AppController],
+    providers: [AppService]
+  })
+  export class AppModule {}
+  // 在 Controller 中使用
+  @Controller('bbb')
+  export class BbbController {
+    constructor(
+      private readonly bbbService: BbbService,
+      @Inject('CONFIG_OPTIONS') private configOptions: Record<string, any>
+    ) {}
+    
+    @Get()
+    getHello() {
+      console.log(this.configOptions)  
+    }   
+  }
+  ~~~
+- 通过 builder 来生成
+  ~~~js
+  // 用 ConfigurableModuleBuilder 生成一个 class，这个 class 里就带了 register、registerAsync 方法。
+  // 返回的 ConfigurableModuleClass、MODULE_OPTIONS_TOKEN 分别是生成的 class 、options 对象的 token。
+  import { ConfigurableModuleBuilder } from "@nestjs/common";
+  export interface CccModuleOptions {
+    aaa: number;
+    bbb: string;
+  }
+  export const { ConfigurableModuleClass, MODULE_OPTIONS_TOKEN } =
+    new ConfigurableModuleBuilder<CccModuleOptions>().build() 
+  // setClassMethodName() 设置静态方法名称
+  // ConfigurableModuleBuilder<CccModuleOptions>().setClassMethodName('forRoot').build() 
+  // 然后让Module 继承它
+  @Module({
+    controllers: [CccController] 
+  })
+  export class CccModule extends ConfigurableModuleClass {}
+  // 这样这个 CccModule 就已经有了 register 和 registerAsync 方法。
+  // 注入
+  @Controller('ccc')
+  export class CccController {
+  
+      @Inject(MODULE_OPTIONS_TOKEN)
+      private options: CccModuleOptions;
+  
+      @Get('')
+      hello() {
+          return this.options;
+      }
+  }
+  // 用 registerAsync 方法，用 useFactory 动态创建 options 对象
+  @Module({
+    imports: [CccModule.registerAsync({
+      useFactory: async () => {
+        let name = await 'gaojianghua'
+        return {
+          name,
+          age: 28
+        }
+      }
+    })],
+    controllers: [AppController],
+    providers: [AppService]
+  })
+  export class AppModule {}
+  // 根据传入的参数决定是否设置为全局模块
+  // setExtras 第一个参数是给 options 扩展啥 extras 属性，第二个参数是收到 extras 属性之后如何修改模块定义。
+  // 我们定义了 isGlobal 的 option，收到它之后给模块定义加上个 global。
+  export const { ConfigurableModuleClass, MODULE_OPTIONS_TOKEN, OPTIONS_TYPE, ASYNC_OPTIONS_TYPE } =
+  new ConfigurableModuleBuilder<CccModuleOptions>().setClassMethodName('register').setExtras({
+    isGlobal: true
+  }, (definition, extras) => ({
+    ...definition,
+    global: extras.isGlobal,
+  })).build();
+  // 注入
+  @Controller('ccc')
+  export class CccController {
+  
+      @Inject(MODULE_OPTIONS_TOKEN)
+      private options: typeof OPTIONS_TYPE;
+  
+      @Get('')
+      hello() {
+          return this.options.isGlobal;
+      }
+  }
+  ~~~
+## Nest 与 Express、Fastify
