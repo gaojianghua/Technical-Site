@@ -450,6 +450,16 @@ Nest (NestJS) 是一个用于构建高效、可扩展的 Node.js 服务器端应
   // 全局启用
   const app = await NestFactory.create(AppModule)
   app.useGlobalPipes(new ValidationPipe())
+  // 自定义Pipe
+  import { ArgumentMetadata, Injectable, PipeTransform } from '@nestjs/common'
+  
+  @Injectable()
+  export class AaaPipe implements PipeTransform {
+    transform(value: any, metadata: ArgumentMetadata) {
+      console.log(value, metadata)  // 打印的 value 就是 query、param 的值，而 metadata 里包含 type、metatype、data
+      return 'gaojianghua'  // 返回值就是传给 handler 的参数值
+    }
+  }
   ~~~
 - ExceptionFilter(异常过滤器): 对抛出的异常做处理，返回对应的响应
   ~~~js
@@ -869,3 +879,313 @@ Nest (NestJS) 是一个用于构建高效、可扩展的 Node.js 服务器端应
   }
   ~~~
 ## Nest 与 Express、Fastify
+- Nest 内部并没有直接依赖任何一个 http 处理的库，只是依赖了抽象的接口，想用什么库则需要实现这些接口的适配器
+- Nest 内部分别提供了 express 和 fastify 的适配器实现
+- 可以用 express，也可以灵活的切换成 fastify，对 Nest 没有任何影响
+- 适配器分别在 @nestjs/platform-express 和 @nestjs/platform-fastify 中
+- 默认使用的是 platform-express 的包
+- 下面切换到 fastify
+  ~~~js
+  // 安装包：npm install fastify @nestjs/platform-fastify
+  async function boostrap() {
+    const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter())
+    await app.listen(3000)
+  }
+  boostrap()
+  ~~~
+## Rxjs
+- Rxjs 是一个处理异步逻辑的库，它的特点就是 operator 多，你可以通过组合 operator 来完成逻辑。
+- Nest 的 interceptor 集成了 rxjs 来处理响应，常用 operator 如下:
+- tap: 不修改响应数据，执行一些额外逻辑，比如记录日志、更新缓存等
+  ~~~js
+  import { AppService } from './app.service';
+  import { CallHandler, ExecutionContext, Injectable, Logger, NestInterceptor } from '@nestjs/common';
+  import { Observable, tap } from 'rxjs';
+  
+  @Injectable()
+  export class TapTestInterceptor implements NestInterceptor {
+  constructor(private appService: AppService) {}
+  private readonly logger = new Logger(TapTestInterceptor.name);
+  
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+  return next.handle().pipe(tap((data) => {
+  
+        // 这里是更新缓存的操作，这里模拟下
+        this.appService.getHello();
+  
+        this.logger.log(`log something`, data);
+      }))
+    }
+  }
+  ~~~
+- map：对响应数据做修改，一般都是改成 {code, data, message} 的格式
+  ~~~js
+  import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
+  import { map, Observable } from 'rxjs';
+  
+  @Injectable()
+  export class MapTestInterceptor implements NestInterceptor {
+    intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+      return next.handle().pipe(map(data => {
+        return {
+          code: 200,
+          message: 'success',
+          data
+        }
+      }))
+    }
+  }
+  ~~~
+- catchError：在 exception filter 之前处理抛出的异常，可以记录或者抛出别的异常
+  ~~~js
+  import { CallHandler, ExecutionContext, Injectable, Logger, NestInterceptor } from '@nestjs/common';
+  import { catchError, Observable, throwError } from 'rxjs';
+  
+  @Injectable()
+  export class CatchErrorTestInterceptor implements NestInterceptor {
+    private readonly logger = new Logger(CatchErrorTestInterceptor.name)
+  
+    intercept (context: ExecutionContext, next: CallHandler): Observable<any> {
+      return next.handle().pipe(catchError(err => {
+        this.logger.error(err.message, err.stack)
+        return throwError(() => err)
+      }))
+    }
+  }
+  ~~~
+- timeout：处理响应超时的情况，抛出一个 TimeoutError，配合 catchError 可以返回超时的响应
+  ~~~js
+  // timeout 操作符会在 3s 没收到消息的时候抛一个 TimeoutError。
+  // 然后用 catchError 操作符处理下，如果是 TimeoutError，就返回 RequestTimeoutException，这个有内置的 exception filter 会处理成对应的响应格式。
+  import { CallHandler, ExecutionContext, Injectable, NestInterceptor, RequestTimeoutException } from '@nestjs/common';
+  import { catchError, Observable, throwError, timeout, TimeoutError } from 'rxjs';
+  
+  @Injectable()
+  export class TimeoutInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+      return next.handle().pipe(
+        timeout(3000),
+        catchError(err => {
+          if(err instanceof TimeoutError) {
+            console.log(err);
+            return throwError(() => new RequestTimeoutException());
+          }
+          return throwError(() => err);
+        })
+      )
+    }
+  }
+  ~~~
+- 全局可注意依赖的拦截器
+  ~~~js
+  // 很多情况下我们是需要全局 interceptor 的，而且还用到一些 provider
+  // nest 提供了一个 token，用这个 token 在 AppModule 里声明的 interceptor，Nest 会把它作为全局 interceptor
+  // 全局 interceptor 可以通过 APP_INTERCEPTOR 的 token 声明，这种能注入依赖，比 app.useGlobalInterceptors 更好。
+  import { Module } from '@nestjs/common'
+  import { APP_INTERCEPTOR } from '@nestjs/core'
+  import { AaaInterceptor } from './aaa.interceptor'
+  import { AppController } from './app.controller'
+  import { AppService } from './app.service'
+  
+  @Module({
+    imports:[],
+    contrillers: [AppController],
+    providers: [
+      AppService,
+      {
+        provide: APP_INTERCEPTOR,
+        useClass: AaaInterceptor
+      }
+    ] 
+  })
+  export class AppModule {}
+  ~~~
+## ValidationPipe 验证 POST 参数
+- 安装依赖包
+  ~~~shell
+  npm install -D class-validator class-transformer
+  ~~~
+- 示例:
+  ~~~js
+  // dto
+  import { IsInt } from 'class-validator'
+  export class Home{
+    name: string;
+    @IsInt()
+    age: number;
+    sex: boolean;
+    hobbies: Array<string>
+  }
+  // 使用
+  @Post('home')
+  home(@Body(new ValidationPipe()) obj: Home) {
+    console.log(obj)
+  }
+  ~~~
+- class-validator 包提供了基于装饰器声明的规则对对象做校验的功能
+- class-transformer 则是把一个普通对象转换为某个 class 的实例对象的
+- Pipe 也可以注入依赖，Nest 会自己去创建对象，所以不能使用 new ValidationPipe()，直接 ValidationPipe。
+- 全局 Pipe 可以通过 APP_PIPE 的 token 声明
+  ~~~js
+  import { Module, ValidationPipe } from '@nestjs/common'
+  import { APP_PIPE } from '@nestjs/core'
+  import { AppController } from './app.controller'
+  import { AppService } from './app.service'
+  
+  @Module({
+    imports:[],
+    contrillers: [AppController],
+    providers: [
+      AppService,
+      {
+        provide: APP_PIPE,
+        useClass: ValidationPipe
+      }
+    ] 
+  })
+  export class AppModule {}
+  ~~~
+- 常用的 class-validator 验证方式
+  ~~~js
+  import { Contains, IsDate, IsEmail, IsFQDN, IsInt, Length, Max, Min } from 'class-validator';
+
+  export class Ppp {
+    // message 自定义返回的错误信息
+    @Length(10, 20, {
+      message({targetName, property, value, constraints}) {
+        return `${targetName} 类的 ${property} 属性的值 ${value} 不满足约束: ${constraints}`
+      }
+    })
+    title: string;
+  
+    @Contains('hello')
+    text: string;
+  
+    @IsInt()
+    @Min(0)
+    @Max(10)
+    rating: number;
+  
+    @IsEmail()
+    email: string;
+  
+    @IsFQDN()
+    site: string;
+  }
+  ~~~
+## 日志打印
+- 创建个 logger 对象，使用它的 api 打印日志
+  ~~~js
+  import { ConsoleLogger, Controller, Get, Logger } from '@nestjs/common';
+  import { AppService } from './app.service';
+  
+  @Controller()
+  export class AppController {
+    private logger = new Logger();
+  
+    constructor(private readonly appService: AppService) {}
+  
+    @Get()
+    getHello(): string {
+      this.logger.debug('aaa', AppController.name);
+      this.logger.error('bbb', AppController.name);
+      this.logger.log('ccc', AppController.name);
+      this.logger.verbose('ddd', AppController.name);
+      this.logger.warn('eee', AppController.name);
+  
+      return this.appService.getHello();
+    }
+  }
+  // 打印后的日志里的 verbose、debug、log、warn、error 就是日志级别，而 [] 中的是 context，也就是当前所在的上下文，最后是日志的内容。
+  ~~~
+- 指定日志是否开启
+  ~~~js
+  async function bootstrap () {
+    const app = await NestFactory.create(AppModule, {
+      logger: false     // 默认为true: 开启日志；false: 不开启日志
+    })
+    await app.listen(3000)
+  }
+  bootstrap()
+  ~~~
+- 指定输出的日志级别
+  ~~~js
+  async function bootstrap () {
+    const app = await NestFactory.create(AppModule, {
+      logger: ['warn, error']
+    })
+    await app.listen(3000)
+  }
+  bootstrap()
+  ~~~
+- 自定义日志打印方式
+  ~~~js
+  // 自定义所有日志打印
+  import { LoggerService, LogLevel } from '@nestjs/common';
+  
+  export class MyLogger implements LoggerService {
+    log(message: string, context: string) {
+      console.log(`---log---[${context}]---`, message)
+    }
+  
+    error(message: string, context: string) {
+        console.log(`---error---[${context}]---`, message)
+    }
+  
+    warn(message: string, context: string) {
+        console.log(`---warn---[${context}]---`, message)
+    }
+  }
+  // 或重写某一种打印方式，其他的则保留为nest自己的
+  import { ConsoleLogger } from '@nestjs/common';
+  
+  export class MyLogger extends ConsoleLogger{
+    log(message: string, context: string) {
+      console.log(`[${context}]`,message)
+    }
+  }
+  // 启用自定义日志打印
+  async function bootstrap () {
+    const app = await NestFactory.create(AppModule, {
+      logger: new MyLogger()
+    })
+    await app.listen(3000)
+  }
+  bootstrap()
+  ~~~
+- 让 Logger 可以注入依赖
+  ~~~js
+  // bufferLogs 就是先不打印日志，把它放到 buffer 缓冲区，直到用 useLogger 指定了 Logger 并且应用初始化完毕。
+  // app.get 就是从容器中取这个类的实例的
+  async function bootstrap () {
+    const app = await NestFactory.create(AppModule, {
+      bufferLogs: true
+    })
+    app.useLogger(app.get(MyLogger))
+    await app.listen(3000)
+  }
+  bootstrap()
+  // 写一个 Logger 类注入到容器中
+  import { Inject } from '@nestjs/common';
+  import { ConsoleLogger, Injectable } from '@nestjs/common';
+  import { AppService } from './app.service';
+  
+  @Injectable()
+  export class MyLogger extends ConsoleLogger{
+    @Inject(AppService)
+    private appService: AppService;
+  
+    log(message, context) {
+      console.log(this.appService.getHello());
+      console.log(`[${context}]`, message);
+      console.log('--------------')
+    }
+  }
+  // 在 provider 中声明
+  @Module({
+    imports: [],
+    controllers: [AppContriller],
+    providers: [AppService, MyLogger]
+  })
+  export class AppModule {}
+  ~~~
