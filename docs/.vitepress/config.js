@@ -70,6 +70,7 @@ function sidebarGuide() {
                 { text: 'Vite', link: '/guide/vite' },
                 { text: 'WebPack', link: '/guide/webpack' },
                 { text: 'Test', link: '/guide/test' },
+                { text: 'RxJS', link: '/guide/rxjs' },
             ],
         },
         {

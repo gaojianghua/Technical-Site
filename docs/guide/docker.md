@@ -284,3 +284,129 @@ docker cp nginx:/etc/nginx /docker/nginx/config/
 docker cp nginx:/usr/share/nginx/html /docker/nginx/data/
 docker cp nginx:/var/log/nginx 
 ~~~
+
+## DockerFile
+- 只要在 dockerfile 里声明要做哪些事情，docker build 的时候就会根据这个 dockerfile 来自动化构建出一个镜像来。
+  ~~~dockerfile
+  # dockerfile 示例如下:
+  FROM node:latest
+  # FROM：基于一个基础镜像来修改
+  WORKDIR /app
+  # WORKDIR：指定当前工作目录
+  COPY . .
+  # COPY：把容器外的内容复制到容器内
+  RUN npm install -g http-server
+  # RUN：在容器内执行命令
+  EXPOSE 8080
+  # EXPOSE：声明当前容器要访问的网络端口，比如这里起服务会用到 8080
+  CMD ["http-server", "-p", "8080"]
+  # CMD：容器启动的时候执行的命令
+  # 解析:
+  # 通过 FROM 继承了 node 基础镜像，里面就有 npm、node 这些命令了。
+  # 通过 WORKDIR 指定当前目录。
+  # 然后通过 COPY 把 Dockerfile 同级目录下的内容复制到容器内，这里的 . 也就是 /app 目录
+  # 之后通过 RUN 执行 npm install，全局安装 http-server
+  # 通过 EXPOSE 指定要暴露的端口
+  # CMD 指定容器跑起来之后执行的命令，这里就是执行 http-server 把服务跑起来。
+  # 把这个文件保存为 Dockerfile，然后在同级添加一个 index.html
+  # 然后通过 docker build 就可以根据这个 dockerfile 来生成镜像
+  ~~~
+- 生成镜像
+  ~~~shell
+  # aaa 是镜像名，ccc 是镜像的标签
+  docker build -t aaa:ccc .   # -f <filename> 指定文件名
+  ~~~
+- 方便修改文件可设置挂载点
+  ~~~dockerfile
+  # dockerfile 中添加内容：
+  VOLUME /app
+  ~~~
+- VOLUME 指令看起来没啥用，但能保证你容器内某个目录下的数据一定会被持久化，能保证没挂载数据卷的时候，数据不丢失。
+- .dockerignore 的写法
+  ~~~dockerignore
+  *.md
+  # *.md 就是忽略所有 md 结尾的文件
+  !README.md
+  # !README.md 就是其中不包括 README.md
+  node_modules/
+  # node_modules/ 就是忽略 node_modules 下 的所有文件
+  [a-c].txt
+  # [a-c].txt 是忽略 a.txt、b.txt、c.txt 这三个文件
+  .git/
+  .DS_Store
+  # .DS_Store 是 mac 的用于指定目录的图标、背景、字体大小的配置文件，这个一般都要忽略
+  .vscode/
+  .dockerignore
+  .eslintignore
+  .eslintrc
+  .prettierrc
+  .prettierignore
+  # eslint、prettier 的配置文件在构建镜像的时候也用不到
+  ~~~
+- 使用 DockerFile 部署 Nest 项目
+  ~~~dockerignore
+  *.md
+  node_modules/
+  .git/
+  .DS_Store
+  .vscode/
+  .dockerignore
+  ~~~
+  ~~~dockerfile
+  FROM node:18
+  # 基于 node 18 的镜像
+  WORKDIR /app
+  # 指定当前目录为容器内的 /app
+  COPY package.json .
+  # 把 package.json 复制过去
+  RUN npm install
+  # 执行 npm install 进行依赖包下载
+  COPY . .
+  # 把其余文件复制过去
+  RUN npm run build
+  # 执行 npm run build 进行打包
+  EXPOSE 3000
+  # 指定暴露的运行端口
+  CMD [ "node", "./dist/main.js" ]
+  # 容器跑起来以后执行 node ./dist/main.js 命令
+  ~~~
+  ~~~shell
+  # 执行 docker 构建镜像
+  docker build -t nest:first .
+  ~~~
+- 镜像运行时只需要 dist 目录，其余无用则不需要了，为了减少镜像体积，下面采用多阶段构建的方式
+  ~~~dockerfile
+  # build stage
+  FROM node:18 as build-stage
+  # 基于 node 18 的镜像并指定当前镜像名称 build-stage
+  WORKDIR /app
+  # 指定当前目录为容器内的 /app
+  COPY package.json .
+  # 把 package.json 复制过去
+  RUN npm install
+  # 执行 npm install 进行依赖包下载
+  COPY . .
+  # 把其余文件复制过去
+  RUN npm run build
+  # 执行 npm run build 进行打包
+  
+  # production stage
+  FROM node:18 as production-stage
+  # 基于 node 18 的镜像并指定当前镜像名称 production-stage
+  COPY --from=build-stage /app/dist /app
+  # 从 build-stage 镜像内复制 /app/dist 的文件到当前镜像的 /app 下
+  COPY --from=build-stage /app/package.json /app/package.json
+  # 从 build-stage 镜像内复制 /app/package.json 的文件给当前镜像的 /app/package.json
+  WORKDIR /app
+  # 指定当前目录为容器内的 /app
+  RUN npm install --production
+  # 执行 npm install --production 只安装 dependencies 依赖
+  EXPOSE 3000
+  # 指定暴露的运行端口
+  CMD ["node", "/app/main.js"]
+  # 容器跑起来以后执行 node ./dist/main.js 命令
+  ~~~
+  ~~~shell
+  # 执行 docker 构建镜像
+  docker build -t nest:second .
+  ~~~

@@ -406,7 +406,7 @@ Nest (NestJS) 是一个用于构建高效、可扩展的 Node.js 服务器端应
       return next.handle().pipe(tap(()=> console.log(`after...${Date.now() - now}ms`)))
     }
   }
-  // Controller 之前之后的处理逻辑可能是异步的。Nest 里通过 rxjs 来组织它们，所以可以使用 rxjs 的各种 operator。
+  // Controller 之前之后的处理逻辑可能是异步的。Nest 里通过 rxjs.md 来组织它们，所以可以使用 rxjs.md 的各种 operator。
   // 单独启用
   @Controller('home')
   @UseInterceptors(new LoggerInterceptor())
@@ -592,7 +592,7 @@ Nest (NestJS) 是一个用于构建高效、可扩展的 Node.js 服务器端应
   // 在Guard中取出metadata
   import { CanActivate, ExecutionContext, Inject, Injectable } from '@nestjs/common';
   import { Reflector } from '@nestjs/core';
-  import { Observable } from 'rxjs';
+  import { Observable } from 'rxjs.md';
   
   @Injectable()
   export class HomeGuard implements CanActivate {
@@ -677,7 +677,7 @@ Nest (NestJS) 是一个用于构建高效、可扩展的 Node.js 服务器端应
   // Guard、Interceptor 的逻辑可能要根据目标 class、handler 有没有某些装饰而决定怎么处理。
   import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
   import { Reflector } from '@nestjs/core';
-  import { Observable } from 'rxjs';
+  import { Observable } from 'rxjs.md';
   import { Role } from './role';
   
   @Injectable()
@@ -900,7 +900,7 @@ Nest (NestJS) 是一个用于构建高效、可扩展的 Node.js 服务器端应
   ~~~js
   import { AppService } from './app.service';
   import { CallHandler, ExecutionContext, Injectable, Logger, NestInterceptor } from '@nestjs/common';
-  import { Observable, tap } from 'rxjs';
+  import { Observable, tap } from 'rxjs.md';
   
   @Injectable()
   export class TapTestInterceptor implements NestInterceptor {
@@ -921,7 +921,7 @@ Nest (NestJS) 是一个用于构建高效、可扩展的 Node.js 服务器端应
 - map：对响应数据做修改，一般都是改成 {code, data, message} 的格式
   ~~~js
   import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
-  import { map, Observable } from 'rxjs';
+  import { map, Observable } from 'rxjs.md';
   
   @Injectable()
   export class MapTestInterceptor implements NestInterceptor {
@@ -939,7 +939,7 @@ Nest (NestJS) 是一个用于构建高效、可扩展的 Node.js 服务器端应
 - catchError：在 exception filter 之前处理抛出的异常，可以记录或者抛出别的异常
   ~~~js
   import { CallHandler, ExecutionContext, Injectable, Logger, NestInterceptor } from '@nestjs/common';
-  import { catchError, Observable, throwError } from 'rxjs';
+  import { catchError, Observable, throwError } from 'rxjs.md';
   
   @Injectable()
   export class CatchErrorTestInterceptor implements NestInterceptor {
@@ -958,7 +958,7 @@ Nest (NestJS) 是一个用于构建高效、可扩展的 Node.js 服务器端应
   // timeout 操作符会在 3s 没收到消息的时候抛一个 TimeoutError。
   // 然后用 catchError 操作符处理下，如果是 TimeoutError，就返回 RequestTimeoutException，这个有内置的 exception filter 会处理成对应的响应格式。
   import { CallHandler, ExecutionContext, Injectable, NestInterceptor, RequestTimeoutException } from '@nestjs/common';
-  import { catchError, Observable, throwError, timeout, TimeoutError } from 'rxjs';
+  import { catchError, Observable, throwError, timeout, TimeoutError } from 'rxjs.md';
   
   @Injectable()
   export class TimeoutInterceptor implements NestInterceptor {
@@ -1188,4 +1188,154 @@ Nest (NestJS) 是一个用于构建高效、可扩展的 Node.js 服务器端应
     providers: [AppService, MyLogger]
   })
   export class AppModule {}
+  ~~~
+## 文件上传
+- 使用 multer 包实现文件上传
+- 安装 multer 类型包
+  ~~~shell
+  npm install -D @types/multer
+  ~~~
+- 代码实现
+  ~~~js
+  // 单文件上传
+  @Post('aaa')
+  @UseInterceptors(FileInterceptor('aaa', {
+    dest: 'uploads'
+  }))
+  uploadFile(@UploadedFile() file: Express.Multer.File, @Body() body) {
+    console.log('body', body);
+    console.log('file', file);
+  }
+  // 多文件上传
+  @Post('aaa')
+  @UseInterceptors(FilesInterceptor('aaa', 3, {
+    dest: 'uploads'
+  }))
+  uploadFile(@UploadedFiles() files: Array<Express.Multer.File>, @Body() body) {
+    console.log('body', body);
+    console.log('files', files);
+  }
+  // 多个文件的不同字段
+  @Post('ccc')
+  @UseInterceptors(FileFieldsInterceptor([
+      { name: 'aaa', maxCount: 2 },
+      { name: 'bbb', maxCount: 3 },
+    ], {
+      dest: 'uploads'
+  }))
+  uploadFileFields(@UploadedFiles() files: { aaa?: Express.Multer.File[], bbb?: Express.Multer.File[] }, @Body() body) {
+    console.log('body', body);
+    console.log('files', files);
+  }
+  // 并不确定有哪些字段是 file 
+  @Post('ddd')
+  @UseInterceptors(AnyFilesInterceptor({
+    dest: 'uploads'
+  }))
+  uploadAnyFiles(@UploadedFiles() files: Array<Express.Multer.File>, @Body() body) {
+    console.log('body', body);
+    console.log('files', files);
+  }
+  ~~~
+- 自定义文件存储方式
+  ~~~js
+  // multer.distkStorage 是磁盘存储，通过 destination、filename 的参数分别指定保存的目录和文件名。
+  import * as multer from "multer";
+  import * as fs from 'fs';
+  import * as path from "path";
+  
+  const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+      try {
+        fs.mkdirSync(path.join(process.cwd(), 'my-uploads'));
+      }catch(e) {}
+      cb(null, path.join(process.cwd(), 'my-uploads'))
+    },
+    filename: function (req, file, cb) {
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9) + '-' + file.originalname
+      cb(null, file.fieldname + '-' + uniqueSuffix)
+    }
+  });
+  export { storage };
+  // 使用
+  @Post('ddd')
+  @UseInterceptors(AnyFilesInterceptor({
+    storage: storage
+  }))
+  uploadAnyFiles(@UploadedFiles() files: Array<Express.Multer.File>, @Body() body) {
+    console.log('body', body);
+    console.log('files', files);
+  }
+  ~~~
+- 使用 Pipe 对上传的文件做限制
+  ~~~js
+  // 大于 10k 就抛出异常，返回 400 的响应
+  import { PipeTransform, Injectable, ArgumentMetadata, HttpException, HttpStatus } from '@nestjs/common';
+
+  @Injectable()
+  export class FileSizeValidationPipe implements PipeTransform {
+    transform(value: Express.Multer.File, metadata: ArgumentMetadata) {
+      if(value.size > 10 * 1024) {
+        throw new HttpException('文件大于 10k', HttpStatus.BAD_REQUEST);
+      }
+      return value;
+    }
+  }
+  // 使用
+  @Post('ddd')
+  @UseInterceptors(AnyFilesInterceptor({
+    dest: 'uploads'
+  }))
+  uploadAnyFiles(@UploadedFiles(FileSizeValidationPipe) files: Array<Express.Multer.File>, @Body() body) {
+    console.log('body', body);
+    console.log('files', files);
+  }
+  // 也可使用 Nest 内置的 ParseFilePipe
+  @Post('fff')
+  @UseInterceptors(FileInterceptor('aaa', {
+    dest: 'uploads'
+  }))
+  uploadFile3(@UploadedFile(new ParseFilePipe({
+    exceptionFactory: err => {
+      throw new HttpException('上传文件出错：' + err, 404)
+    },
+    validators: [
+      new MaxFileSizeValidator({ maxSize: 1000 }),
+      new FileTypeValidator({ fileType: 'image/jpeg' }),
+    ],
+  })) file: Express.Multer.File, @Body() body) {
+    console.log('body', body);
+    console.log('file', file);
+  }
+  // 自定义 FileValidator
+  import { FileValidator } from "@nestjs/common";
+
+  export class MyFileValidator extends FileValidator{
+    constructor(options) {
+      super(options);
+    }
+  
+    isValid(file: Express.Multer.File): boolean | Promise<boolean> {
+      if(file.size > 10000) {
+          return false;
+      }
+      return true;
+    }
+    buildErrorMessage(file: Express.Multer.File): string {
+      return `文件 ${file.originalname} 大小超出 10k`;
+    }
+  }
+  // 使用
+  @Post('fff')
+  @UseInterceptors(FileInterceptor('aaa', {
+    dest: 'uploads'
+  }))
+  uploadFile3(@UploadedFile(new ParseFilePipe({
+    validators: [
+      new MyFileValidator({})
+    ],
+  })) file: Express.Multer.File, @Body() body) {
+    console.log('body', body);
+    console.log('file', file);
+  }
   ~~~
