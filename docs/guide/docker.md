@@ -313,7 +313,7 @@ docker cp nginx:/var/log/nginx
   ~~~
 - 生成镜像
   ~~~shell
-  # aaa 是镜像名，ccc 是镜像的标签
+  # aaa 是镜像名，ccc 是镜像的标签，. 是构建上下文的目录也可以指定别的路径。
   docker build -t aaa:ccc .   # -f <filename> 指定文件名
   ~~~
 - 方便修改文件可设置挂载点
