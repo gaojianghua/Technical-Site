@@ -287,7 +287,7 @@ docker cp nginx:/var/log/nginx
 
 ## DockerFile
 - 只要在 dockerfile 里声明要做哪些事情，docker build 的时候就会根据这个 dockerfile 来自动化构建出一个镜像来。
-  ~~~dockerfile
+  ~~~shell
   # dockerfile 示例如下:
   FROM node:latest
   # FROM：基于一个基础镜像来修改
@@ -317,13 +317,13 @@ docker cp nginx:/var/log/nginx
   docker build -t aaa:ccc .   # -f <filename> 指定文件名
   ~~~
 - 方便修改文件可设置挂载点
-  ~~~dockerfile
+  ~~~shell
   # dockerfile 中添加内容：
   VOLUME /app
   ~~~
 - VOLUME 指令看起来没啥用，但能保证你容器内某个目录下的数据一定会被持久化，能保证没挂载数据卷的时候，数据不丢失。
 - .dockerignore 的写法
-  ~~~dockerignore
+  ~~~shell
   *.md
   # *.md 就是忽略所有 md 结尾的文件
   !README.md
@@ -344,7 +344,7 @@ docker cp nginx:/var/log/nginx
   # eslint、prettier 的配置文件在构建镜像的时候也用不到
   ~~~
 - 使用 DockerFile 部署 Nest 项目
-  ~~~dockerignore
+  ~~~shell
   *.md
   node_modules/
   .git/
@@ -352,7 +352,7 @@ docker cp nginx:/var/log/nginx
   .vscode/
   .dockerignore
   ~~~
-  ~~~dockerfile
+  ~~~shell
   FROM node:18
   # 基于 node 18 的镜像
   WORKDIR /app
@@ -375,7 +375,7 @@ docker cp nginx:/var/log/nginx
   docker build -t nest:first .
   ~~~
 - 镜像运行时只需要 dist 目录，其余无用则不需要了，为了减少镜像体积，下面采用多阶段构建的方式
-  ~~~dockerfile
+  ~~~shell
   # build stage
   FROM node:18 as build-stage
   # 基于 node 18 的镜像并指定当前镜像名称 build-stage
