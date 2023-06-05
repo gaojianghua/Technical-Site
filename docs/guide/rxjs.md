@@ -1376,7 +1376,191 @@
     * main 送出了 l，此時 some 上一次送出的值为 1，把这两个參数传入 callback 得到 L。
     * main 送出了 o，此時 some 上一次送出的值为 1，把这两个參数传入 callback 得到 O。
     > withLatestFrom 很常用在一些 checkbox 型的功能，例如说一个编辑器，我们开启粗体后，打出来的字就都要变粗体，粗体就像是 some observable，而我们打字就是 main observable。
+  - scan
+    <br>
+    scan 其實就是 Observable 版本的 reduce 只是命名不同。如果熟悉陣列操作的話，應該會知道原生的 JS Array 就有 reduce 的方法，使用方式如下
+    ~~~js
+    var arr = [1, 2, 3, 4];
+    var result = arr.reduce((origin, next) => {
+      console.log(origin)
+      return origin + next
+    }, 0);
+    console.log(result)
+    // 0
+    // 1
+    // 3
+    // 6
+    // 10
+    ~~~
+    reduce 方法需要傳兩個參數，第一個是 callback 第二個則是起始狀態，這個 callback 執行時，會傳入兩個參數一個是原本的狀態，第二個是修改原本狀態的參數，最後回傳一個新的狀態，再繼續執行。
+    <br>
+    这段代码的运行过程：
+    * 第一次執行 callback 起始狀態是 0 所以 origin 傳入 0，next 為 arr 的第一個元素 1，相加之後變成 1 回傳並當作下一次的狀態。
+    * 第二次執行 callback，這時原本的狀態(origin)就變成了 1，next 為 arr 的第二個元素 2，相加之後變成 3 回傳並當作下一次的狀態。
+    * 第三次執行 callback，這時原本的狀態(origin)就變成了 3，next 為 arr 的第三個元素 3，相加之後變成 6 回傳並當作下一次的狀態。
+    * 第三次執行 callback，這時原本的狀態(origin)就變成了 6，next 為 arr 的第四個元素 4，相加之後變成 10 回傳並當作下一次的狀態。
+    * 這時 arr 的元素都已經遍歷過了，所以不會直接把 10 回傳。
+    
+    <br>
+    scan 整體的運作方式都跟 reduce 一樣，範例如下
+    
+    ~~~js
+    var source = Rx.Observable.from('hello')
+             .zip(Rx.Observable.interval(600), (x, y) => x);
+    var example = source.scan((origin, next) => origin + next, '');
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    // h
+    // he
+    // hel
+    // hell
+    // hello
+    // complete
+    ~~~
+    ~~~shell
+    # Marble diagram 图示
+    source : ----h----e----l----l----o|
+            scan((origin, next) => origin + next, '')
+    example: ----h----(he)----(hel)----(hell)----(hello)|
+    ~~~
+    這裡可以看到第一次傳入 'h' 跟 '' 相加，返回 'h' 當作下一次的初始狀態，一直重複下去。
+    
+    > scan 跟 reduce 最大的差別就在 scan 一定會回傳一個 observable 實例，而 reduce 最後回傳的值有可能是任何資料型別，必須看使用者傳入的 callback 才能決定 reduce 最後的返回值。
+
+    scan 经常用在狀態的計算處理，最簡單的就是對一個數字的加減，我們可以綁定一個 button 的 click 事件，並用 map 把 click event 轉成 1，之後送處 scan 計算值再做顯示。下面是一个案例：
+    
+    ~~~js
+    const addButton = document.getElementById('addButton');
+    const minusButton = document.getElementById('minusButton');
+    const state = document.getElementById('state');
+    const addClick = Rx.Observable.fromEvent(addButton, 'click').mapTo(1);
+    const minusClick = Rx.Observable.fromEvent(minusButton, 'click').mapTo(-1);
+    const numberState = Rx.Observable.empty()
+      .startWith(0)
+      .merge(addClick, minusClick)
+      .scan((origin, next) => origin + next, 0)
+    
+    numberState
+      .subscribe({
+        next: (value) => { state.innerHTML = value;},
+        error: (err) => { console.log('Error: ' + err); },
+        complete: () => { console.log('complete'); }
+    });
+    ~~~
+    這裡我們用了兩個 button，一個是 add 按鈕，一個是 minus 按鈕。這兩個按鈕的點擊事件各建立了 addClcik, minusClick 兩個 observable，這兩個 observable 直接 mapTo(1) 跟 mapTo(-1)，代表被點擊後會各自送出的數字！
+    <br>
+    <br>
+    接著我們用了 empty() 建立一個空的 observable 代表畫面上數字的狀態，搭配 startWith(0) 來設定初始值，接著用 merge 把兩個 observable 合併透過 scan 處理之後的邏輯，最後在 subscribe 來更改畫面的顯示。
+    <br>
+    <br>
+  - buffer
+    <br>
+    buffer 是一整個家族，總共有五個相關的 operators
+
+    * buffer
+    * bufferCount
+    * bufferTime
+    * bufferToggle
+    * bufferWhen
+    
+    這裡比較常用到的是 buffer, bufferCount 跟 bufferTime 這三個，我們直接來看範例。
+    ~~~js
+    var source = Rx.Observable.interval(300);
+    var source2 = Rx.Observable.interval(1000);
+    var example = source.buffer(source2);
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    // [0,1,2]
+    // [3,4,5]
+    // [6,7,8]...
+    ~~~
+    ~~~shell
+    # Marble diagram 图示
+    source : --0--1--2--3--4--5--6--7..
+    source2: ---------0---------1--------...
+            buffer(source2)
+    example: ---------([0,1,2])---------([3,4,5])  
+    ~~~
+    buffer 要傳入一個 observable(source2)，它會把原本的 observable (source)送出的元素緩存在陣列中，等到傳入的 observable(source2) 送出元素時，就會觸發把緩存的元素送出。
+    <br>
+    <br>
+    這裡的範例 source2 是每一秒就會送出一個元素，我們可以改用 bufferTime 簡潔的表達，如下
+    ~~~js
+    var source = Rx.Observable.interval(300);
+    var example = source.bufferTime(1000);
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    // [0,1,2]
+    // [3,4,5]
+    // [6,7,8]...
+    ~~~
+    除了用時間來作緩存外，我們更常用數量來做緩存，範例如下
+    ~~~js
+    var source = Rx.Observable.interval(300);
+    var example = source.bufferCount(3);
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    // [0,1,2]
+    // [3,4,5]
+    // [6,7,8]...
+    ~~~    
+    在實務上，我們可以用 buffer 來做某個事件的過濾，例如像是滑鼠連點才能真的執行，這裡我們一樣寫了一個小範例
+    ~~~js
+    const button = document.getElementById('demo');
+    const click = Rx.Observable.fromEvent(button, 'click')
+    const example = click
+      .bufferTime(500)
+      .filter(arr => arr.length >= 2);
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    // [0,1,2]
+    // [3,4,5]
+    // [6,7,8]...
+    ~~~    
+    這裡我們只有在 500 毫秒內連點兩下，才能成功印出 'success'，這個功能在某些特殊的需求中非常的好用，也能用在批次處理來降低 request 傳送的次數！
+
   
+  - delay
+
+    delay 可以延遲 observable 一開始發送元素的時間點，範例如下
+    ~~~js
+    var source = Rx.Observable.interval(300).take(5);
+    var example = source.delay(500);
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    // 0
+    // 1
+    // 2
+    // 3
+    // 4
+    ~~~
+    ~~~shell
+    # Marble diagram 图示
+    source : --0--1--2--3--4|
+            delay(500)
+    example: -------0--1--2--3--4|
+    ~~~
+
+
+
 ## 案例-完整的拖拽功能
   - 需求分析
     > 首先我們會有一個影片在最上方，原本是位置是靜態(static)的，捲軸滾動到低於影片高度後，影片改為相對於視窗的絕對位置(fixed)，往回滾會再變回原本的狀態。當影片為 fixed 時，滑鼠移至影片上方(hover)會有遮罩(masker)與鼠標變化(cursor)，可以拖拉移動(drag)，且移動範圍不超過可視區間！
@@ -1410,3 +1594,129 @@
       ~~~js
       scroll.map(e => anchor.getBoundingClientRect().bottom < 0)
       ~~~
+      > 這裡我們用到了 getBoundingClientRect 這個瀏覽器原生的 API，他可以取得 DOM 物件的寬高以及上下左右離螢幕可視區間上(左)的距離，如下圖
+       
+      > 當我們可視範圍區間滾過 #anchor 底部時， anchor.getBoundingClientRect().bottom 就會變成負值，此時我們就改變 #video 的 class。
+      ~~~js
+      scroll.map(e => anchor.getBoundingClientRect().bottom < 0)
+        .subscribe(bool => {
+          if(bool) {
+            video.classList.add('video-fixed');
+          } else {
+            video.classList.remove('video-fixed');
+          }
+        })
+      ~~~
+      + 到這裡我們就已經完成滾動變更樣式的效果了！全部的 JS 程式碼，如下
+      ~~~js
+      const video = document.getElementById('video');
+      const anchor = document.getElementById('anchor');
+      const scroll = Rx.Observable.fromEvent(document, 'scroll');
+      scroll
+        .map(e => anchor.getBoundingClientRect().bottom < 0)
+        .subscribe(bool => {
+          if(bool) {
+            video.classList.add('video-fixed');
+          } else {
+            video.classList.remove('video-fixed');
+          }
+        })
+      ~~~
+      > 當然這段還能在用 debounce/throttle 或 requestAnimationFrame 做優化，這個部分我們日後的文章會在提及。
+  - 实现拖拽的行为
+    * 第一步，取得會用到的 DOM <br>
+      這裡我們會用到的 DOM 跟前面是一樣的(#video)，所以不用多做什麼。
+    * 第二步，建立會用到的 observable <br>
+      這裡跟上次一樣，我們會用到 mousedown, mouseup, mousemove 三個事件。
+      ~~~js
+      const mouseDown = Rx.Observable.fromEvent(video, 'mousedown')
+      const mouseUp = Rx.Observable.fromEvent(document, 'mouseup')
+      const mouseMove = Rx.Observable.fromEvent(document, 'mousemove')
+      ~~~
+    * 第三步，撰寫程式邏輯 <br>
+      跟上次是差不多的，首先我們會點擊 #video 元件，點擊(mousedown)後要變成移動事件(mousemove)，而移動事件會在滑鼠放開(mouseup)時結束(takeUntil)
+      ~~~js
+      mouseDown
+        .map(e => mouseMove.takeUntil(mouseUp))
+        .concatAll()
+      ~~~
+      因為把 mouseDown observable 發送出來的事件換成了 mouseMove observable，所以變成了 observable(mouseDown) 送出 observable(mouseMove)。因此最後用 concatAll 把後面送出的元素變成 mouse move 的事件。
+      <br><br> 但這裡會有一個問題，就是我們的這段拖拉事件其實只能做用到 video-fixed 的時候，所以我們要加上 filter
+      ~~~js
+      mouseDown
+        .filter(e => video.classList.contains('video-fixed'))
+        .map(e => mouseMove.takeUntil(mouseUp))
+        .concatAll()
+      ~~~
+      這裡我們用 filter 如果當下 #video 沒有 video-dragable class 的話，事件就不會送出。
+      <br>
+      <br>
+      再來我們就能跟上次一樣，把 mousemove 事件變成 { x, y } 的物件，並訂閱來改變 #video 元件
+      ~~~js
+      mouseDown
+        .filter(e => video.classList.contains('video-fixed'))
+        .map(e => mouseMove.takeUntil(mouseUp))
+        .concatAll()
+        .map(m => {
+          return {
+            x: m.clientX,
+            y: m.clientY
+          }
+        })
+        .subscribe(pos => {
+          video.style.top = pos.y + 'px';
+          video.style.left = pos.x + 'px';
+        })
+      ~~~
+      到這裡我們基本上已經完成了所有功能，但這裡有兩個大問題我們還沒有解決：
+      * 第一次拉動的時候會閃一下，不像優酷那麼順
+      * 拖拉會跑出當前可視區間，跑上出去後就抓不回來了
+      
+      <br>
+      首先第一個問題是因為我們的拖拉直接給元件滑鼠的位置(clientX, clientY)，而非給滑鼠相對移動的距離！我們只要把點擊目標的左上角當作 (0,0)，並以此改變元件的樣式，就不會有閃動的問題。我們可以用 withLatestFrom 來把 mousedown 與 mousemove 兩個 Event 的值同時傳入 callback。
+      
+      ~~~js
+      mouseDown
+        .filter(e => video.classList.contains('video-fixed'))
+        .map(e => mouseMove.takeUntil(mouseUp))
+        .concatAll()
+        .withLatestFrom(mouseDown, (move, down) => {
+          return {
+            x: move.clientX - down.offsetX,
+            y: move.clientY - down.offsetY
+          }
+        })
+        .subscribe(pos => {
+          video.style.top = pos.y + 'px';
+          video.style.left = pos.x + 'px';
+        })
+      // 當我們能夠同時得到 mousemove 跟 mousedown 的事件，接著就只要把 滑鼠相對可視區間的距離(client) 減掉點按下去時 滑鼠相對元件邊界的距離(offset) 就行了。這時拖拉就不會先閃動一下囉！
+      ~~~
+      這個問題其實只要給最大最小值就行了，因為需求的關係，這裡我們的元件是相對可視居間的絕對位置(fixed)，也就是說
+      + top 最小是 0
+      + left 最小是 0
+      + top 最大是可視高度扣掉元件本身高度
+      + left 最大是可視寬度扣掉元件本身寬度
+      ~~~js
+      const validValue = (value, max, min) => {
+        return Math.min(Math.max(value, min), max)
+      }
+      // 第一個參數給原本要給的位置值，後面給最大跟最小，如果今天大於最大值我們就取最大值，如果今天小於最小值則取最小值。
+      mouseDown
+        .filter(e => video.classList.contains('video-fixed'))
+        .map(e => mouseMove.takeUntil(mouseUp))
+        .concatAll()
+        .withLatestFrom(mouseDown, (move, down) => {
+          return {
+            x: validValue(move.clientX - down.offsetX, window.innerWidth - 320, 0),
+            y: validValue(move.clientY - down.offsetY, window.innerHeight - 180, 0)
+          }
+        })
+        .subscribe(pos => {
+          video.style.top = pos.y + 'px';
+          video.style.left = pos.x + 'px';
+        })
+      // 這裡偷懶了一下，直接寫死元件的寬高(320, 180)，實際上應該用 getBoundingClientRect 計算是比較好的。
+      ~~~
+
+
