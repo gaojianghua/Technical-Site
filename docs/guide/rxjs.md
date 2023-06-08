@@ -325,7 +325,7 @@
   > Observable 可以被订阅(subscribe)，或说可以被观察，而订阅 Observable 的物件又称为 观察者(Observer)。观察者是一个具有三个方法(method)的物件，每当 Observable 发生事件时，便会呼叫观察者相对应的方法。
   
   >- next：每當 Observable 發送出新的值，next 方法就会被呼叫。
-  >- complete：在 Observable 没有其他的資料可以取得时，complete 方法就会被呼叫，在 complete 被呼叫之后，next 方法就不会再起作用。
+  >- complete：在 Observable 没有其他的数据可以取得时，complete 方法就会被呼叫，在 complete 被呼叫之后，next 方法就不会再起作用。
   >- error：每當 Observable 內發生錯誤时，error 方法就会被呼叫。
   - 实现一个观察者
     ```js
@@ -857,7 +857,7 @@
   ~~~shell
   ----------------|
   ~~~
-  > 在这个时间序当中，我们可能会发送出值(value)，如果值是数字则直接用阿拉伯数字取代，其他的资料型別则用相近的英文符号代表，这里我们用 interval 举例
+  > 在这个时间序当中，我们可能会发送出值(value)，如果值是数字则直接用阿拉伯数字取代，其他的资料类型则用相近的英文符号代表，这里我们用 interval 举例
   ~~~js
   var source = Rx.Observable.interval(1000);
   ~~~
@@ -1392,14 +1392,14 @@
     // 6
     // 10
     ~~~
-    reduce 方法需要傳兩個參數，第一個是 callback 第二個則是起始狀態，這個 callback 執行時，會傳入兩個參數一個是原本的狀態，第二個是修改原本狀態的參數，最後回傳一個新的狀態，再繼續執行。
+    reduce 方法需要传兩個參數，第一個是 callback 第二個則是起始狀態，這個 callback 執行時，會传入兩個參數一個是原本的狀態，第二個是修改原本狀態的參數，最後回传一個新的狀態，再繼續執行。
     <br>
     这段代码的运行过程：
-    * 第一次執行 callback 起始狀態是 0 所以 origin 傳入 0，next 為 arr 的第一個元素 1，相加之後變成 1 回傳並當作下一次的狀態。
-    * 第二次執行 callback，這時原本的狀態(origin)就變成了 1，next 為 arr 的第二個元素 2，相加之後變成 3 回傳並當作下一次的狀態。
-    * 第三次執行 callback，這時原本的狀態(origin)就變成了 3，next 為 arr 的第三個元素 3，相加之後變成 6 回傳並當作下一次的狀態。
-    * 第三次執行 callback，這時原本的狀態(origin)就變成了 6，next 為 arr 的第四個元素 4，相加之後變成 10 回傳並當作下一次的狀態。
-    * 這時 arr 的元素都已經遍歷過了，所以不會直接把 10 回傳。
+    * 第一次執行 callback 起始狀態是 0 所以 origin 传入 0，next 為 arr 的第一個元素 1，相加之後變成 1 回传並當作下一次的狀態。
+    * 第二次執行 callback，這時原本的狀態(origin)就變成了 1，next 為 arr 的第二個元素 2，相加之後變成 3 回传並當作下一次的狀態。
+    * 第三次執行 callback，這時原本的狀態(origin)就變成了 3，next 為 arr 的第三個元素 3，相加之後變成 6 回传並當作下一次的狀態。
+    * 第三次執行 callback，這時原本的狀態(origin)就變成了 6，next 為 arr 的第四個元素 4，相加之後變成 10 回传並當作下一次的狀態。
+    * 這時 arr 的元素都已經遍歷過了，所以不會直接把 10 回传。
     
     <br>
     scan 整體的運作方式都跟 reduce 一樣，範例如下
@@ -1426,9 +1426,9 @@
             scan((origin, next) => origin + next, '')
     example: ----h----(he)----(hel)----(hell)----(hello)|
     ~~~
-    這裡可以看到第一次傳入 'h' 跟 '' 相加，返回 'h' 當作下一次的初始狀態，一直重複下去。
+    這裡可以看到第一次传入 'h' 跟 '' 相加，返回 'h' 當作下一次的初始狀態，一直重複下去。
     
-    > scan 跟 reduce 最大的差別就在 scan 一定會回傳一個 observable 實例，而 reduce 最後回傳的值有可能是任何資料型別，必須看使用者傳入的 callback 才能決定 reduce 最後的返回值。
+    > scan 跟 reduce 最大的差別就在 scan 一定會回传一個 observable 實例，而 reduce 最後回传的值有可能是任何数据类型，必須看使用者传入的 callback 才能決定 reduce 最後的返回值。
 
     scan 经常用在狀態的計算處理，最簡單的就是對一個數字的加減，我們可以綁定一個 button 的 click 事件，並用 map 把 click event 轉成 1，之後送處 scan 計算值再做顯示。下面是一个案例：
     
@@ -1487,7 +1487,7 @@
             buffer(source2)
     example: ---------([0,1,2])---------([3,4,5])  
     ~~~
-    buffer 要傳入一個 observable(source2)，它會把原本的 observable (source)送出的元素緩存在陣列中，等到傳入的 observable(source2) 送出元素時，就會觸發把緩存的元素送出。
+    buffer 要传入一個 observable(source2)，它會把原本的 observable (source)送出的元素緩存在陣列中，等到传入的 observable(source2) 送出元素時，就會觸發把緩存的元素送出。
     <br>
     <br>
     這裡的範例 source2 是每一秒就會送出一個元素，我們可以改用 bufferTime 簡潔的表達，如下
@@ -1532,7 +1532,7 @@
     // [3,4,5]
     // [6,7,8]...
     ~~~    
-    這裡我們只有在 500 毫秒內連點兩下，才能成功印出 'success'，這個功能在某些特殊的需求中非常的好用，也能用在批次處理來降低 request 傳送的次數！
+    這裡我們只有在 500 毫秒內連點兩下，才能成功印出 'success'，這個功能在某些特殊的需求中非常的好用，也能用在批次處理來降低 request 传送的次數！
 
   
   - delay
@@ -1558,6 +1558,576 @@
             delay(500)
     example: -------0--1--2--3--4|
     ~~~
+    從 Marble Diagram 可以看得出來，第一次送出元素的時間變慢了，雖然在這裡看起來沒什麼用，但是在 UI 操作上是非常有用的
+
+    delay 除了可以入毫秒以外，也可以传入 Date 类型的数据
+    ~~~js
+    var source = Rx.Observable.interval(300).take(5);
+    var example = source.delay(new Date(new Date().getTime() + 1000));
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    ~~~
+    
+
+  - delayWhen
+
+    delayWhen 的作用跟 delay 很像，最大的差別是 delayWhen 可以影響每個元素，而且需要傳一個 callback 並回傳一個 observable，範例如下
+    ~~~js
+    var source = Rx.Observable.interval(300).take(5);
+    var example = source
+      .delayWhen(
+        x => Rx.Observable.empty().delay(100 * x * x)
+      );
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    ~~~
+    ~~~shell
+    # Marble diagram 图示
+    source : --0--1--2--3--4|
+            .delayWhen(x => Rx.Observable.empty().delay(100 * x * x));
+    example: --0---1----2-----3-----4|
+    ~~~  
+    這裡傳進來的 x 就是 source 送出的每個元素，這樣我們就能對每一個做延遲。
+
+    這裡我們用 delay 來做一個小功能，這個功能很簡單就是讓多張照片跟著滑鼠跑，但每張照片不能跑一樣快！
+
+    首先我們準備六張大頭照，並且寫進 HTML
+    ~~~html
+    <img src="https://res.cloudinary.com/dohtkyi84/image/upload/c_scale,w_50/v1483019072/head-cover6.jpg" alt="">
+    <img src="https://res.cloudinary.com/dohtkyi84/image/upload/c_scale,w_50/v1483019072/head-cover5.jpg" alt="">
+    <img src="https://res.cloudinary.com/dohtkyi84/image/upload/c_scale,w_50/v1483019072/head-cover4.jpg" alt="">
+    <img src="https://res.cloudinary.com/dohtkyi84/image/upload/c_scale,w_50/v1483019072/head-cover3.jpg" alt="">
+    <img src="https://res.cloudinary.com/dohtkyi84/image/upload/c_scale,w_50/v1483019072/head-cover2.jpg" alt="">
+    <img src="https://res.cloudinary.com/dohtkyi84/image/upload/c_scale,w_50/v1483019072/head-cover1.jpg" alt="">
+    ~~~
+    用 CSS 把 img 改成圓形，並加上邊筐以及絕對位置
+    ~~~css
+    img{
+        position: absolute;
+        border-radius: 50%;
+        border: 3px white solid;
+        transform: translate3d(0,0,0);
+    }
+    ~~~
+    再來寫 JS
+    ~~~js
+    var imgList = document.getElementsByTagName('img');
+
+    var movePos = Rx.Observable.fromEvent(document, 'mousemove')
+      .map(e => ({ x: e.clientX, y: e.clientY }))
+    
+    function followMouse(DOMArr) {
+      const delayTime = 600;
+      DOMArr.forEach((item, index) => {
+        movePos.delay(delayTime * (Math.pow(0.65, index) + Math.cos(index / 4)) / 2)
+          .subscribe(function (pos){
+            item.style.transform = 'translate3d(' + pos.x + 'px, ' + pos.y + 'px, 0)';
+          });
+      });
+    }
+    
+    followMouse(Array.from(imgList))
+    ~~~
+    這裡我們把 imgList 從 Collection 轉成 Array 後傳入 followMouse()，並用 forEach 把每個 omg 取出並利用 index 來達到不同的 delay 時間，這個 delay 時間的邏輯大家可以自己想，不用跟我一樣，最後 subscribe 就完成啦！
+
+
+  - debounce (防抖)
+
+    跟 buffer、bufferTime 一樣，Rx 有 debounce 跟 debounceTime 一個是傳入 observable 另一個則是傳入毫秒，比較常用到的是 debounceTime，這裡我們直接來看一個範例
+    ~~~js
+    var source = Rx.Observable.interval(300).take(5);
+    var example = source.debounceTime(1000);
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    // 4
+    // complete
+    ~~~
+    這裡只印出 4 然後就結束了，因為 debounce 運作的方式是每次收到元素，他會先把元素 cache 住並等待一段時間，如果這段時間內已經沒有收到任何元素，則把元素送出；如果這段時間內又收到新的元素，則會把原本 cache 住的元素釋放掉並重新計時，不斷反覆。
+    > 以現在這個範例來講，我們每 300 毫秒就會送出一個數值，但我們的 debounceTime 是 1000 毫秒，也就是說每次 debounce 收到元素還等不到 1000 毫秒，就會收到下一個新元素，然後重新等待 1000 毫秒，如此重複直到第五個元素送出時，observable 結束(complete)了，debounce 就直接送出元素。
+    ~~~shell
+    # Marble diagram 图示
+    source : --0--1--2--3--4|
+          debounceTime(1000)
+    example: --------------4|    
+    ~~~  
+    debounce 會在收到元素後等待一段時間，這很適合用來處理間歇行為，間歇行為就是指這個行為是一段一段的，例如要做 Auto Complete 時，我們要打字搜尋不會一直不斷的打字，可以等我們停了一小段時間後再送出，才不會每打一個字就送一次 request！
+    ~~~js
+    const searchInput = document.getElementById('searchInput');
+    const theRequestValue = document.getElementById('theRequestValue');
+    Rx.Observable.fromEvent(searchInput, 'input')
+      .map(e => e.target.value)
+      .subscribe((value) => {
+    theRequestValue.textContent = value;
+    // 在這裡發 request
+    })
+    ~~~
+    如果用上面這段程式碼，就會每打一個字就送一次 request，當很多人在使用時就會對 server 造成很大的負擔，實際上我們只需要使用者最後打出來的文字就好了，不用每次都送，這時就能用 debounceTime 做優化。
+    ~~~js
+    const searchInput = document.getElementById('searchInput');
+    const theRequestValue = document.getElementById('theRequestValue');
+    Rx.Observable.fromEvent(searchInput, 'input')
+      .debounceTime(300)
+      .map(e => e.target.value)
+      .subscribe((value) => {
+    theRequestValue.textContent = value;
+    // 在這裡發 request
+    })
+    ~~~
+
+  - throttle (节流)
+    跟 debounce 一樣 RxJS 有 throttle 跟 throttleTime 兩個方法，一個是傳入 observable 另一個是傳入毫秒，比較常用到的也是 throttleTime，讓我們直接來看範例
+    ~~~js
+    var source = Rx.Observable.interval(300).take(5);
+    var example = source.throttleTime(1000);
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    // 0
+    // 4
+    // complete
+    ~~~
+    跟 debounce 的不同是 throttle 會先開放送出元素，等到有元素被送出就會沈默一段時間，等到時間過了又會開放發送元素。
+    <br>
+    <br>
+    throttle 比較像是控制行為的最高頻率，也就是說如果我們設定 1000 毫秒，那該事件頻率的最大值就是每秒觸發一次不會再更快，debounce 則比較像是必須等待的時間，要等到一定的時間過了才會收到元素。
+    <br>
+    <br>
+    throttle 更適合用在連續性行為，比如說 UI 動畫的運算過程，因為 UI 動畫是連續的，像我們之前在做拖拉時，就可以加上 throttleTime(12) 讓 mousemove event 不要發送的太快，避免畫面更新的速度跟不上樣式的切換速度。
+    > 瀏覽器有一個 requestAnimationFrame API 是專門用來優化 UI 運算的，通常用這個的效果會比 throttle 好，但並不是絕對還是要看最終效果。    
+
+  - distinct (去重)
+    它能幫我們把相同值的数据过滤掉只留一个，也就是数据去重，范例如下
+    ~~~js
+    var source = Rx.Observable.from(['a', 'b', 'c', 'a', 'b'])
+            .zip(Rx.Observable.interval(300), (x, y) => x);
+    var example = source.distinct()
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    // a
+    // b
+    // c
+    // complete
+    ~~~
+    ~~~shell
+    # Marble diagram 图示
+    source : --a--b--c--a--b|
+            distinct()
+    example: --a--b--c------|
+    ~~~
+    另外我們可以傳入一個 selector callback function，這個 callback function 會傳入一個接收到的元素，並回傳我們真正希望比對的值，舉例如下
+    ~~~js
+    var source = Rx.Observable.from([{ value: 'a'}, { value: 'b' }, { value: 'c' }, { value: 'a' }, { value: 'c' }])
+            .zip(Rx.Observable.interval(300), (x, y) => x);
+    var example = source.distinct((x) => {
+      return x.value
+    });
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    // {value: "a"}
+    // {value: "b"}
+    // {value: "c"}
+    // complete
+    ~~~
+    這裡可以看到，因為 source 送出的都是物件，而 js 物件的比對是比對記憶體位置，所以在這個例子中這些物件永遠不會相等，但實際上我們想比對的是物件中的 value，這時我們就可以傳入 selector callback，來選擇我們要比對的值。
+    > distinct 傳入的 callback 在 RxJS 5 幾個 bate 版本中有過很多改變，現在網路上很多文章跟教學都是過時的，請讀者務必小心！
+    
+    實際上 distinct() 會在背地裡建立一個 Set，當接收到元素時會先去判斷 Set 內是否有相同的值，如果有就不送出，如果沒有則存到 Set 並送出。所以記得盡量不要直接把 distinct 用在一個無限的 observable 裡，這樣很可能會讓 Set 越來越大，建議大家可以放第二個參數 flushes，或用 distinctUntilChanged
+    > 這裡指的 Set 其實是 RxJS 自己實作的，跟 ES6 原生的 Set 行為也都一致，只是因為 ES6 的 Set 支援程度還並不理想，所以這裡是直接用 JS 實作。     
+
+    distinct 可以傳入第二個參數 flushes observable 用來清除暫存的数据，范例如下
+    ~~~js
+    var source = Rx.Observable.from(['a', 'b', 'c', 'a', 'c'])
+            .zip(Rx.Observable.interval(300), (x, y) => x);
+    var flushes = Rx.Observable.interval(1300);
+    var example = source.distinct(null, flushes);
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    // a
+    // b
+    // c
+    // c
+    // complete
+    ~~~
+    ~~~shell
+    # Marble diagram 图示
+    source : --a--b--c--a--c|
+    flushes: ------------0---...
+          distinct(null, flushes);
+    example: --a--b--c-----c|
+    ~~~
+    其實 flushes observable 就是在送出元素時，會把 distinct 的暫存清空，所以之後的暫存就會從頭來過，這樣就不用擔心暫存的 Set 越來愈大的問題，但其實我們平常不太會用這樣的方式來處理，通常會用另一個方法 distinctUntilChanged。
+
+  - distinctUntilChanged
+    
+    distinctUntilChanged 跟 distinct 一樣會把相同的元素過濾掉，但 distinctUntilChanged 只會跟最後一次送出的元素比較，不會每個都比，舉例如下
+    ~~~js
+    var source = Rx.Observable.from(['a', 'b', 'c', 'c', 'b'])
+            .zip(Rx.Observable.interval(300), (x, y) => x);
+    var example = source.distinctUntilChanged()
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    // a
+    // b
+    // c
+    // b
+    // complete
+    ~~~
+    這裡 distinctUntilChanged 只會暫存一個元素，並在收到元素時跟暫存的元素比對，如果一樣就不送出，如果不一樣就把暫存的元素換成剛接收到的新元素並送出。
+    ~~~shell
+    # Marble diagram 图示
+    source : --a--b--c--c--b|
+            distinctUntilChanged()
+    example: --a--b--c-----b|
+    ~~~
+    從 Marble Diagram 中可以看到，第二個 c 送出時剛好上一個就是 c 所以就被濾掉了，但最後一個 b 則跟上一個不同所以沒被濾掉。
+    <br>
+    <br>
+    distinctUntilChanged 是比較常在實務上使用的，最常見的狀況是我們在做多方同步時。當我們有多個 Client，且每個 Client 有著各自的狀態，Server 會再一個 Client 需要變動時通知所有 Client 更新，但可能某些 Client 接收到新的狀態其實跟上一次收到的是相同的，這時我們就可用 distinctUntilChanged 方法只處理跟最後一次不相同的訊息，像是多方通話、多裝置的資訊同步都會有類似的情境。
+
+
+  - catch (错误处理)
+
+    catch 是很常見的非同步錯誤處理方法，在 RxJS 中也能夠直接用 catch 來處理錯誤，在 RxJS 中的 catch 可以回傳一個 observable 來送出新的值，讓我們直接來看範例：
+    ~~~js
+    var source = Rx.Observable.from(['a','b','c','d',2])
+            .zip(Rx.Observable.interval(500), (x,y) => x);
+    var example = source
+      .map(x => x.toUpperCase())
+      .catch(error => Rx.Observable.of('h'));
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    ~~~
+    這個範例我們每隔 500 毫秒會送出一個字串(String)，並用字串的方法 toUpperCase() 來把字串的英文字母改成大寫，過程中可能未知的原因送出了一個數值(Number) 2 導致發生例外(數值沒有 toUpperCase 的方法)，這時我們在後面接的 catch 就能抓到錯誤。
+    
+    catch 可以回傳一個新的 Observable、Promise、Array 或任何 Iterable 的物件，來傳送之後的元素。以我們的例子來說最後就會在送出 X 就結束。
+    ~~~shell
+    # Marble diagram 图示
+    source : ----a----b----c----d----2|
+        map(x => x.toUpperCase())
+         ----a----b----c----d----X|
+        catch(error => Rx.Observable.of('h'))
+    example: ----a----b----c----d----h|
+    ~~~
+    這裡可以看到，當錯誤發生後就會進到 catch 並重新處理一個新的 observable，我們可以利用這個新的 observable 來送出我們想送的值。
+    <br>
+    <br>
+    也可以在遇到錯誤後，讓 observable 結束，如下
+    ~~~js
+    var source = Rx.Observable.from(['a','b','c','d',2])
+            .zip(Rx.Observable.interval(500), (x,y) => x);
+    var example = source
+      .map(x => x.toUpperCase())
+      .catch(error => Rx.Observable.empty());
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    ~~~
+    回傳一個 empty 的 observable 來直接結束(complete)。
+    <br>
+    <br>
+    另外 catch 的 callback 能接收第二個參數，這個參數會接收當前的 observalbe，我們可以回傳當前的 observable 來做到重新執行，範例如下
+    ~~~js
+    var source = Rx.Observable.from(['a','b','c','d',2])
+            .zip(Rx.Observable.interval(500), (x,y) => x);
+    var example = source
+      .map(x => x.toUpperCase())
+      .catch((error, obs) => obs);
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    ~~~
+    ~~~shell
+    # Marble diagram 图示
+    source : ----a----b----c----d----2|
+        map(x => x.toUpperCase())
+         ----a----b----c----d----X|
+        catch((error, obs) => obs)
+    example: ----a----b----c----d--------a----b----c----d--..
+    ~~~
+    因為是我們只是簡單的示範，所以這裡會一直無限循環，實務上通常會用在斷線重連的情境。
+    另上面的處理方式有一個簡化的寫法，叫做 retry()。
+
+
+  - retry
+
+    如果我們想要一個 observable 發生錯誤時，重新嘗試就可以用 retry 這個方法，跟我們前一個講範例的行為是一致
+    ~~~js
+    var source = Rx.Observable.from(['a','b','c','d',2])
+            .zip(Rx.Observable.interval(500), (x,y) => x);
+    var example = source
+      .map(x => x.toUpperCase())
+      .retry();
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    ~~~
+    通常這種無限的 retry 會放在即時同步的重新連接，讓我們在連線斷掉後，不斷的嘗試。另外我們也可以設定只嘗試幾次，如下
+    ~~~js
+    var source = Rx.Observable.from(['a','b','c','d',2])
+            .zip(Rx.Observable.interval(500), (x,y) => x);
+    var example = source
+      .map(x => x.toUpperCase())
+      .retry(1);
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    // a
+    // b
+    // c
+    // d
+    // a
+    // b
+    // c
+    // d
+    // Error: TypeError: x.toUpperCase is not a function
+    ~~~
+    這裡我們對 retry 傳入一個數值 1，能夠讓我們只重複嘗試 1 次後送出錯誤
+    ~~~shell
+    # Marble diagram 图示
+    source : ----a----b----c----d----2|
+            map(x => x.toUpperCase())
+             ----a----b----c----d----X|
+                retry(1)
+    example: ----a----b----c----d--------a----b----c----d----X|
+    ~~~
+    這種處理方式很適合用在 HTTP request 失敗的場景中，我們可以設定重新發送幾次後，再秀出錯誤訊息。
+
+
+  - retryWhen
+
+    RxJS 還提供了另一種方法 retryWhen，他可以把例外發生的元素放到一個 observable 中，讓我們可以直接操作這個 observable，並等到這個 observable 操作完後再重新訂閱一次原本的 observable。
+    ~~~js
+    var source = Rx.Observable.from(['a','b','c','d',2])
+            .zip(Rx.Observable.interval(500), (x,y) => x);
+    var example = source
+      .map(x => x.toUpperCase())
+      .retryWhen(errorObs => errorObs.delay(1000));
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    ~~~
+    這裡 retryWhen 我們傳入一個 callback，這個 callback 有一個參數會傳入一個 observable，這個 observable 不是原本的 observable(example) 而是例外事件送出的錯誤所組成的一個 observable，我們可以對這個由錯誤所組成的 observable 做操作，等到這次的處理完成後就會重新訂閱我們原本的 observable。
+    <br>
+    <br>
+    這個範例我們是把錯誤的 observable 送出錯誤延遲 1 秒，這會使後面重新訂閱的動作延遲 1 秒才執行
+    ~~~shell
+    # Marble diagram 图示
+    source : ----a----b----c----d----2|
+        map(x => x.toUpperCase())
+             ----a----b----c----d----X|
+        retryWhen(errorObs => errorObs.delay(1000))
+    example: ----a----b----c----d-------------------a----b----c----d----...
+    ~~~
+    從上圖可以看到後續重新訂閱的行為就被延後了，但實務上我們不太會用 retryWhen 來做重新訂閱的延遲，通常是直接用 catch 做到這件事。這裡只是為了示範 retryWhen 的行為，實務上我們通常會把 retryWhen 拿來做錯誤通知或是例外收集，如下
+    ~~~js
+    var source = Rx.Observable.from(['a','b','c','d',2])
+            .zip(Rx.Observable.interval(500), (x,y) => x);
+    var example = source
+      .map(x => x.toUpperCase())
+      .retryWhen(
+    errorObs => errorObs.map(err => fetch('...')));
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    ~~~
+    這裡的 errorObs.map(err => fetch('...')) 可以把 errorObs 裡的每個錯誤變成 API 的發送，通常這裡個 API 會像是送訊息到公司的通訊頻道(Slack 等等)，這樣可以讓工程師馬上知道可能哪個 API 掛了，這樣我們就能即時地處理。
+    
+    > retryWhen 實際上是在背地裡建立一個 Subject 並把錯誤放入，會在對這個 Subject 進行內部的訂閱，因為我們還沒有講到 Subject 的觀念，大家可以先把它當作 Observable 就好了，另外記得這個 observalbe 預設是無限的，如果我們把它結束，原本的 observable 也會跟著結束。
+  
+  - repeat
+
+    我們有時候可能會想要 retry 一直重複訂閱的效果，但沒有錯誤發生，這時就可以用 repeat 來做到這件事，範例如下
+    ~~~js
+    var source = Rx.Observable.from(['a','b','c'])
+            .zip(Rx.Observable.interval(500), (x,y) => x);
+    var example = source.repeat(2);
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    
+    // a
+    // b
+    // c
+    // a
+    // b
+    // c
+    // complete
+    ~~~
+    這裡 repeat 的行為跟 retry 基本一致，只是 retry 只有在例外發生時才觸發
+    ~~~shell
+    # Marble diagram 图示
+    source : ----a----b----c|
+            repeat(2)
+    example: ----a----b----c----a----b----c|
+    ~~~
+    同樣的我們可以不給參數讓他無限循環，如下
+    ~~~js
+    var source = Rx.Observable.from(['a','b','c'])
+            .zip(Rx.Observable.interval(500), (x,y) => x);
+    var example = source.repeat();
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    ~~~
+    這樣我們就可以做動不斷重複的行為，這個可以在建立輪詢時使用，讓我們不斷地發 request 來更新畫面。
+    <br>
+    <br>
+    最後我們來看一個錯誤處理在實務應用中的小範例
+    ~~~js
+    const title = document.getElementById('title');
+    var source = Rx.Observable.from(['a','b','c','d',2])
+      .zip(Rx.Observable.interval(500), (x,y) => x)
+      .map(x => x.toUpperCase());
+    // 通常 source 會是建立即時同步的連線，像是 web socket
+    var example = source.catch(
+      (error, obs) => Rx.Observable.empty()
+        .startWith('連線發生錯誤： 5秒後重連')
+        .concat(obs.delay(5000))
+    );
+    example.subscribe({
+      next: (value) => { title.innerText = value },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    ~~~
+    這個範例其實就是模仿在即時同步斷線時，利用 catch 返回一個新的 observable，這個 observable 會先送出錯誤訊息並且把原本的 observable 延遲 5 秒再做合併，雖然這只是一個模仿，但它清楚的展示了 RxJS 在做錯誤處理時的靈活性。
+
+
+  - concatAll
+
+    concatAll 最重要的重點就是他會處理完前一個 observable 才會在處理下一個 observable，讓我們來看一個範例
+    ~~~js
+    var click = Rx.Observable.fromEvent(document.body, 'click');
+    var source = click.map(e => Rx.Observable.interval(1000));
+    var example = source.concatAll();
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    // (點擊後)
+    // 0
+    // 1
+    // 2
+    // 3
+    // 4
+    // 5 ...
+    ~~~
+    上面這段程式碼，當我們點擊畫面時就會開始送出數值
+    ~~~shell
+    # Marble diagram 图示
+    click  : ---------c-c------------------c--.. 
+        map(e => Rx.Observable.interval(1000))
+    source : ---------o-o------------------o--..
+                       \ \
+                        \ ----0----1----2----3----4--...
+                         ----0----1----2----3----4--...
+                         concatAll()
+    example: ----------------0----1----2----3----4--..
+    ~~~
+    從 Marble Diagram 可以看得出來，當我們點擊一下 click 事件會被轉成一個 observable 而這個 observable 會每一秒送出一個遞增的數值，當我們用 concatAll 之後會把二維的 observable 攤平成一維的 observable，但 concatAll 會一個一個處理，一定是等前一個 observable 完成(complete)才會處理下一個 observable，因為現在送出 observable 是無限的永遠不會完成(complete)，就導致他永遠不會處理第二個送出的 observable!
+    <br>
+    <br>
+    我們再看一個例子
+    ~~~js
+    var click = Rx.Observable.fromEvent(document.body, 'click');
+    var source = click.map(e => Rx.Observable.interval(1000).take(3));
+    var example = source.concatAll();
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    ~~~
+    現在我們把送出的 observable 限制只取前三個元素
+    ~~~shell
+    # Marble diagram 图示
+    click  : ---------c-c------------------c--.. 
+        map(e => Rx.Observable.interval(1000))
+    source : ---------o-o------------------o--..
+                   \ \                  \
+                    \ ----0----1----2|   ----0----1----2|
+                     ----0----1----2|
+                     concatAll()
+    example: ----------------0----1----2----0----1----2--..
+    ~~~
+    這裡我們把送出的 observable 變成有限的，只會送出三個元素，這時就能看得出來 concatAll 不管兩個 observable 送出的時間多麽相近，一定會先處理前一個 observable 再處理下一個。
+
+
+  - switch
+
+    switch 同樣能把二維的 observable 攤平成一維的，但他們在行為上有很大的不同，我們來看下面這個範例
+    ~~~js
+    var click = Rx.Observable.fromEvent(document.body, 'click');
+    var source = click.map(e => Rx.Observable.interval(1000));
+    var example = source.switch();
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    ~~~
+    ~~~shell
+    # Marble diagram 图示
+    click  : ---------c-c------------------c--.. 
+        map(e => Rx.Observable.interval(1000))
+    source : ---------o-o------------------o--..
+                   \ \                  \----0----1--...
+                    \ ----0----1----2----3----4--...
+                     ----0----1----2----3----4--...
+                     switch()
+    example: -----------------0----1----2--------0----1--...
+    ~~~    
+    switch 最重要的就是他會在新的 observable 送出後直接處理新的 observable 不管前一個 observable 是否完成，每當有新的 observable 送出就會直接把舊的 observable 退訂(unsubscribe)，永遠只處理最新的 observable!
+    <br>
+    <br>
+    所以在這上面的 Marble Diagram 可以看得出來第一次送出的 observable 跟第二次送出的 observable 時間點太相近，導致第一個 observable 還來不及送出元素就直接被退訂了，當下一次送出 observable 就又會把前一次的 observable 退訂。
+
+
+  - mergeAll
+
 
 
 
@@ -1673,7 +2243,7 @@
       * 拖拉會跑出當前可視區間，跑上出去後就抓不回來了
       
       <br>
-      首先第一個問題是因為我們的拖拉直接給元件滑鼠的位置(clientX, clientY)，而非給滑鼠相對移動的距離！我們只要把點擊目標的左上角當作 (0,0)，並以此改變元件的樣式，就不會有閃動的問題。我們可以用 withLatestFrom 來把 mousedown 與 mousemove 兩個 Event 的值同時傳入 callback。
+      首先第一個問題是因為我們的拖拉直接給元件滑鼠的位置(clientX, clientY)，而非給滑鼠相對移動的距離！我們只要把點擊目標的左上角當作 (0,0)，並以此改變元件的樣式，就不會有閃動的問題。我們可以用 withLatestFrom 來把 mousedown 與 mousemove 兩個 Event 的值同時传入 callback。
       
       ~~~js
       mouseDown
