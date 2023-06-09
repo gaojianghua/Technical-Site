@@ -108,6 +108,8 @@ function sidebarGuide() {
             collapsible: true,
             items: [
                 { text: 'Linux', link: '/guide/linux' },
+                { text: 'CentOS', link: '/guide/centos' },
+                { text: 'Ubuntu', link: '/guide/ubuntu' },
                 { text: 'Docker', link: '/guide/docker' },
                 { text: 'Shell', link: '/guide/shell' },
             ],

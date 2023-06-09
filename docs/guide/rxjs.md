@@ -88,8 +88,8 @@
     // { value: undefined, done: true }
     ~~~
   * JavaScript 的 Iterator 只有一个 next 方法，这个 next 方法只会回传这两种结果：
-      1. 在最后一个元素前： { done: false, value: elem }
-      2. 在最后一个元素之后： { done: true, value: undefined }
+      1. 在最后一个元素前： `{ done: false, value: elem }`
+      2. 在最后一个元素之后： `{ done: true, value: undefined }`
   * 实现一个迭代器模式
     ~~~js
     // ES5 的写法
@@ -2128,6 +2128,883 @@
 
   - mergeAll
 
+    我們之前講過 merge 他可以讓多個 observable 同時送出元素，mergeAll 也是同樣的道理，它會把二維的 observable 轉成一維的，並且能夠同時處理所有的 observable，讓我們來看這個範例
+    ~~~js
+    var click = Rx.Observable.fromEvent(document.body, 'click');
+    var source = click.map(e => Rx.Observable.interval(1000));
+    var example = source.mergeAll();
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    ~~~
+    ~~~shell
+    # Marble diagram 图示
+    click  : ---------c-c------------------c--.. 
+        map(e => Rx.Observable.interval(1000))
+    source : ---------o-o------------------o--..
+                       \ \                  \----0----1--...
+                        \ ----0----1----2----3----4--...
+                         ----0----1----2----3----4--...
+                         switch()
+    example: ----------------00---11---22---33---(04)4--...
+    ~~~   
+    從 Marble Diagram 可以看出來，所有的 observable 是並行(Parallel)處理的，也就是說 mergeAll 不會像 switch 一樣退訂(unsubscribe)原先的 observable 而是並行處理多個 observable。以我們的範例來說，當我們點擊越多下，最後送出的頻率就會越快。
+    <br>
+    <br>
+    另外 mergeAll 可以傳入一個數值，這個數值代表他可以同時處理的 observable 數量，我們來看一個例子
+    ~~~js
+    var click = Rx.Observable.fromEvent(document.body, 'click');
+    var source = click.map(e => Rx.Observable.interval(1000).take(3));
+    var example = source.mergeAll(2);
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    ~~~
+    > 這裡我們送出的 observable 改成取前三個，並且讓 mergeAll 最多只能同時處理 2 個 observable
+    ~~~shell
+    # Marble diagram 图示
+    click  : ---------c-c----------o----------.. 
+        map(e => Rx.Observable.interval(1000))
+    source : ---------o-o----------c----------..
+                       \ \          \----0----1----2|     
+                        \ ----0----1----2|  
+                         ----0----1----2|
+                         mergeAll(2)
+    example: ----------------00---11---22---0----1----2--..
+    ~~~   
+    當 mergeAll 傳入參數後，就會等處理中的其中一個 observable 完成，再去處理下一個。以我們的例子來說，前面兩個 observable 可以被並行處理，但第三個 observable 必須等到第一個 observable 結束後，才會開始。
+    >我們可以利用這個參數來決定要同時處理幾個 observable，如果我們傳入 1 其行為就會跟 concatAll 是一模一樣的，這點在原始碼可以看到他們是完全相同的。
+
+    
+  - concatMap
+
+    concatMap 其實就是 map 加上 concatAll 的簡化寫法，我們直接來看一個範例
+    ~~~js
+    var source = Rx.Observable.fromEvent(document.body, 'click');
+    var example = source
+      .map(e => Rx.Observable.interval(1000).take(3))
+      .concatAll();
+    
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    ~~~
+    上面這個範例就可以簡化成
+    ~~~js
+    var source = Rx.Observable.fromEvent(document.body, 'click');
+    var example = source
+      .concatMap(e => Rx.Observable.interval(100).take(3));
+    
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    ~~~
+    前後兩個行為是一致的，記得 concatMap 也會先處理前一個送出的 observable 在處理下一個 observable
+    ~~~shell
+    # Marble diagram 图示
+    source : -----------c--c------------------...
+        concatMap(c => Rx.Observable.interval(100).take(3))
+    example: -------------0-1-2-0-1-2---------...
+    ~~~  
+    這樣的行為也很常被用在發送 request。如下
+    ~~~js
+    function getPostData() {
+      return fetch('https://jsonplaceholder.typicode.com/posts/1')
+        .then(res => res.json())
+    }
+    var source = Rx.Observable.fromEvent(document.body, 'click');
+    var example = source.concatMap(
+      e => Rx.Observable.from(getPostData()));
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    ~~~
+    這裡我們每點擊一下畫面就會送出一個 HTTP request，如果我們快速的連續點擊，大家可以在開發者工具的 network 看到每個 request 是等到前一個 request 完成才會送出下一個 request。
+    <br>
+    <br>
+    從 network 的圖形可以看得出來，第二個 request 的發送時間是接在第一個 request 之後的，我們可以確保每一個 request 會等前一個 request 完成才做處理。
+    <br>
+    <br>
+    concatMap 還有第二個參數是一個 selector callback，這個 callback 會傳入四個參數，分別是
+    * 外部 observable 送出的元素
+    * 內部 observable 送出的元素 
+    * 外部 observable 送出元素的 index 
+    * 內部 observable 送出元素的 index
+
+    回傳值我們想要的值，範例如下
+    ~~~js
+    function getPostData() {
+    return fetch('https://jsonplaceholder.typicode.com/posts/1')
+      .then(res => res.json())
+    }
+    var source = Rx.Observable.fromEvent(document.body, 'click');
+    var example = source.concatMap(
+      e => Rx.Observable.from(getPostData()),(e, res, eIndex, resIndex) => res.title);
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    ~~~
+    這個範例的外部 observable 送出的元素就是 click event 物件，內部 observable 送出的元素就是 response 物件，這裡我們回傳 response 物件的 title 屬性，這樣一來我們就可以直接收到 title，這個方法很適合用在 response 要選取的值跟前一個事件或順位(index)相關時。
+    
+
+  - switchMap
+
+    switchMap 其實就是 map 加上 switch 簡化的寫法，如下
+    ~~~js
+    var source = Rx.Observable.fromEvent(document.body, 'click');
+    var example = source
+      .map(e => Rx.Observable.interval(1000).take(3))
+      .switch();
+    
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    ~~~
+    上面這個範例就可以簡化成
+    ~~~js
+    var source = Rx.Observable.fromEvent(document.body, 'click');
+    var example = source
+      .switchMap(e => Rx.Observable.interval(100).take(3));
+    
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    ~~~
+    ~~~shell
+    # Marble diagram 图示
+    source : -----------c--c-----------------...
+        concatMap(c => Rx.Observable.interval(100).take(3))
+    example: -------------0--0-1-2-----------...
+    ~~~  
+    只要注意一個重點 switchMap 會在下一個 observable 被送出後直接退訂前一個未處理完的 observable，這個部份的細節請看上一篇文章 switch 的部分。
+    <br>
+    <br>
+    另外我們也可以把 switchMap 用在發送 HTTP request
+    ~~~js
+    function getPostData() {
+    return fetch('https://jsonplaceholder.typicode.com/posts/1')
+      .then(res => res.json())
+    }
+    var source = Rx.Observable.fromEvent(document.body, 'click');
+    var example = source.switchMap(
+      e => Rx.Observable.from(getPostData()));
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    ~~~
+    如果我們快速的連續點擊五下，可以在開發者工具的 network 看到每個 request 會在點擊時發送
+    > 灰色是瀏覽器原生地停頓行為，實際上灰色的一開始就是 fetch 執行送出 request，只是卡在瀏覽器等待發送。
+
+    雖然我們發送了多個 request 但最後真正印出來的 log 只會有一個，代表前面發送的 request 已經不會造成任何的 side-effect 了，這個很適合用在只看最後一次 request 的情境，比如說 自動完成(auto complete)，我們只需要顯示使用者最後一次打在畫面上的文字，來做建議選項而不用每一次的。
+    <br>
+    <br>
+    switchMap 跟 concatMap 一樣有第二個參數 selector callback 可用來回傳我們要的值，這部分的行為跟 concatMap 是一樣的，這裡就不再贅述。
+
+
+  - mergeMap
+
+    mergeMap 其實就是 map 加上 mergeAll 簡化的寫法，如下
+    ~~~js
+    var source = Rx.Observable.fromEvent(document.body, 'click');
+    var example = source
+      .map(e => Rx.Observable.interval(1000).take(3))
+      .mergeAll();
+    
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    ~~~
+    上面這個範例就可以簡化成
+    ~~~js
+    var source = Rx.Observable.fromEvent(document.body, 'click');
+    var example = source
+      .mergeMap(e => Rx.Observable.interval(100).take(3));
+    
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    ~~~
+    ~~~shell
+    # Marble diagram 图示
+    source : -----------c--c------------------...
+        concatMap(c => Rx.Observable.interval(100).take(3))
+    example: -------------0-1-2-0-1-2---------...
+    ~~~ 
+    記得 mergeMap 可以並行處理多個 observable，以這個例子來說當我們快速點按兩下，元素發送的時間點是有機會重疊的，這個部份的細節大家可以看上一篇文章 merge 的部分。 
+    <br>
+    <br>
+    另外我們也可以把 mergeMap 用在發送 HTTP request
+    ~~~js
+    function getPostData() {
+      return fetch('https://jsonplaceholder.typicode.com/posts/1')
+        .then(res => res.json())
+    }
+    var source = Rx.Observable.fromEvent(document.body, 'click');
+    var example = source.mergeMap(e => Rx.Observable.from(getPostData()));
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    ~~~
+    如果我們快速的連續點擊五下，大家可以在開發者工具的 network 看到每個 request 會在點擊時發送並且會 log 出五個物件
+    <br>
+    <br>
+    mergeMap 也能傳入第二個參數 selector callback，這個 selector callback 跟 concatMap 第二個參數也是完全一樣的，但 mergeMap 的重點是我們可以傳入第三個參數，來限制並行處理的數量
+    ~~~js
+    function getPostData() {
+      return fetch('https://jsonplaceholder.typicode.com/posts/1')
+        .then(res => res.json())
+    }
+    var source = Rx.Observable.fromEvent(document.body, 'click');
+    var example = source.mergeMap(e => Rx.Observable.from(getPostData()),(e, res, eIndex, resIndex) => res.title, 3);
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    ~~~
+    這裡我們傳入 3 就能限制，HTTP request 最多只能同時送出 3 個，並且要等其中一個完成在處理下一個。我連續點按了五下，但第四個 request 是在第一個完成後才送出的，這個很適合用在特殊的需求下，可以限制同時發送的 request 數量。
+    > RxJS 5 還保留了 mergeMap 的別名叫 flatMap，雖然官方文件上沒有，但這兩個方法是完全一樣的
+    
+
+  - switchMap, mergeMap, concatMap
+
+    這三個 operators 還有一個共同的特性，那就是這三個 operators 可以把第一個參數所回傳的 promise 物件直接轉成 observable，這樣我們就不用再用 Rx.Observable.from 轉一次，如下
+    ~~~js
+    function getPersonData() {
+      return fetch('https://jsonplaceholder.typicode.com/posts/1')
+        .then(res => res.json())
+    }
+    var source = Rx.Observable.fromEvent(document.body, 'click');
+    var example = source.concatMap(e => getPersonData());
+                                        //直接回傳 promise 物件
+    example.subscribe({
+      next: (value) => { console.log(value); },
+      error: (err) => { console.log('Error: ' + err); },
+      complete: () => { console.log('complete'); }
+    });
+    ~~~
+    至於在使用上要如何選擇這三個 operators？ 其實都還是看使用情境而定，這裡筆者簡單列一下大部分的使用情境
+    * concatMap 用在可以確定內部的 observable 結束時間比外部 observable 發送時間來快的情境，並且不希望有任何並行處理行為，適合少數要一次一次完成到底的的 UI 動畫或特別的 HTTP request 行為。
+    * switchMap 用在只要最後一次行為的結果，適合絕大多數的使用情境。
+    * mergeMap 用在並行處理多個 observable，適合需要並行處理的行為，像是多個 I/O 的並行處理。
+    > 建議初學者不確定選哪一個時，使用 switchMap
+
+    > 在使用 concatAll 或 concatMap 時，請注意內部的 observable 一定要能夠的結束，且外部的 observable 發送元素的速度不能比內部的 observable 結束時間快太多，不然會有 memory issues
+    
+
+  - window
+    > window 是一整個家族，總共有五個相關的 operators
+    >  * window
+    >  * windowCount
+    >  * windowTime 
+    >  * windowToggle 
+    >  * windowWhen
+
+    window 很類似 buffer 可以把一段時間內送出的元素拆出來，buffer 是把拆分出來的元素放到陣列並送出陣列；window 是把拆分出來的元素放到 observable 並送出 observable，讓我們來看一個例子
+    ~~~js
+    var click = Rx.Observable.fromEvent(document, 'click');
+    var source = Rx.Observable.interval(1000);
+    var example = source.window(click);
+    example
+      .switch()
+      .subscribe(console.log);
+    // 0
+    // 1
+    // 2
+    // 3
+    // 4
+    // 5 ...
+    ~~~
+    首先 window 要傳入一個 observable，每當這個 observable 送出元素時，就會把正在處理的 observable 所送出的元素放到新的 observable 中並送出
+    ~~~shell
+    # Marble diagram 图示
+    click  : -----------c----------c------------c--
+    source : ----0----1----2----3----4----5----6---..
+                        window(click)
+    example: o----------o----------o------------o--
+              \          \          \
+              ---0----1-|--2----3--|-4----5----6|
+                        switch()
+           : ----0----1----2----3----4----5----6---...
+    ~~~ 
+    這裡可以看到 example 變成發送 observable 會在每次 click 事件發送出來後結束，並繼續下一個 observable，這裡我們用 switch 才把它攤平。
+    <br>
+    <br>
+    當然這個範例只是想單存的表達 window 的作用，沒什麼太大的意義，實務上 window 會搭配其他的 operators 使用，例如我們想計算一秒鐘內觸發了幾次 click 事件
+    ~~~js
+    var click = Rx.Observable.fromEvent(document, 'click');
+    var source = Rx.Observable.interval(1000);
+    var example = click.window(source)
+    example
+      .map(innerObservable => innerObservable.count())
+      .switch()
+      .subscribe(console.log);
+    ~~~
+    注意這裡我們把 source 跟 click 對調了，並用到了 observable 的一個方法 count()，可以用來取得 observable 總共送出了幾個元素
+    ~~~shell
+    # Marble diagram 图示
+    source : ---------0---------1---------2--...
+    click  : --cc---cc----c-c----------------...
+                    window(source)
+    example: o--------o---------o---------o--..
+              \        \         \         \
+              -cc---cc|---c-c---|---------|--..
+                    count()
+           : o--------o---------o---------o--
+              \        \         \         \
+              -------4|--------2|--------0|--..
+                    switch()
+           : ---------4---------2---------0--...
+    ~~~ 
+    從 Marble Diagram 中可以看出來，我們把部分元素放到新的 observable 中，就可以利用 Observable 的方法做更靈活的操作
+
+
+  - windowToggle
+
+    windowToggle 不像 window 只能控制內部 observable 的結束，windowToggle 可以傳入兩個參數，第一個是開始的 observable，第二個是一個 callback 可以回傳一個結束的 observable，讓我們來看範例
+    ~~~js
+    var source = Rx.Observable.interval(1000);
+    var mouseDown = Rx.Observable.fromEvent(document, 'mousedown');
+    var mouseUp = Rx.Observable.fromEvent(document, 'mouseup');
+    var example = source
+      .windowToggle(mouseDown, () => mouseUp)
+      .switch();
+    
+    example.subscribe(console.log);
+    ~~~
+    ~~~shell
+    # Marble diagram 图示
+    source   : ----0----1----2----3----4----5--...
+    mouseDown: -------D------------------------...
+    mouseUp  : ---------------------------U----...
+            windowToggle(mouseDown, () => mouseUp)
+             : -------o-------------------------...
+                       \
+                        -1----2----3----4--|
+                        switch()
+    example  : ---------1----2----3----4---------...  
+    ~~~ 
+    從 Marble Diagram 可以看得出來，我們用 windowToggle 拆分出來內部的 observable 始於 mouseDown 終於 mouseUp。
+
+
+  - groupBy
+
+    它可以幫我們把相同條件的元素拆分成一個 Observable，其實就跟平常在下 SQL 是一樣個概念，我們先來看個簡單的例子
+    ~~~js
+    var source = Rx.Observable.interval(300).take(5);
+    var example = source
+      .groupBy(x => x % 2);
+    
+    example.subscribe(console.log);
+    // GroupObservable { key: 0, ...}
+    // GroupObservable { key: 1, ...}
+    ~~~
+    上面的例子，我們傳入了一個 callback function 並回傳 groupBy 的條件，就能區分每個元素到不同的 Observable 中
+    ~~~shell
+    # Marble diagram 图示
+    source : ---0---1---2---3---4|
+              groupBy(x => x % 2)
+    example: ---o---o------------|
+                 \   \
+                  \   1-------3----|
+                  0-------2-------4|
+    ~~~ 
+    在實務上，我們可以拿 groupBy 做完元素的區分後，再對 inner Observable 操作，例如下面這個例子我們將每個人的分數作加總再送出
+    ~~~js
+    var people = [
+      {name: 'Anna', score: 100, subject: 'English'},
+      {name: 'Anna', score: 90, subject: 'Math'},
+      {name: 'Anna', score: 96, subject: 'Chinese' }, 
+      {name: 'Jerry', score: 80, subject: 'English'},
+      {name: 'Jerry', score: 100, subject: 'Math'},
+      {name: 'Jerry', score: 90, subject: 'Chinese' }, 
+    ];
+    var source = Rx.Observable.from(people)
+      .zip(Rx.Observable.interval(300), (x, y) => x);
+    var example = source
+      .groupBy(person => person.name)
+      .map(group => group.reduce((acc, curr) => ({
+        name: curr.name,
+        score: curr.score + acc.score
+    }))).mergeAll();
+    
+    example.subscribe(console.log);
+    // { name: "Anna", score: 286 }
+    // { name: 'Jerry', score: 270 }
+    ~~~
+    這裡我們範例是想把 Jerry 跟 Anna 的分數個別作加總
+    ~~~shell
+    # Marble diagram 图示
+    source : --o--o--o--o--o--o|
+
+    groupBy(person => person.name)
+    
+           : --i--------i------|
+                \        \
+                 \         o--o--o|
+                  o--o--o--|
+    
+           map(group => group.reduce(...))
+             
+           : --i---------i------|
+               \         \
+               o|        o|
+            
+                 mergeAll()
+    example: --o---------o------|
+    ~~~ 
+
+## 深入 Observable
+> 在系列文章的一開頭是以陣列(Array)的 operators(map, filter, concatAll) 作為切入點，讓讀者們在學習 observable 時會更容易接受跟理解，但實際上 observable 的 operators 跟陣列的有很大的不同，主要差異有兩點
+> 1. 延遲運算
+> 2. 漸進式取值
+
+  - 延遲運算
+   
+    延遲運算很好理解，所有 Observable 一定會等到訂閱後才開始對元素做運算，如果沒有訂閱就不會有運算的行為
+    ~~~js
+    var source = Rx.Observable.from([1,2,3,4,5]);
+    var example = source.map(x => x + 1);
+    ~~~
+    上面這段程式碼因為 Observable 還沒有被訂閱，所以不會真的對元素做運算，這跟陣列的操作不一樣，如下
+    ~~~js
+    var source = [1,2,3,4,5];
+    var example = source.map(x => x + 1);
+    ~~~
+    上面這段程式碼執行完，example 就已經取得所有元素的返回值了。
+    > 延遲運算是 Observable 跟陣列最明顯的不同，延遲運算所帶來的優勢在之前的文章也已經提過這裡就不再贅述，因為我們還有一個更重要的差異要講，那就是漸進式取值
+
+
+  - 漸進式取值
+
+    陣列的 operators 都必須完整的運算出每個元素的返回值並組成一個陣列，再做下一個 operator 的運算，我們看下面這段程式碼
+    ~~~js
+    var source = [1,2,3];
+    var example = source
+      .filter(x => x % 2 === 0) // 這裡會運算並返回一個完整的陣列
+      .map(x => x + 1) // 這裡也會運算並返回一個完整的陣列
+    ~~~
+    上面這段程式碼，相信讀者們都很熟悉了，大家應該都有注意到 source.filter(...) 就會返回一整個新陣列，再接下一個 operator 又會再返回一個新的陣列，這一點其實在我們實作 map 跟 filter 時就能觀察到
+    ~~~js
+    Array.prototype.map = function(callback) {
+      var result = []; // 建立新陣列
+      this.forEach(function(item, index, array) {
+        result.push(callback(item, index, array))
+      });
+      return result; // 返回新陣列
+    }
+    ~~~
+    每一次的 operator 的運算都會建立一個新的陣列，並在每個元素都運算完後返回這個新陣列，我們可以用下面這張動態圖表示運算過程
+    <br>
+    <br>
+    Observable operator 的運算方式跟陣列的是完全的不同，雖然 Observable 的 operator 也都會回傳一個新的 observable，但因為元素是漸進式取得的關係，所以每次的運算是一個元素運算到底，而不是運算完全部的元素再返回。
+    ~~~js
+    var source = Rx.Observable.from([1,2,3]);
+    var example = source
+      .filter(x => x % 2 === 0)
+      .map(x => x + 1)
+    example.subscribe(console.log);
+    ~~~
+    上面這段程式碼運行的方式是這樣的
+    * 送出 1 到 filter 被過濾掉
+    * 送出 2 到 filter 在被送到 map 轉成 3，送到 observer console.log 印出
+    * 送出 3 到 filter 被過濾掉
+
+    <br>
+    每個元素送出後就是運算到底，在這個過程中不會等待其他的元素運算。這就是漸進式取值的特性，不知道讀者們還記不記得我們在講 Iterator 跟 Observer 時，就特別強調這兩個 Pattern 的共同特性是漸進式取值，而我們在實作 Iterator 的過程中其實就能看出這個特性的運作方式
+    
+    ~~~js
+    class IteratorFromArray {
+      constructor(arr) {
+        this._array = arr;
+        this._cursor = 0;
+      }
+      next() {
+        return this._cursor < this._array.length ?
+            { value: this._array[this._cursor++], done: false } : { done: true };
+      }
+      map(callback) {
+        const iterator = new IteratorFromArray(this._array);
+        return {
+          next: () => {
+            const { done, value } = iterator.next();
+            return {
+              done: done,
+              value: done ? undefined : callback(value)
+            }
+          }
+        }
+      }
+    }
+    var myIterator = new IteratorFromArray([1,2,3]);
+    var newIterator = myIterator.map(x => x + 1);
+    newIterator.next(); // { done: false, value: 2 }
+    ~~~
+    雖然上面這段程式碼是一個非常簡單的示範，但可以看得出來每一次 map 雖然都會返回一個新的 oterator，但實際上在做元素運算時，因為漸進式的特性會使一個元素運算到底，Observable 也是相同的概念，我們可以用下面這張動態圖表示運算過程
+    <br>
+    <br>
+    漸進式取值的觀念在 Observable 中其實非常的重要，這個特性也使得 Observable 相較於 Array 的 operator 在做運算時來的高效很多，尤其是在處理大量資料的時候會非常明顯！
+
+## Subject 基本观念
+  - Multiple subscriptions(多次订阅)
+    ~~~js
+    var source = Rx.Observable.interval(1000).take(3);
+    var observerA = {
+      next: value => console.log('A next: ' + value),
+      error: error => console.log('A error: ' + error),
+      complete: () => console.log('A complete!')
+    }
+    var observerB = {
+      next: value => console.log('B next: ' + value),
+      error: error => console.log('B error: ' + error),
+      complete: () => console.log('B complete!')
+    }
+    source.subscribe(observerA);
+    source.subscribe(observerB);
+    // "A next: 0"
+    // "B next: 0"
+    // "A next: 1"
+    // "B next: 1"
+    // "A next: 2"
+    // "A complete!"
+    // "B next: 2"
+    // "B complete!"
+    ~~~
+    上面這段程式碼，分別用 observerA 跟 observerB 訂閱了 source，從 log 可以看出來 observerA 跟 observerB 都各自收到了元素，但請記得這兩個 observer 其實是分開執行的也就是說他們是完全獨立的，我們把 observerB 延遲訂閱來證明看看
+    ~~~js
+    var source = Rx.Observable.interval(1000).take(3);
+    var observerA = {
+      next: value => console.log('A next: ' + value),
+      error: error => console.log('A error: ' + error),
+      complete: () => console.log('A complete!')
+    }
+    var observerB = {
+      next: value => console.log('B next: ' + value),
+      error: error => console.log('B error: ' + error),
+      complete: () => console.log('B complete!')
+    }
+    source.subscribe(observerA);
+    setTimeout(() => {
+      source.subscribe(observerB);
+    }, 1000);
+    // "A next: 0"
+    // "A next: 1"
+    // "B next: 0"
+    // "A next: 2"
+    // "A complete!"
+    // "B next: 1"
+    // "B next: 2"
+    // "B complete!"
+    ~~~
+    這裡我們延遲一秒再用 observerB 訂閱，可以從 log 中看出 1 秒後 observerA 已經印到了 1，這時 observerB 開始印卻是從 0 開始，而不是接著 observerA 的進度，代表這兩次的訂閱是完全分開來執行的，或者說是每次的訂閱都建立了一個新的執行。
+    <br>
+    <br>
+    這樣的行為在大部分的情境下適用，但有些案例下我們會希望第二次訂閱 source 不會從頭開始接收元素，而是從第一次訂閱到當前處理的元素開始發送，我們把這種處理方式稱為組播(multicast)，那我們要如何做到組播呢？
+    
+
+  - 手動建立 subject
+
+    或許已經有讀者想到解法了，其實我們可以建立一個中間人來訂閱 source 再由中間人轉送資料出去，就可以達到我們想要的效果
+    ~~~js
+    var source = Rx.Observable.interval(1000).take(3);
+    var observerA = {
+      next: value => console.log('A next: ' + value),
+      error: error => console.log('A error: ' + error),
+      complete: () => console.log('A complete!')
+    }
+    var observerB = {
+      next: value => console.log('B next: ' + value),
+      error: error => console.log('B error: ' + error),
+      complete: () => console.log('B complete!')
+    }
+    var subject = {
+      observers: [],
+      addObserver: function(observer) {
+        this.observers.push(observer)
+      },
+      next: function(value) {
+        this.observers.forEach(o => o.next(value))    
+      },
+      error: function(error){
+        this.observers.forEach(o => o.error(error))
+      },
+      complete: function() {
+        this.observers.forEach(o => o.complete())
+      }
+    }
+    subject.addObserver(observerA)
+    source.subscribe(subject);
+    setTimeout(() => {
+      subject.addObserver(observerB);
+    }, 1000);
+    // "A next: 0"
+    // "A next: 1"
+    // "B next: 1"
+    // "A next: 2"
+    // "B next: 2"
+    // "A complete!"
+    // "B complete!"
+    ~~~
+    從上面的程式碼可以看到，我們先建立了一個物件叫 subject，這個物件具備 observer 所有的方法(next, error, complete)，並且還能 addObserver 把 observer 加到內部的清單中，每當有值送出就會遍歷清單中的所有 observer 並把值再次送出，這樣一來不管多久之後加進來的 observer，都會是從當前處理到的元素接續往下走，就像範例中所示，我們用 subject 訂閱 source 並把 observerA 加到 subject 中，一秒後再把 observerB 加到 subject，這時就可以看到 observerB 是直接收 1 開始，這就是組播(multicast)的行為。
+    <br>
+    <br>
+    讓我們把 subject 的 addObserver 改名成 subscribe 如下
+    ~~~js
+    var subject = {
+      observers: [],
+      subscribe: function(observer) {
+        this.observers.push(observer)
+      },
+      next: function(value) {
+        this.observers.forEach(o => o.next(value))    
+      },
+      error: function(error){
+        this.observers.forEach(o => o.error(error))
+      },
+      complete: function() {
+        this.observers.forEach(o => o.complete())
+      }
+    }
+    ~~~
+    > 應該有眼尖的讀者已經發現，subject 其實就是用了 Observer Pattern。但這邊為了不要混淆 Observer Pattern 跟 RxJS 的 observer 就不再內文提及。這也是為什麼我們在一開始講 Observer Pattern 希望大家親自實作的原因。
+
+    雖然上面是我們自己手寫的 subject，但運作方式跟 RxJS 的 Subject 實例是幾乎一樣的，我們把前面的程式碼改成 RxJS 提供的 Subject 試試
+    ~~~js
+    var source = Rx.Observable.interval(1000).take(3);
+    var observerA = {
+      next: value => console.log('A next: ' + value),
+      error: error => console.log('A error: ' + error),
+      complete: () => console.log('A complete!')
+    }
+    var observerB = {
+      next: value => console.log('B next: ' + value),
+      error: error => console.log('B error: ' + error),
+      complete: () => console.log('B complete!')
+    }
+    var subject = new Rx.Subject()
+    subject.subscribe(observerA)
+    source.subscribe(subject);
+    setTimeout(() => {
+      subject.subscribe(observerB);
+    }, 1000);
+    // "A next: 0"
+    // "A next: 1"
+    // "B next: 1"
+    // "A next: 2"
+    // "B next: 2"
+    // "A complete!"
+    // "B complete!"
+    ~~~
+    大家會發現使用方式跟前面是相同的，建立一個 subject 先拿去訂閱 observable(source)，再把我們真正的 observer 加到 subject 中，這樣一來就能完成訂閱，而每個加到 subject 中的 observer 都能整組的接收到相同的元素。
+
+
+  - 什麼是 Subject?
+    
+    雖然前面我們已經示範直接手寫一個簡單的 subject，但到底 RxJS 中的 Subject 的概念到底是什麼呢？
+    <br>
+    <br>
+    首先 Subject 可以拿去訂閱 Observable(source) 代表他是一個 Observer，同時 Subject 又可以被 Observer(observerA, observerB) 訂閱，代表他是一個 Observable。
+    <br>
+    <br>
+    總結成兩句話
+
+    * Subject 同時是 Observable 又是 Observer
+    * Subject 會對內部的 observers 清單進行組播(multicast)
+    > 其實 Subject 就是 Observer Pattern 的實作並且繼承自 Observable。他會在內部管理一份 observer 的清單，並在接收到值時遍歷這份清單並送出值，所以我們可以這樣用 Subject
+    
+    ~~~js
+    var subject = new Rx.Subject();
+    var observerA = {
+      next: value => console.log('A next: ' + value),
+      error: error => console.log('A error: ' + error),
+      complete: () => console.log('A complete!')
+    }
+    var observerB = {
+      next: value => console.log('B next: ' + value),
+      error: error => console.log('B error: ' + error),
+      complete: () => console.log('B complete!')
+    }
+    subject.subscribe(observerA);
+    subject.subscribe(observerB);
+    subject.next(1);
+    // "A next: 1"
+    // "B next: 1"
+    subject.next(2);
+    // "A next: 2"
+    // "B next: 2"
+    ~~~
+    這裡我們可以直接用 subject 的 next 方法傳送值，所有訂閱的 observer 就會接收到，又因為 Subject 本身是 Observable，所以這樣的使用方式很適合用在某些無法直接使用 Observable 的前端框架中，例如在 React 想對 DOM 的事件做監聽
+    ~~~js
+    class MyButton extends React.Component {
+      constructor(props) {
+        super(props);
+        this.state = { count: 0 };
+        this.subject = new Rx.Subject();
+        
+        this.subject
+          .mapTo(1)
+          .scan((origin, next) => origin + next)
+          .subscribe(x => {
+            this.setState({ count: x })
+          })
+      }
+      render() {
+        return <button onClick={event => this.subject.next(event)}>{this.state.count}</button>
+      }
+    }
+    ~~~    
+    從上面的程式碼可以看出來，因為 React 本身 API 的關係，如果我們想要用 React 自訂的事件，我們沒辦法直接使用 Observable 的 creation operator 建立 observable，這時就可以靠 Subject 來做到這件事。
+    <br>
+    <br>
+    Subject 因為同時是 observer 和 observable，所以應用面很廣除了前面所提的之外，還有上一篇文章講的組播(multicase)特性也會在接下來的文章做更多應用的介紹，這裡先讓我們來看看 Subject 的三個變形。
+
+
+  - BehaviorSubject
+
+    很多時候我們會希望 Subject 能代表當下的狀態，而不是單存的事件發送，也就是說如果今天有一個新的訂閱，我們希望 Subject 能立即給出最新的值，而不是沒有回應，例如下面這個例子
+    ~~~js
+    var subject = new Rx.Subject();
+    var observerA = {
+      next: value => console.log('A next: ' + value),
+      error: error => console.log('A error: ' + error),
+      complete: () => console.log('A complete!')
+    }
+    var observerB = {
+      next: value => console.log('B next: ' + value),
+      error: error => console.log('B error: ' + error),
+      complete: () => console.log('B complete!')
+    }
+    subject.subscribe(observerA);
+    subject.next(1);
+    // "A next: 1"
+    subject.next(2);
+    // "A next: 2"
+    subject.next(3);
+    // "A next: 3"
+    setTimeout(() => {
+      subject.subscribe(observerB); // 3 秒後才訂閱，observerB 不會收到任何值。
+    },3000)
+    ~~~
+    以上面這個例子來說，observerB 訂閱的之後，是不會有任何元素送給 observerB 的，因為在這之後沒有執行任何 subject.next()，但很多時候我們會希望 subject 能夠表達當前的狀態，在一訂閱時就能收到最新的狀態是什麼，而不是訂閱後要等到有變動才能接收到新的狀態，以這個例子來說，我們希望 observerB 訂閱時就能立即收到 3，希望做到這樣的效果就可以用 BehaviorSubject。
+    <br>
+    <br>
+    BehaviorSubject 跟 Subject 最大的不同就是 BehaviorSubject 是用來呈現當前的值，而不是單純的發送事件。BehaviorSubject 會記住最新一次發送的元素，並把該元素當作目前的值，在使用上 BehaviorSubject 建構式需要傳入一個參數來代表起始的狀態，範例如下
+    ~~~js
+    var subject = new Rx.BehaviorSubject(0); // 0 為起始值
+    var observerA = {
+      next: value => console.log('A next: ' + value),
+      error: error => console.log('A error: ' + error),
+      complete: () => console.log('A complete!')
+    }
+    var observerB = {
+      next: value => console.log('B next: ' + value),
+      error: error => console.log('B error: ' + error),
+      complete: () => console.log('B complete!')
+    }
+    subject.subscribe(observerA);
+    // "A next: 0"
+    subject.next(1);
+    // "A next: 1"
+    subject.next(2);
+    // "A next: 2"
+    subject.next(3);
+    // "A next: 3"
+    setTimeout(() => {
+      subject.subscribe(observerB);
+      // "B next: 3"
+    },3000)
+    ~~~
+    從上面這個範例可以看得出來 BehaviorSubject 在建立時就需要給定一個狀態，並在之後任何一次訂閱，就會先送出最新的狀態。其實這種行為就是一種狀態的表達而非單存的事件，就像是年齡跟生日一樣，年齡是一種狀態而生日就是事件；所以當我們想要用一個 stream 來表達年齡時，就應該用 BehaviorSubject。
+
+
+  - ReplaySubject
+
+    在某些時候我們會希望 Subject 代表事件，但又能在新訂閱時重新發送最後的幾個元素，這時我們就可以用 ReplaySubject，範例如下
+    ~~~js
+    var subject = new Rx.ReplaySubject(2); // 重複發送最後 2 個元素
+    var observerA = {
+      next: value => console.log('A next: ' + value),
+      error: error => console.log('A error: ' + error),
+      complete: () => console.log('A complete!')
+    }
+    var observerB = {
+      next: value => console.log('B next: ' + value),
+      error: error => console.log('B error: ' + error),
+      complete: () => console.log('B complete!')
+    }
+    subject.subscribe(observerA);
+    subject.next(1);
+    // "A next: 1"
+    subject.next(2);
+    // "A next: 2"
+    subject.next(3);
+    // "A next: 3"
+    setTimeout(() => {
+      subject.subscribe(observerB);
+      // "B next: 2"
+      // "B next: 3"
+    },3000)
+    ~~~
+    可能會有人以為 ReplaySubject(1) 是不是就等同於 BehaviorSubject，其實是不一樣的，BehaviorSubject 在建立時就會有起始值，比如 BehaviorSubject(0) 起始值就是 0，BehaviorSubject 是代表著狀態而 ReplaySubject 只是事件的重放而已。
+
+
+  - AsyncSubject
+
+    AsyncSubject 是最怪的一個變形，他有點像是 operator last，會在 subject 結束後送出最後一個值，範例如下
+    ~~~js
+    var subject = new Rx.AsyncSubject();
+    var observerA = {
+      next: value => console.log('A next: ' + value),
+      error: error => console.log('A error: ' + error),
+      complete: () => console.log('A complete!')
+    }
+    var observerB = {
+      next: value => console.log('B next: ' + value),
+      error: error => console.log('B error: ' + error),
+      complete: () => console.log('B complete!')
+    }
+    subject.subscribe(observerA);
+    subject.next(1);
+    subject.next(2);
+    subject.next(3);
+    subject.complete();
+    // "A next: 3"
+    // "A complete!"
+    setTimeout(() => {
+      subject.subscribe(observerB);
+      // "B next: 3"
+      // "B complete!"
+    },3000)
+    ~~~
+    從上面的程式碼可以看出來，AsyncSubject 會在 subject 結束後才送出最後一個值，其實這個行為跟 Promise 很像，都是等到事情結束後送出一個值，但實務上我們非常非常少用到 AsyncSubject，絕大部分的時候都是使用 BehaviorSubject 跟 ReplaySubject 或 Subject。
+
+    >我們把 AsyncSubject 放在大腦的深處就好
+
+
 
 
 
@@ -2289,4 +3166,131 @@
       // 這裡偷懶了一下，直接寫死元件的寬高(320, 180)，實際上應該用 getBoundingClientRect 計算是比較好的。
       ~~~
 
+## 案例-简易的 Auto Complete 实现
+  - 需求分析
+    > 首先我們會有一個搜尋框(input#search)，當我們在上面打字並停頓超過 100 毫秒就發送 HTTP Request 來取得建議選項並顯示在收尋框下方(ul#suggest-list)，如果使用者在前一次發送的請求還沒有回來就打了下一個字，此時前一個發送的請求就要捨棄掉，當建議選項顯示之後可以用滑鼠點擊取建議選項代搜尋框的文字。
 
+    > 上面可以拆分成以下幾個步驟
+      * 準備 input#search 以及 ul#suggest-list 的 HTML 與 CSS
+      * 在 input#search 輸入文字時，等待 100 毫秒再無輸入，就發送 HTTP Request
+      * 當 Response 還沒回來時，使用者又輸入了下一個文字就捨棄前一次的並再發送一次新的 Request 
+      * 接受到 Response 之後顯示建議選項 
+      * 滑鼠點擊後取代 input#search 的文字
+        <br>
+        <br>
+    
+    首先在 HTML 裡有一個 input(#search)，這個 input(#search) 就是要用來輸入的欄位，它下方有一個 ul(#suggest-list)，則是放建議選項的地方
+    ~~~js
+    const url = 'https://zh.wikipedia.org/w/api.php?action=opensearch&format=json&limit=5&origin=*';
+
+    const getSuggestList = (keyword) => fetch(url + '&search=' + keyword, { method: 'GET', mode: 'cors' })
+      .then(res => res.json())
+    ~~~
+    上面是已經寫好了要發送 API 的 url 跟方法getSuggestList，接著就開始實作自動完成的效果吧！
+    
+
+  - 开始实现
+    * 第一步，取得需要的 DOM 物件
+        
+      這裡我們會用到 #search 以及 #suggest-list 這兩個 DOM
+      ~~~js
+      const searchInput = document.getElementById('search');
+      const suggestList = document.getElementById('suggest-list');
+      ~~~
+    * 第二步，建立所需的 Observable
+
+      這裡我們要監聽 收尋欄位的 input 事件，以及建議選項的點擊事件
+      ~~~js
+      const keyword = Rx.Observable.fromEvent(searchInput, 'input');
+      const selectItem = Rx.Observable.fromEvent(suggestList, 'click');
+      ~~~
+    * 第三步，撰寫程式邏輯
+
+      每當使用者輸入文字就要發送 HTTP request，並且有新的值被輸入後就捨棄前一次發送的，所以這裡用 switchMap
+      ~~~js
+      keyword.switchMap(e => getSuggestList(e.target.value))
+      ~~~
+      這裡我們先試著訂閱，看一下 API 會回傳什麼樣的資料
+      ~~~js
+      keyword
+        .switchMap(e => getSuggestList(e.target.value))
+        .subscribe(console.log)
+      ~~~
+      在 search 栏位亂打幾個字，大家可以在 console 看到数据，他會回傳一個陣列帶有四個元素，其中第一個元素是我們輸入的值，第二個元素才是我們要的建議選項清單。
+      <br>
+      <br>
+      所以我們要取的是 response 陣列的第二的元素，用 switchMap 的第二個參數來選取我們要的
+      ~~~js
+      keyword
+        .switchMap(e => getSuggestList(e.target.value),(e, res) => res[1])
+        .subscribe(console.log)
+      ~~~
+      這時再輸入文字就可以看到確實是我們要的返回值
+      <br>
+      <br>
+      寫一個 render 方法，把陣列轉成 li 並寫入 suggestList
+      ~~~js
+      const render = (suggestArr = []) => {
+        suggestList.innerHTML = suggestArr
+          .map(item => '<li>'+ item +'</li>')
+          .join('');  
+      }
+      ~~~
+      這時我們就可用 render 方法把取得的陣列傳入
+      ~~~js
+      const render = (suggestArr = []) => {
+        suggestList.innerHTML = suggestArr
+          .map(item => '<li>'+ item +'</li>')
+          .join('');  
+      }
+      keyword
+        .switchMap(e => getSuggestList(e.target.value), (e, res) => res[1])
+        .subscribe(list => render(list))
+      ~~~
+      如此一來我們打字就能看到結果出現在 input 下方了，只是目前還不能點選，先讓我們來做點選的功能，這裡點選的功能我們需要用到 delegation event 的小技巧，利用 ul 的 click 事件，來塞選是否點到了 li，如下
+      ~~~js
+      selectItem.filter(e => e.target.matches('li'))
+      ~~~
+      上面我們利用 DOM 物件的 matches 方法(裡面的字串放 css 的 selector)來過濾出有點擊到 li 的事件，再用 map 轉出我們要的值並寫入 input。
+      ~~~js
+      selectItem
+        .filter(e => e.target.matches('li'))
+        .map(e => e.target.innerText)
+        .subscribe(text => searchInput.value = text)
+      ~~~
+      現在我們就能點擊建議清單了，但是點擊後清單沒有消失，這裡我們要在點擊後重新 redner，所以把上面的程式碼改一下
+      ~~~js
+      selectItem
+        .filter(e => e.target.matches('li'))
+        .map(e => e.target.innerText)
+        .subscribe(text => {
+          searchInput.value = text;
+          render();
+        })
+      ~~~
+      這樣一來我們就完成最基本的功能了，還記得我們前面說每次打完字要等待 100 毫秒在發送 request 嗎？ 這樣能避免過多的 request 發送，可以降低 server 的負載也會有比較好的使用者體驗，要做到這件事很簡單只要加上 debounceTime(100) 就完成了
+      ~~~js
+      keyword
+        .debounceTime(100)
+        .switchMap(e => getSuggestList(e.target.value),(e, res) => res[1])
+        .subscribe(list => render(list))
+      ~~~
+      當然這個數值可以依照需求或是請 UX 針對這個細節作調整。這樣我們就完成所有功能了。
+  - 扩展
+    
+    當我們能夠自己從頭到尾的完成這樣的功能，在面對各種不同的需求，我們就能很方便的針對需求作調整，而不會受到套件的牽制！比如說我們希望使用者打了 2 個字以上在發送 request，這時我們只要加上一行 filter 就可以了
+    ~~~js
+    keyword
+      .filter(e => e.target.value.length > 2)
+      .debounceTime(100)
+      .switchMap(e => getSuggestList(e.target.value), (e, res) => res[1])
+      .subscribe(list => render(list))
+    ~~~
+    又或者網站的使用量很大，可能 API 在量大的時候會回傳失敗，主管希望可以在 API 失敗的時候重新嘗試 3 次，我們只要加個 retry(3) 就完成了
+    ~~~js
+    keyword
+      .filter(e => e.target.value.length > 2)
+      .debounceTime(100)
+      .switchMap(e => Rx.Observable.from(getSuggestList(e.target.value)).retry(3), (e, res) => res[1])
+      .subscribe(list => render(list))
+    ~~~
