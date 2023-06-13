@@ -3004,6 +3004,749 @@
 
     >我們把 AsyncSubject 放在大腦的深處就好
 
+  - multicast
+
+    multicast 可以用來掛載 subject 並回傳一個可連結(connectable)的 observable，如下
+    ~~~js
+    var source = Rx.Observable.interval(1000)
+      .take(3)
+      .multicast(new Rx.Subject());
+    var observerA = {
+      next: value => console.log('A next: ' + value),
+      error: error => console.log('A error: ' + error),
+      complete: () => console.log('A complete!')
+    }
+    var observerB = {
+      next: value => console.log('B next: ' + value),
+      error: error => console.log('B error: ' + error),
+      complete: () => console.log('B complete!')
+    }
+    source.subscribe(observerA); // subject.subscribe(observerA)
+    source.connect(); // source.subscribe(subject)
+    setTimeout(() => {
+      source.subscribe(observerB); // subject.subscribe(observerB)
+    }, 1000);
+    ~~~
+    上面這段程式碼我們透過 multicast 來掛載一個 subject 之後這個 observable(source) 的訂閱其實都是訂閱到 subject 上。
+    ~~~js
+    source.subscribe(observerA); // subject.subscribe(observerA)
+    ~~~
+    必須真的等到 執行 connect() 後才會真的用 subject 訂閱 source，並開始送出元素，如果沒有執行 connect() observable 是不會真正執行的。
+    ~~~js
+    source.connect();
+    ~~~
+    另外值得注意的是這裡要退訂的話，要把 connect() 回傳的 subscription 退訂才會真正停止 observable 的執行，如下
+    ~~~js
+    var source = Rx.Observable.interval(1000)
+      .do(x => console.log('send: ' + x))
+      .multicast(new Rx.Subject()); // 無限的 observable 
+    var observerA = {
+      next: value => console.log('A next: ' + value),
+      error: error => console.log('A error: ' + error),
+      complete: () => console.log('A complete!')
+    }
+    var observerB = {
+      next: value => console.log('B next: ' + value),
+      error: error => console.log('B error: ' + error),
+      complete: () => console.log('B complete!')
+    }
+    var subscriptionA = source.subscribe(observerA);
+    var realSubscription = source.connect();
+    var subscriptionB;
+    setTimeout(() => {
+      subscriptionB = source.subscribe(observerB);
+    }, 1000);
+    setTimeout(() => {
+      subscriptionA.unsubscribe();
+      subscriptionB.unsubscribe();
+    // 這裡雖然 A 跟 B 都退訂了，但 source 還會繼續送元素
+    }, 5000);
+    setTimeout(() => {
+      realSubscription.unsubscribe();
+    // 這裡 source 才會真正停止送元素
+    }, 7000);
+    ~~~
+    上面這段的程式碼，必須等到 realSubscription.unsubscribe() 執行完，source 才會真的結束。
+    <br>
+    <br>
+    雖然用了 multicast 感覺會讓我們處理的對象少一點，但必須搭配 connect 一起使用還是讓程式碼有點複雜，通常我們會希望有 observer 訂閱時，就立即執行並發送元素，而不要再多執行一個方法(connect)，這時我們就可以用 refCount。
+
+  - refCount
+
+    refCount 必須搭配 multicast 一起使用，他可以建立一個只要有訂閱就會自動 connect 的 observable，範例如下
+    ~~~js
+    var source = Rx.Observable.interval(1000)
+      .do(x => console.log('send: ' + x))
+      .multicast(new Rx.Subject())
+      .refCount();
+    var observerA = {
+      next: value => console.log('A next: ' + value),
+      error: error => console.log('A error: ' + error),
+      complete: () => console.log('A complete!')
+    }
+    var observerB = {
+      next: value => console.log('B next: ' + value),
+      error: error => console.log('B error: ' + error),
+      complete: () => console.log('B complete!')
+    }
+    var subscriptionA = source.subscribe(observerA);
+    // 訂閱數 0 => 1
+    var subscriptionB;
+    setTimeout(() => {
+      subscriptionB = source.subscribe(observerB);
+    // 訂閱數 0 => 2
+    }, 1000);
+    ~~~
+    上面這段程式碼，當 source 一被 observerA 訂閱時(訂閱數從 0 變成 1)，就會立即執行並發送元素，我們就不需要再額外執行 connect。
+    ~~~js
+    var source = Rx.Observable.interval(1000)
+      .do(x => console.log('send: ' + x))
+      .multicast(new Rx.Subject())
+      .refCount();
+    var observerA = {
+      next: value => console.log('A next: ' + value),
+      error: error => console.log('A error: ' + error),
+      complete: () => console.log('A complete!')
+    }
+    var observerB = {
+      next: value => console.log('B next: ' + value),
+      error: error => console.log('B error: ' + error),
+      complete: () => console.log('B complete!')
+    }
+    var subscriptionA = source.subscribe(observerA);
+    // 訂閱數 0 => 1
+    var subscriptionB;
+    setTimeout(() => {
+      subscriptionB = source.subscribe(observerB);
+    // 訂閱數 0 => 2
+    }, 1000);
+    setTimeout(() => {
+      subscriptionA.unsubscribe(); // 訂閱數 2 => 1
+      subscriptionB.unsubscribe(); // 訂閱數 1 => 0，source 停止發送元素
+    }, 5000);
+    ~~~
+    
+  - publish
+
+    其實 multicast(new Rx.Subject()) 很常用到，我們有一個簡化的寫法那就是 publish，下面這兩段程式碼是完全等價的
+    ~~~js
+    var source = Rx.Observable.interval(1000)
+      .publish() 
+      .refCount();
+             
+    // var source = Rx.Observable.interval(1000)
+    //   .multicast(new Rx.Subject())
+    //   .refCount();
+    ~~~
+    加上 Subject 的三种变形
+    ~~~js
+    var source = Rx.Observable.interval(1000)
+      .publishReplay(1) 
+      .refCount();
+             
+    // var source = Rx.Observable.interval(1000)
+    //   .multicast(new Rx.ReplaySubject(1))
+    //   .refCount();
+    ~~~
+    ~~~js
+    var source = Rx.Observable.interval(1000)
+      .publishBehavior(0) 
+      .refCount();
+             
+    // var source = Rx.Observable.interval(1000)
+    //   .multicast(new Rx.BehaviorSubject(0))
+    //   .refCount();
+    ~~~
+    ~~~js
+    var source = Rx.Observable.interval(1000)
+      .publishLast() 
+      .refCount();
+             
+    // var source = Rx.Observable.interval(1000)
+    //   .multicast(new Rx.AsyncSubject(1))
+    //   .refCount();
+    ~~~
+    
+  - share
+
+    另外 publish + refCount 可以在簡寫成 share
+    ~~~js
+    var source = Rx.Observable.interval(1000).share();
+             
+    // var source = Rx.Observable.interval(1000)
+    //   .publish()
+    //   .refCount();
+    // var source = Rx.Observable.interval(1000)
+    //   .multicast(new Rx.Subject())
+    //   .refCount();
+    ~~~
+
+## Subject 总结
+Subject 其實在 RxJS 中最常被誤解的一部份，因為 Subject 可以讓你用命令式的方式雖送值到一個 observable 的串流中。
+
+很多人會直接把 Subject 拿來用在 不知道如何建立 Observable 的狀況，比如我之前提到的可以用在 ReactJS 的 Event 中，來建立 event 的 observable
+
+~~~js
+class MyButton extends React.Component {
+    constructor(props) {
+        super(props);
+        this.state = { count: 0 };
+        this.subject = new Rx.Subject();
+        
+        this.subject
+            .mapTo(1)
+            .scan((origin, next) => origin + next)
+            .subscribe(x => {
+                this.setState({ count: x })
+            })
+    }
+    render() {
+        return <button onClick={event => this.subject.next(event)}>{this.state.count}</button>
+    }
+}
+~~~
+因為在 React API 的關係，如果我們想要把 React Event 轉乘 observable 就可以用 Subject 幫我們做到這件事；但絕大多數的情況我們是可以透過 Observable.create 來做到這件事，像下面這樣
+~~~js
+const example = Rx.Observable.creator(observer => {
+    const source = getSomeSource(); // 某個資料源
+    source.addListener('some', (some) => {
+        observer.next(some)
+    })
+});
+~~~
+大概就會像上面這樣，如果沒有合適的 creation operators 我們還是可以利用 Observable.create 來建立 observable，除非真的因為框架限制才會直接用 Subject。
+
+  - Subject 與 Observable 的差異
+    <br>
+    <br>
+    永遠記得 Subject 其實是 Observer Design Pattern 的實作，所以當 observer 訂閱到 subject 時，subject 會把訂閱者塞到一份訂閱者清單，在元素發送時就是在遍歷這份清單，並把元素一一送出，這跟 Observable 像是一個 function 執行是完全不同的(請參考 05 篇)。
+    <br>
+    <br>
+    Subject 之所以具有 Observable 的所有方法，是因為 Subject 繼承了 Observable 的型別，其實 Subject 型別中主要實做的方法只有 next、error、 complete、subscribe 及 unsubscribe 這五個方法，而這五個方法就是依照 Observer Pattern 下去實作的。
+    <br>
+    <br>
+    總而言之，Subject 是 Observable 的子類別，這個子類別當中用上述的五個方法實作了 Observer Pattern，所以他同時具有 Observable 與 Observer 的特性，而跟 Observable 最大的差異就是 Subject 是具有狀態的，也就是儲存的那份清單！
+
+
+  - 當前版本會遇到的問題
+    <br>
+    <br>
+    因為 Subject 在訂閱時，是把 observer 放到一份清單當中，並在元素要送出(next)的時候遍歷這份清單，大概就像下面這樣
+    ~~~js
+    //...
+    next() {
+        // observers 是一個陣列存有所有的 observer
+        for (let i = 0; i < observers.length; i++) {
+            observers[i].next(value);
+        }
+    }
+    //...
+    ~~~
+    這會衍伸一個大問題，就是在某個 observer 發生錯誤卻沒有做錯誤處理時，就會影響到別的訂閱，看下面這個例子
+    ~~~js
+    const source = Rx.Observable.interval(1000);
+    const subject = new Rx.Subject();
+    const example = subject.map(x => {
+        if (x === 1) {
+            throw new Error('oops');
+        }
+        return x;
+    });
+    subject.subscribe(x => console.log('A', x));
+    example.subscribe(x => console.log('B', x));
+    subject.subscribe(x => console.log('C', x));
+    source.subscribe(subject);
+    ~~~
+    上面這個例子，大家可能會預期 B 會在送出 1 的時候掛掉，另外 A 跟 C 則會持續發送元素，確實正常應該像這樣運席；但目前 RxJS 的版本中會在 B 報錯之後，A 跟 C 也同時停止運行。原因就像我前面所提的，在遍歷所有 observer 時發生了例外會導致之後的行為停止。
+    > 這個應該會在之後的版本中改掉的
+
+    那要如何解決這個問題呢？ 目前最簡單的方式當然是盡可能地把所有 observer 的錯誤處理加進去，這樣一來就不會有例外發生
+    ~~~js
+    const source = Rx.Observable.interval(1000);
+    const subject = new Rx.Subject();
+    const example = subject.map(x => {
+        if (x === 1) {
+            throw new Error('oops');
+        }
+        return x;
+    });
+    subject.subscribe(x => console.log('A', x), error => console.log('A Error:' + error));
+    example.subscribe(x => console.log('B', x), error => console.log('B Error:' + error));
+    subject.subscribe(x => console.log('C', x), error => console.log('C Error:' + error));
+    source.subscribe(subject);
+    ~~~    
+    像上面這段程式碼，當 B 發生錯誤時就只有 B 會停止，而不會影響到 A 跟 C。
+
+    當然還有另一種解法是用 Scheduler，但因為我們這系列的文章還沒有講到 Scheduler 所以這個解法大家看看就好
+    ~~~js
+    const source = Rx.Observable.interval(1000);
+    const subject = new Rx.Subject().observeOn(Rx.Scheduler.asap);
+    const example = subject.map(x => {
+        if (x === 1) {
+            throw new Error('oops');
+        }
+        return x;
+    });
+    subject.subscribe(x => console.log('A', x));
+    example.subscribe(x => console.log('B', x));
+    subject.subscribe(x => console.log('C', x));
+    source.subscribe(subject);
+    ~~~
+
+
+  - 一定需要使用 Subject 的時機？
+    <br>
+    <br>
+    Subject 必要的使用時機除了本篇文章一開始所提的之外，正常應該是當我們一個 observable 的操作過程中發生了 side-effect 而我們不希望這個 side-effect 因為多個 subscribe 而被觸發多次，比如說下面這段程式碼
+    ~~~js
+    var result = Rx.Observable.interval(1000).take(6)
+      .map(x => Math.random()); // side-effect，平常有可能是呼叫 API 或其他 side effect
+    var subA = result.subscribe(x => console.log('A: ' + x));
+    var subB = result.subscribe(x => console.log('B: ' + x));
+    ~~~
+    這段程式碼 A 跟 B 印出來的亂數就不一樣，代表 random(side-effect) 被執行了兩次，這種情況就一定會用到 subject(或其相關的 operators)
+    ~~~js
+    var result = Rx.Observable.interval(1000).take(6)
+      .map(x => Math.random()) // side-effect
+      .multicast(new Rx.Subject())
+      .refCount();
+    var subA = result.subscribe(x => console.log('A: ' + x));
+    var subB = result.subscribe(x => console.log('B: ' + x));
+    ~~~
+    改成這樣後我們就可以讓 side-effect 不會因為訂閱數而多執行，這種情狀就是一定要用 subject 的。
+
+
+## 简易实现Observable
+  - 重點觀念
+    
+    Observable 跟 Observer Pattern 是不同的，Observable 內部並沒有管理一份訂閱清單，訂閱 Observable 就像是執行一個 function 一樣！
+
+    所以實作過程的重點
+    * 訂閱就是執行一個 function
+    * 訂閱接收的物件具備 next, error, complete 三個方法
+    * 訂閱會返回一個可退訂(unsubscribe)的物件
+
+  - 基本 observable 实现
+    先用最簡單的 function 來建立 observable 物件
+    ~~~js
+    function create(subscriber) {
+        var observable = {
+            subscribe: function(observer) {
+                subscriber(observer)
+            }       
+        };
+        return observable;
+    }
+    ~~~
+    上面這段程式碼就可以做最簡單的訂閱，像下面這樣
+    ~~~js
+    function create(subscriber) {
+      var observable = {
+        subscribe: function(observer) {
+          subscriber(observer)
+        }       
+      };
+      return observable;
+    }
+    var observable = create(function(observer) {
+      observer.next(1);
+      observer.next(2);
+      observer.next(3);
+    })
+    var observer = {
+      next: function(value) {
+        console.log(value)
+      }
+    }
+    observable.subscribe(observer)
+    // 1
+    // 2
+    // 3
+    ~~~
+    這時我們已經有最簡單的功能了，但這裡有一個大問題，就是 observable 在結束(complete)就不應該再發送元素
+    ~~~js
+    var observable = create(function(observer) {
+      observer.next(1);
+      observer.next(2);
+      observer.next(3);
+      observer.complete();
+      observer.next('still work');
+    })
+    var observer = {
+      next: function(value) {
+        console.log(value)
+      },
+      complete: function() {
+        console.log('complete!')
+      }
+    }
+    observable.subscribe(observer)
+    // 1
+    // 2
+    // 3
+    // "complete!"
+    // "still work"
+    ~~~
+    從上面的程式碼可以看到 complete 之後還是能送元素出來，另外還有一個問題就是 observer，如果是不完整的就會出錯，這也不是我們希望看到的。
+    ~~~js
+    var observable = create(function(observer) {
+      observer.next(1);
+      observer.next(2);
+      observer.next(3);
+      observer.complete(); // error: complete is not a function
+    })
+    var observer = {
+      next: function(value) {
+        console.log(value)
+      }
+    }
+    observable.subscribe(observer)
+    // 1
+    // 2
+    // 3
+    // "complete!"
+    // "still work"
+    ~~~
+    上面這段程式碼可以看出來，當使用者 observer 物件沒有 complete 方法時，就會報錯。 我們應該修正這兩個問題！
+
+
+  - 实现简易 Observer
+    <br>
+    <br>
+    要修正這兩個問題其實並不難，我們只要实现一個 Observer 的类，每次使用者傳入的 observer 都會利用這個類別轉乘我們想要 Observer 物件。
+    <br>
+    <br>
+    首先訂閱時有可能傳入一個 observer 物件，或是一到三個 function(next, error, complete)，所以我們要建立一個類別可以接受各種可能的參數
+    ~~~js
+    class Observer {
+      constructor(destinationOrNext, error, complete) {
+        switch (arguments.length) {
+          case 0:
+            // 空的 observer
+          case 1:
+            if (!destinationOrNext) {
+            // 空的 observer
+            }
+            if (typeof destinationOrNext === 'object') {
+            // 傳入了 observer 物件
+            }
+          default:
+            // 如果上面都不是，代表應該是傳入了一到三個 function
+          break;
+        }
+      }
+    }
+    ~~~
+    寫一個方法(safeObserver)來回傳正常的 observer
+    ~~~js
+    class Observer {
+      constructor(destinationOrNext, error, complete) {
+      // ... 一些程式碼
+      }
+      safeObserver(observerOrNext, error, complete) {
+        let next;
+        if (typeof (observerOrNext) === 'function') {
+          // observerOrNext 是 next function
+          next = observerOrNext;
+        } else if (observerOrNext) {
+          // observerOrNext 是 observer 物件
+          next = observerOrNext.next || () => {};
+          error = observerOrNext.error || function(err) {
+            throw err
+          };
+          complete = observerOrNext.complete || () => {};
+        }
+        // 最後回傳我們預期的 observer 物件
+        return {
+          next: next,
+          error: error,
+          complete: complete
+        };
+      }
+    }
+    ~~~
+    再把 constructor 完成
+    ~~~js
+    // 預設空的 observer 
+    const emptyObserver = {
+      next: () => {},
+      error: (err) => { throw err; },
+      complete: () => {}
+    }
+    class Observer {
+      constructor(destinationOrNext, error, complete) {
+      switch (arguments.length) {
+        case 0:
+          // 空的 observer
+          this.destination = this.safeObserver(emptyObserver);
+        break;
+        case 1:
+          if (!destinationOrNext) {
+            // 空的 observer
+            this.destination = this.safeObserver(emptyObserver);
+            break;
+          }
+          if (typeof destinationOrNext === 'object') {
+            // 傳入了 observer 物件
+            this.destination = this.safeObserver(destinationOrNext);
+            break;
+          }
+        default:
+          // 如果上面都不是，代表應該是傳入了一到三個 function
+          this.destination = this.safeObserver(destinationOrNext, error, complete);
+          break;
+        }
+      }
+      safeObserver(observerOrNext, error, complete) {
+      // ... 一些程式碼
+      }
+    }
+    ~~~
+    這裡我們把真正的 observer 塞到 this.destination，接著完成 observer 的方法。
+    <br>
+    <br>
+    Observer 的三個主要的方法(next, error, complete)都應該結束或退訂後不能再被執行，所以我們在物件內部偷塞一個 boolean 值來作為是否曾經結束的依據。
+    ~~~js
+    class Observer {
+      constructor(destinationOrNext, error, complete) {
+        // ... 一些程式碼
+      }
+      safeObserver(observerOrNext, error, complete) {
+        // ... 一些程式碼
+      }
+      unsubscribe() {
+        this.isStopped = true; // 偷塞一個屬性 isStopped
+      }
+    }
+    ~~~
+    接著要實作三個主要的方法就很簡單了，只要先判斷 isStopped 在使用 this.destination 物件來傳送值就可以了
+    ~~~js
+    class Observer {
+      constructor(destinationOrNext, error, complete) {
+        // ... 一些程式碼
+      }
+      safeObserver(observerOrNext, error, complete) {
+        // ... 一些程式碼
+      }
+      next(value) {
+        if (!this.isStopped && this.next) {
+          // 先判斷是否停止過
+          try {
+            this.destination.next(value); // 傳送值
+          } catch (err) {
+            this.unsubscribe();
+            throw err;
+          }
+        }
+      }
+      error(err) {
+        if (!this.isStopped && this.error) {
+          // 先判斷是否停止過
+          try {
+            this.destination.error(err); // 傳送錯誤
+          } catch (anotherError) {
+            this.unsubscribe();
+            throw anotherError;
+          }
+          this.unsubscribe();
+        }
+      }
+      complete() {
+        if (!this.isStopped && this.complete) {
+        // 先判斷是否停止過
+          try {
+            this.destination.complete(); // 發送停止訊息
+          } catch (err) {
+            this.unsubscribe();
+            throw err;
+          }
+            this.unsubscribe(); // 發送停止訊息後退訂
+        }
+      }
+      unsubscribe() {
+        this.isStopped = true;
+      }
+    }
+    ~~~
+    到這裡我們就完成基本的 Observer 實作了，接著讓我們拿到基本版的 observable 中使用吧。
+    ~~~js
+    function create(subscriber) {
+      const observable = {
+        subscribe: function(observerOrNext, error, complete) {
+          const realObserver = new Observer(observerOrNext, error, complete)
+          subscriber(realObserver);
+          return realObserver;
+        }      
+      };
+      return observable;
+    }
+    var observable = create(function(observer) {
+      observer.next(1);
+      observer.next(2);
+      observer.next(3);
+      observer.complete();
+      observer.next('not work');
+    })
+    var observer = {
+      next: function(value) {
+        console.log(value)
+      },
+      complete: function() {
+        console.log('complete!')
+      }
+    }
+    observable.subscribe(observer);
+    // 1
+    // 2
+    // 3
+    // complete!
+    ~~~
+    到這裡我們就完成最基本的 observable 了，至少基本的行為都跟我們期望的一致，我知道讀者們仍然不會放過我，你們會希望做出一個 Observable 型別以及至少一個 operator 對吧？ 不用擔心，我們下一篇就會講解如何建立一個 Observable 型別和 operator 的方法！
+
+
+  - 建立简易 Observable 类
+    <br>
+    <br>
+    根据之前我们建立的 observable 物件的函式可以看出來，回傳的 observable 物件至少會有 subscribe 方法，所以最簡單的 Observable 類別大概會長像下面這樣
+    ~~~js
+    class Observable {
+      subscribe() {
+        // ...做某些事
+      }
+    }
+    ~~~
+    另外 create 的函式在執行時會傳入一個 subscribe 的 function，這個 function 會決定 observable 的行為，我们改成下面這樣
+    ~~~js
+    var observable = new Observable(function(observer) {
+      observer.next(1);
+      observer.next(2);
+      observer.next(3);
+      observer.complete();
+      observer.next('not work');
+    })
+    ~~~
+    所以我們的 Observable 的建構式應該會接收一個 subscribe function
+    ~~~js
+    class Observable {
+      constructor(subscribe) {
+        if(subscribe) {
+          this._subscribe = subscribe; // 把 subscribe 存到屬性中
+        }
+      }
+      subscribe() {
+        // ...做某些事
+      }
+    }
+    ~~~
+    接著我們就能完成 subscribe 要做的事情了
+    ~~~js
+    class Observable {
+      constructor(subscribe) {
+        if(subscribe) {
+          this._subscribe = subscribe; // 把 subscribe 存到 _subscribe 屬性中
+        }
+      }
+      subscribe() {
+        const observer = new Observer(...arguments);
+        this._subscribe(observer); // 就是執行一個 function 對吧
+        return observer;
+      }
+    }
+    ~~~
+    到這裡我們就成功的把 create 的函式改成 Observable 的類別了，我們可以直接來使用看看
+    ~~~js
+    class Observable {
+      constructor(subscribe) {
+        if(subscribe) {
+          this._subscribe = subscribe; // 把 subscribe 存到屬性中
+        }
+      }
+      subscribe() {
+        const observer = new Observer(...arguments);
+        this._subscribe(observer);
+        return observer;
+      }
+    }
+    var observable = new Observable(function(observer) {
+      observer.next(1);
+      observer.next(2);
+      observer.next(3);
+      observer.complete();
+      observer.next('not work');
+    })
+    var observer = {
+      next: function(value) {
+        console.log(value)
+      },
+      complete: function() {
+        console.log('complete!')
+      }
+    }
+    observable.subscribe(observer);
+    ~~~
+    我們可以仿 RxJS 在靜態方法中加入 create，如下
+    ~~~js
+    class Observable {
+      constructor(subscribe) {
+        if(subscribe) {
+          this._subscribe = subscribe; // 把 subscribe 存到屬性中
+        }
+      }
+      subscribe() {
+        const observer = new Observer(...arguments);
+        this._subscribe(observer);
+        return observer;
+      }
+    }
+    Observable.create = function(subscribe) {
+      return new Observable(subscribe);
+    }
+    ~~~
+    這樣一來我們就可以用 Observable.create 建立 observable 物件實例。
+    ~~~js
+    var observable = Observable.create(function(observer) {
+      observer.next(1);
+      observer.next(2);
+      observer.next(3);
+      observer.complete();
+      observer.next('not work');
+    });
+    ~~~
+    <br>
+  - 建立 transform operator - map
+    <br>
+    <br>
+    相信很多人在實作 Observable 都是卡在這個階段，因為 operators 都是回傳一個新的 observable 這中間有很多細節需要注意，並且有些小技巧才能比較好的實現，在開始實作之前先讓我們釐清幾個重點
+    * operators(transform, filter, conditional...) 都是回傳一個新個 observable
+    * 大部分的 operator 其實就是在原本 observer 外包裹一層物件，讓執行 next 方法前先把元素做一次處理
+    * operator 回傳的 observable 訂閱時，還是需要執行原本的 observable(資料源)，也就說我們要想辦法保留原本的 observable
+
+    讓我們一步一步來，首先 operators 執行完會回傳一個新的 observable，這個 observable 在訂閱時會先去執行 operator 的行為再發送元素，所以 observable 的訂閱方法就不能像現在這樣直接把 observer 傳給 subscribe 執行
+    ~~~js
+    class Observable {
+      constructor(subscribe) {
+        if(subscribe) {
+          this._subscribe = subscribe; // 把 subscribe 存到屬性中
+        }
+      }
+      subscribe() {
+        const observer = new Observer(...arguments);
+        // 先做某個判斷是否當前的 observable 是具有 operator 的
+        if(??) {
+          // 用 operator 的操作
+        } else {
+          // 如果沒有 operator 再直接把 observer 丟給 _subscribe
+          this._subscribe(observer);
+        }
+        return observer;
+      }
+    }
+    ~~~
+    > 以我們的 Observable 實作為例，這裡最重要的就是 this._subscribe 執行，每當執行時就是開始發送元素。
+
+
+
+
 
 
 
