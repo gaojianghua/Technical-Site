@@ -616,7 +616,7 @@
     }
     // ------- 以上都是之前的代码 -------- //
     var egghead = new Producer();
-    // egghead 同时具有 註冊监听者及移除监听者 两种方法
+    // egghead 同时具有 注册监听者及移除监听者 两种方法
     var source = Rx.Observable
       .fromEventPattern(
       (handler) => egghead.addListener(handler),
