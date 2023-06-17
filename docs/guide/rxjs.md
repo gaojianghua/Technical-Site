@@ -1,4 +1,5 @@
 # RxJS
+[官方文档](https://cn.rx.js.org/)
 ## 简介
 - RxJS 是一套藉由 Observable sequences 来组合异步行为和事件基础程序的 Library！
 - RxJS 提供了一套完整的异步解决方案，让我们在面对各种异步行为，不管是 Event, AJAX, 还是 Animation 等，我们都可以使用相同的 API (Application Programming Interface) 做开发。
@@ -1842,7 +1843,7 @@
     # Marble diagram 图示
     source : ----a----b----c----d----2|
         map(x => x.toUpperCase())
-         ----a----b----c----d----X|
+             ----a----b----c----d----X|
         catch(error => Rx.Observable.of('h'))
     example: ----a----b----c----d----h|
     ~~~
@@ -1882,7 +1883,7 @@
     # Marble diagram 图示
     source : ----a----b----c----d----2|
         map(x => x.toUpperCase())
-         ----a----b----c----d----X|
+             ----a----b----c----d----X|
         catch((error, obs) => obs)
     example: ----a----b----c----d--------a----b----c----d--..
     ~~~

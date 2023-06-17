@@ -1,4 +1,6 @@
 # Nest
+[中文文档](https://typeorm.bootcss.com/decorator-reference) <br>
+[英文文档](https://typeorm.io)
 ## 简介
 
 Nest (NestJS) 是一个用于构建高效、可扩展的 Node.js 服务器端应用程序的开发框架。它利用 JavaScript 的渐进增强的能力，使用并完全支持 TypeScript （仍然允许开发者使用纯 JavaScript 进行开发），并结合了 OOP （面向对象编程）、FP （函数式编程）和 FRP （函数响应式编程）。
@@ -1338,4 +1340,761 @@ Nest (NestJS) 是一个用于构建高效、可扩展的 Node.js 服务器端应
     console.log('body', body);
     console.log('file', file);
   }
+  ~~~
+  
+## TypeORM
+- 安装 mysql2
+  ~~~shell
+  npm install --save mysql2
+  ~~~
+- 安装 typeORM
+  ~~~shell
+  npm install typeorm --save
+  npm install reflect-metadata --save
+  npm install @types/node --save
+  ~~~
+- 新建user的entity
+  ~~~js
+  import { Entity, PrimaryGeneratedColumn, Column } from "typeorm"
+
+  @Entity()
+  export class User {
+    @PrimaryGeneratedColumn()
+    id: number
+  
+    @Column()
+    firstName: number
+  
+    @Column()
+    lastName: number
+  
+    @Column()
+    age: number
+  }
+  ~~~
+- 使用 typeORM 链接数据库
+  ~~~js
+  import "reflect-metadata"
+  import { DataSource } from "typeorm"
+  import { User } from "./entity/User"
+  
+  export const AppDataSource = new DataSource({
+    type: "mysql",              // 数据库的类型, TypeORM 支持 MySQL postgres、oracle、sqllite 等数据库
+    host: "localhost",          // 数据库服务器的主机
+    port: 3306,                 // 数据库服务器的端口号
+    username: "root",           // 登录数据库的用户名
+    password: "guang",          // 登录数据库的密码
+    database: "practice",       // 指定要操作的数据库
+    synchronize: true,          // 是否同步建表, 即没有和 Entity 对应的表的时候, 会自动生成建表 sql 语句并执行
+    logging: true,              // 是否打印生成的 sql 语句
+    entities: [User],           // 指定有哪些和数据库的表对应的 Entity
+    migrations: [],             // 统一修改表结构之类的 sql
+    subscribers: [],            // 是一些 Entity 生命周期的订阅者，比如 insert、update、remove 前后，可以加入一些逻辑
+    poolSize: 10,               // 指定数据库连接池中连接的最大数量
+    connectorPackage: 'mysql2', // 指定用什么驱动包
+    extra: {                    // 额外发送给驱动包的一些选项
+      authPlugin: 'sha256_password',
+    }
+  })
+  // DataSource 会根据你传入的连接配置、驱动包，来创建数据库连接，并且如果制定了 synchronize 的话，会同步创建表。
+  ~~~
+- Aaa的entity
+  ~~~js
+  import { Entity, PrimaryGeneratedColumn, Column } from "typeorm"
+
+  @Entity({
+    name: 't_aaa'       // name 指定表名为 t_aaa
+  })
+  export class Aaa {
+
+    @PrimaryGeneratedColumn({       // 指定它是一个自增的主键，通过 comment 指定注释
+      comment: '这是 id'
+    })
+    id: number
+
+    @Column({               // 映射属性和字段的对应关系
+      name: 'a_aa',         // 指定字段名
+      type: 'text',         // 指定映射的类型(数据库数据类型)
+      comment: '这是 aaa'    // 指定注释
+    })
+    aaa: string
+
+    @Column({           // 映射属性和字段的对应关系
+      unique: true,     // 设置 UNIQUE 唯一索引
+      nullable: false,  // 设置 NOT NULL 约束
+      length: 10,       // 指定长度
+      width: 5,         // 指定显示宽度
+      type: 'varchar',  // 指定映射的类型(数据库数据类型)
+      default: 'bbb'    // 指定默认值
+    })
+    bbb: string
+
+    @Column({
+      type: 'double',
+    })
+    ccc: number
+  }
+  ~~~
+- 新增数据
+  ~~~js
+  import { AppDataSource } from "./data-source"
+  import { User } from "./entity/User"
+  // initialize() 初始化
+  AppDataSource.initialize().then(async () => {
+  
+    const user = new User()
+    user.firstName = "aaa"
+    user.lastName = "bbb"
+    user.age = 25
+  
+    await AppDataSource.manager.save(user)    // 调用save方法保存新增
+  
+  }).catch(error => console.log(error))
+  ~~~
+- 批量新增数据
+  ~~~js
+  import { AppDataSource } from "./data-source"
+  import { User } from "./entity/User"
+  // initialize() 初始化
+  AppDataSource.initialize().then(async () => {
+  
+    await AppDataSource.manager.save(User, [
+      { firstName: 'ccc', lastName: 'ccc', age: 21},
+      { firstName: 'ddd', lastName: 'ddd', age: 22},
+      { firstName: 'eee', lastName: 'eee', age: 23}
+    ]);   // 第一个参数指定entity，第二个参数指定批量数据
+  
+  }).catch(error => console.log(error))
+  ~~~
+- 更新数据
+  ~~~js
+  import { AppDataSource } from "./data-source"
+  import { User } from "./entity/User"
+  // initialize() 初始化
+  AppDataSource.initialize().then(async () => {
+  
+    const user = new User()
+    user.id = 1;
+    user.firstName = "aaa111"
+    user.lastName = "bbb"
+    user.age = 25
+    // 指定 id 后，typeorm 会先查询这个 id 的记录，如果查到了，那就执行 update 更新
+    await AppDataSource.manager.save(user)
+  
+  }).catch(error => console.log(error))
+  ~~~
+- 批量更新数据
+  ~~~js
+  import { AppDataSource } from "./data-source"
+  import { User } from "./entity/User"
+  // initialize() 初始化
+  AppDataSource.initialize().then(async () => {
+    // 同理在批量数据中指定 id 就是批量执行 select 查询，再执行 update 更新
+    await AppDataSource.manager.save(User, [
+        { id: 2 ,firstName: 'ccc111', lastName: 'ccc', age: 21},
+        { id: 3 ,firstName: 'ddd222', lastName: 'ddd', age: 22},
+        { id: 4, firstName: 'eee333', lastName: 'eee', age: 23}
+    ]);
+  
+  }).catch(error => console.log(error))
+  ~~~
+- ***update 和 insert 方法，分别是修改和插入的，但是它们不会先 select 查询一次。***
+- 删除和批量删除
+  ~~~js
+  import { AppDataSource } from "./data-source"
+  import { User } from "./entity/User"
+  
+  AppDataSource.initialize().then(async () => {
+    // 第一次参数指定entity，指定要删除的数据的 id 或批量数据的 id
+    await AppDataSource.manager.delete(User, 1);
+    await AppDataSource.manager.delete(User, [2,3]);
+  
+  }).catch(error => console.log(error))
+  ~~~
+- 普通查询
+  ~~~js
+  import { AppDataSource } from "./data-source"
+  import { User } from "./entity/User"
+  
+  AppDataSource.initialize().then(async () => {
+    // 通过 find 方法指定要查询的entity映射的数据表的数据, 第一个参数为实体类，第二个参数为查询条件的配置对象
+    const users = await AppDataSource.manager.find(User);
+    console.log(users);     // user表中的所有数据，返回是一个数组
+  
+  }).catch(error => console.log(error))
+  ~~~
+- 条件查询
+  ~~~js
+  import { In } from "typeorm";
+  import { AppDataSource } from "./data-source"
+  import { User } from "./entity/User"
+  
+  AppDataSource.initialize().then(async () => {
+    // 通过 findBy 的第二个参数指定条件进行查询
+    const users = await AppDataSource.manager.findBy(User, {
+      age: 23
+    });
+    console.log(users); // 返回的数组中的每条数据的age都为23
+  
+  }).catch(error => console.log(error))
+  ~~~
+- 查询数据总数以及指定条件
+  ~~~js
+  import { AppDataSource } from "./data-source"
+  import { User } from "./entity/User"
+  
+  AppDataSource.initialize().then(async () => {
+    // 通过 findAndCount 查询出所有数据以及数据总数, 第一个参数为实体类，第二个参数为查询条件的配置对象
+    const [users, count] = await AppDataSource.manager.findAndCount(User);
+    console.log(users, count);
+    // 通过 findAndCountBy 查询出指定条件的数据以及数据总数
+    const [userss, counts] = await AppDataSource.manager.findAndCountBy(User, {
+      age: 23
+    });
+    console.log(userss, counts);
+  
+  }).catch(error => console.log(error))
+  ~~~
+- 单一数据查询
+  ~~~js
+  import { AppDataSource } from "./data-source"
+  import { User } from "./entity/User"
+  
+  AppDataSource.initialize().then(async () => {
+    const user = await await AppDataSource.manager.findOne(User, {
+      select: {     // 指定 select 的列为 firstName 和 age
+        firstName: true,
+        age: true
+      },
+      where: {      // 指定查询的 where 条件是 id 为 4
+        id: 4
+      },
+      order: {      // 指定根据 age 升序排列
+        age: 'ASC'
+      }
+    });
+    console.log(user);
+  
+  }).catch(error => console.log(error))
+  ~~~
+- 指定条件单一数据查询
+  ~~~js
+  import { AppDataSource } from "./data-source"
+  import { User } from "./entity/User"
+  
+  AppDataSource.initialize().then(async () => {
+    // 通过 findOneBy 方法指定条件查询
+    const user = await AppDataSource.manager.findOneBy(User, {
+      age: 23
+    });
+    console.log(user);
+  
+  }).catch(error => console.log(error))
+  ~~~
+- 单一数据查询抛异常方法
+  ~~~js
+  // findOneOrFail 或者 findOneByOrFail，如果没找到，会抛一个 EntityNotFoundError 的异常
+  import { AppDataSource } from "./data-source"
+  import { User } from "./entity/User"
+  
+  AppDataSource.initialize().then(async () => {
+    try {
+      const user = await AppDataSource.manager.findOneOrFail(User, {
+        where: {
+          id: 666
+        }
+      });
+      console.log(user);
+    }catch(e) {
+      console.log(e);
+      console.log('没找到该用户');
+    }
+  }).catch(error => console.log(error))
+  ~~~
+- 直接使用 SQL 语句
+  ~~~js
+  import { AppDataSource } from "./data-source"
+
+  AppDataSource.initialize().then(async () => {
+    const users = await AppDataSource.manager.query('select * from user where age in(?, ?)', [21, 22]);
+    console.log(users);
+  
+  }).catch(error => console.log(error))
+  ~~~
+- 复杂的关联查询
+  ~~~js
+  // 使用 createQueryBuilder 方法创建 queryBuilder 实例来进行查询
+  const queryBuilder = await AppDataSource.manager.createQueryBuilder();
+  
+  const user = await queryBuilder.select("user")
+    .from(User, "user")
+    .where("user.age = :age", { age: 21 })
+    .getOne();
+  
+  console.log(user);
+  ~~~
+- 开启事务
+  ~~~js
+  // 使用 transaction 方法包裹，在回调中做增删改查
+  await AppDataSource.manager.transaction(async manager => {
+    await manager.save(User, {
+        id: 4,
+        firstName: 'eee',
+        lastName: 'eee',
+        age: 20
+    });
+  });
+  ~~~
+- 先拿实体类再做数据操作
+  ~~~js
+  AppDataSource.manager.getRepository(User).find({
+    select: {
+      firstName: true,
+      age: true
+    }  
+  })
+  ~~~
+
+## 一对一映射和关联CRUD
+- 新建身份证实体
+  ~~~js
+  import { Column, Entity, PrimaryGeneratedColumn, JoinColum, OneToTone } from "typeorm"
+  import { User } from './user'
+
+  @Entity({
+    name: 'id_card'
+  })
+  export class IdCard {
+    @PrimaryGeneratedColumn()
+    id: number
+  
+    @Column({
+      length: 50,
+      comment: '身份证号'
+    })
+    cardName: string
+    
+    @JoinColum                  // 指定外键列
+    @OneToTone(() => User, {    // 指定一对一的关系
+      cascade: true,            // 告诉 typeorm 当你增删改一个表数据的时候，是否级联增删改它关联的表数据。
+      onDelete: 'CASCADE',      // 指定级联关系：级联删除
+      onUpdate: 'CASCADE'       // 指定级联关系：级联更新
+    })
+    user: User
+  }
+  ~~~
+- 对身份证和用户表数据进行新增保存
+  ~~~js
+  import { AppDataSource } from "./data-source"
+  import { IdCard } from "./entity/IdCard"
+  import { User } from "./entity/User"
+  
+  AppDataSource.initialize().then(async () => {
+    const user = new User();
+    user.firstName = 'guang';
+    user.lastName = 'guang';
+    user.age = 20;
+      
+    const idCard = new IdCard();
+    idCard.cardName = '1111111';
+    idCard.user = user;
+    
+    // 当身份证实体中一对一装饰器配置了cascade：true，那么下面这行保存user表示数据的新增可以注释掉
+    await AppDataSource.manager.save(user);
+    // 当身份证实体中一对一装饰器配置了cascade：true，保存idCard表数据是会关联同步的执行保存user表数据
+    await AppDataSource.manager.save(idCard);
+  
+  }).catch(error => console.log(error))
+  ~~~
+- 关联查询数据
+  ~~~js
+  const ics = await AppDataSource.manager.find(IdCard, {
+    relations: {    // 关联查询
+        user: true  // 指定开启 user 实体的关联，会将 user 表数据一并查询出来
+    }
+  });
+  console.log(ics);
+  ~~~
+- 使用查询构建器查询
+  ~~~js
+  // 方式一
+  const ics = await AppDataSource.manager.getRepository(IdCard)
+    .createQueryBuilder("ic")   // 创建构建器，设置IdCard别名为 ic
+    .leftJoinAndSelect("ic.user", "u")  // 指定左外键连接字段 user 的表，取别名 u
+    .getMany();     // 表示查询所有的数据
+
+  console.log(ics);
+  // 方式二
+  const ics = await AppDataSource.manager.createQueryBuilder(IdCard, "ic")
+    .leftJoinAndSelect("ic.user", "u")
+    .getMany();
+  
+  console.log(ics);
+  ~~~
+- 关联修改表数据
+  ~~~js
+  // 指定他们的 Id 再保存即可，因为它们有关联关系，会在一个事务中执行 user 和 idCard 两天 update 语句
+  const user = new User();
+  user.id = 1;
+  user.firstName = 'guang1111';
+  user.lastName = 'guang1111';
+  user.age = 20;
+  
+  const idCard = new IdCard();
+  idCard.id = 1;
+  idCard.cardName = '22222';
+  idCard.user = user;
+  
+  await AppDataSource.manager.save(idCard);
+  ~~~
+- 关联删除表数据
+  ~~~js
+  // 因为设置了外键的 onDelete 是 cascade，所以只要删除了 user，那关联的 idCard 就会跟着被删除。
+  await AppDataSource.manager.delete(User, 1)
+  ~~~
+- User 里访问 idCard
+  ~~~js
+  // 在 User 实体中添加
+  import { IdCard } from './idCard'
+  
+  @OneToOne(()=> IdCard, (idCard) => idCard.user)   // 第二个参数告诉 typeorm，外键是另一个 Entity 的哪个属性。
+  idCard: IdCard
+  ~~~
+- 关联查询 idCard
+  ~~~js
+  const user = await AppDataSource.manager.find(User, {
+    relations: {    // 关联到 idCard 表，查询 user 数据时会关联查出 idCard 的数据
+        idCard: true
+    }
+  });
+  console.log(user);
+  ~~~
+## 一对多映射和关联CRUD
+- 创建两实体：Department 和 Employee
+  ~~~js
+  import { Column, Entity, PrimaryGeneratedColumn } from "typeorm"
+  import { Employee } from './employee'
+  
+  @Entity()
+  export class Department {
+    @PrimaryGeneratedColumn()
+    id: number;
+  
+    @Column({
+      length: 50
+    })
+    name: string;
+  
+    // 在一的一方使用 @OneToMany 一对多装饰器
+    @OneToMany(() => Employee, (employee) => employee.department)    // 第二个参数告诉 typeorm，外键是另一个 Entity 的哪个属性。 
+    employee: Employee[]
+  }
+  ~~~
+  ~~~js
+  import { Column, Entity, PrimaryGeneratedColumn } from "typeorm"
+  import { Department } from './department'
+
+  @Entity()
+  export class Employee {
+    @PrimaryGeneratedColumn()
+    id: number;
+  
+    @Column({
+      length: 50
+    })
+    name: string;
+  
+    // 在多的一方使用 @ManyToOne 多对一装饰器
+    @ManyToOne(() => Department, {  
+      cascade: true
+    })    
+    department: Department
+  }
+  ~~~
+  ***因为一对多的关系只可能是在多的那一方保存外键，所以 department 字段并不需要 @JoinColumn。后面我们会通过 @JoinColumn 修改外键名。***
+
+
+- 新增一批数据
+  ~~~js
+  import { Department } from './entity/Department';
+  import { Employee } from './entity/Employee';
+  import { AppDataSource } from "./data-source"
+  
+  AppDataSource.initialize().then(async () => {
+    const d1 = new Department();
+    d1.name = '技术部';
+  
+    const e1 = new Employee();
+    e1.name = '张三';
+    e1.department = d1;
+  
+    const e2 = new Employee();
+    e2.name = '李四';
+    e2.department = d1;
+  
+    const e3 = new Employee();
+    e3.name = '王五';
+    e3.department = d1;
+  
+    AppDataSource.manager.save(Department, d1);     // 如果设置了 cascade: true 可以注释这条代码
+    AppDataSource.manager.save(Employee,[e1, e2, e3]);
+  
+  }).catch(error => console.log(error))
+  // 上面的代码执行后，会开启一个事务，在事务中会执行 4 条 insert 语句，分别插入了 Department 和 3 个 Employee。
+  ~~~
+- 修改外键列的名字
+  ~~~js
+  // 在 Employee 实体中修改
+  @JoinColumn({
+    name: 'd_id'
+  })
+  @ManyToOne(() => Department, {
+    // cascade: true   这里的 cascade 的级联关系一定要去掉，双方都级联了会进入死循环。
+  })
+  department: Department
+  ~~~
+  ~~~js
+  // 在 Department 实体中修改
+  @OneToMany(() => Employee, (employee) => employee.department, {
+    cascade: true
+  })
+  employee: Employee[];
+  ~~~
+- 再来做新增数据
+  ~~~js
+  import { Department } from './entity/Department';
+  import { Employee } from './entity/Employee';
+  import { AppDataSource } from "./data-source"
+  
+  AppDataSource.initialize().then(async () => {
+    const e1 = new Employee();
+    e1.name = '张三';
+  
+    const e2 = new Employee();
+    e2.name = '李四';
+  
+    const e3 = new Employee();
+    e3.name = '王五';
+  
+    const d1 = new Department();
+    d1.name = '技术部';
+    d1.employees = [e1, e2, e3];
+  
+    AppDataSource.manager.save(Department, d1);     // 因为级联关系，employee 的数据会自动保存
+  
+  }).catch(error => console.log(error))
+  ~~~
+- 然后试下查询
+  ~~~js
+  // 查询 department 表的数据
+  const deps = await AppDataSource.manager.find(Department);
+  console.log(deps);
+  // 关联查询 employee 表的数据
+  const deps = await AppDataSource.manager.find(Department, {
+    relations: {        // relations 实际就是SQL中的 left join on
+      employees: true
+    }
+  });
+  console.log(deps);
+  console.log(deps.map(item => item.employees))
+  ~~~
+- 使用查询构建器
+  ~~~js
+  // 使用 getRepository()
+  const es = await AppDataSource.manager.getRepository(Department)
+    .createQueryBuilder('d')
+    .leftJoinAndSelect('d.employees', 'e')
+    .getMany();
+
+  console.log(es);
+  console.log(es.map(item => item.employees))
+  
+  // 不使用 getRepository()
+  const es = await AppDataSource.manager
+    .createQueryBuilder(Department, 'd')
+    .leftJoinAndSelect('d.employees', 'e')
+    .getMany();
+
+  console.log(es);
+  console.log(es.map(item => item.employees))
+  ~~~
+- 普通删除和关联删除
+  ~~~js
+  // 普通手动删除
+  const deps = await AppDataSource.manager.find(Department, {
+    relations: {
+      employees: true
+    }
+  });
+  
+  // 需要先把关联的 employee 删了，再删除 department。
+  await AppDataSource.manager.delete(Employee, deps[0].employees);
+  await AppDataSource.manager.delete(Department, deps[0].id);
+  ~~~
+  关联删除，需要在 Employee 实体中修改如下
+  ~~~js
+  @ManyToOne(() => Department, { 
+    // 添加删除的级联关系
+    // 设置为 'CASCADE' 会自动把关联的 employee 记录删除 
+    // 设置为 'SET NULL' 会自动把关联的 employee 记录的外键 id 置为空 
+    onDelete: 'CASCADE'  
+  })    
+  department: Department
+  ~~~
+  ~~~js
+  // 关联删除
+  const deps = await AppDataSource.manager.find(Department, {
+    relations: {
+      employees: true
+    }
+  });
+  
+  // 直接删除 department 后自动关联删除 employees 关联的记录
+  await AppDataSource.manager.delete(Department, deps[0].id);
+  ~~~
+## 多对多映射和关联CRUD
+- 先创建两个实体：Article 和 Tag
+  ~~~js
+  // Article 实体
+  import { Column, Entity, PrimaryGeneratedColumn } from "typeorm"
+  import { Tag } from './tag'
+
+  @Entity()
+  export class Article {
+
+    @PrimaryGeneratedColumn()
+    id: number;
+
+    @Column({
+      length: 100,
+      comment: '文章标题'
+    })
+    title: string;
+
+    @Column({
+      type: 'text',
+      comment: '文章内容'
+    })
+    content: string;
+  
+    @JoinTable()
+    @ManyToMany(() => Tag)
+    tag: Tag[]
+  }
+  ~~~
+  ~~~js
+  // Tag 实体
+  import { Column, Entity, PrimaryGeneratedColumn } from "typeorm"
+
+  @Entity()
+  export class Tag {
+
+    @PrimaryGeneratedColumn()
+    id: number;
+
+    @Column({
+      length: 100,
+    })
+    name: string;
+  }
+  ~~~
+  执行npm run start 后执行 3 条建表 sql，分别是 article、tag 和中间表 article_tags_tag。并且 article_tags_tag 还有 2 个外键分别引用着两个表。级联删除和级联更新都是 CASCADE，也就是说这两个表的记录删了，那它在中间表中的记录也会跟着被删。
+
+
+- 尝试插入数据
+  ~~~js
+  import { AppDataSource } from "./data-source"
+  import { Article } from "./entity/Article"
+  import { Tag } from "./entity/Tag";
+
+  AppDataSource.initialize().then(async () => {
+
+    const a1 = new Article();
+    a1.title = 'aaaa';
+    a1.content = 'aaaaaaaaaa';
+
+    const a2 = new Article();
+    a2.title = 'bbbbbb';
+    a2.content = 'bbbbbbbbbb';
+
+    const t1 = new Tag();
+    t1.name = 'ttt1111';
+
+    const t2 = new Tag();
+    t2.name = 'ttt2222';
+
+    const t3 = new Tag();
+    t3.name = 'ttt33333';
+
+    a1.tags = [t1,t2];
+    a2.tags = [t1,t2,t3];
+
+    const entityManager = AppDataSource.manager;
+
+    await entityManager.save(t1);
+    await entityManager.save(t2);
+    await entityManager.save(t3);
+
+    await entityManager.save(a1);
+    await entityManager.save(a2);
+
+  }).catch(error => console.log(error))
+  // 创建2篇文章、3个标签，建立它们的关系之后，先保存所有的 tag，再保存 article。
+  ~~~
+- 关联查询
+  ~~~js
+  const article = await entityManager.find(Article, {
+    relations: {    // 关联 tag 表，将关联的 tag 表记录一并查出来
+      tags: true
+    }
+  });
+  
+  console.log(article);
+  console.log(article.map(item=> item.tags))
+  ~~~
+- 使用查询构建器
+  ~~~js
+  // 使用 getRepository()
+  const article = await entityManager
+    .getRepository(Article)
+    .createQueryBuilder( "a")
+    .leftJoinAndSelect("a.tags", "t")
+    .getMany()
+
+  console.log(article);
+  console.log(article.map(item=> item.tags))
+  // 不使用 getRepository()
+  const article = await entityManager
+    .createQueryBuilder(Article, "a")
+    .leftJoinAndSelect("a.tags", "t")
+    .getMany()
+    
+  console.log(article);
+  console.log(article.map(item=> item.tags))
+  ~~~
+- 进行文章的标签修改
+  ~~~js
+  // 查询出一条 id 为2的文章并把关联的标签一并查出
+  const article = await entityManager.findOne(Article, {
+    where: {
+      id: 2
+    },
+    relations: {
+      tags: true
+    }
+  });
+  
+  article.title = "ccccc";  // 修改这个文章的标题
+  
+  // 修改标签数组只包含 name 字段包含 'ttt111' 的
+  article.tags = article.tags.filter(item => item.name.includes('ttt111'));
+  
+  await entityManager.save(article);
+  // 执行后删除的标签和中间表的关联数据会一并删除
+  ~~~
+- 关联删除
+  ~~~js
+  // 因为中间表的外键设置了 CASCADE 的级联删除，只要删除了 article 或者 tag，它都会跟着删除关联记录。
+  await entityManager.delete(Article, 1);
+  await entityManager.delete(Tag, 1);
   ~~~
