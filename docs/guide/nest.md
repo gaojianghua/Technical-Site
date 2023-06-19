@@ -1,6 +1,6 @@
 # Nest
-[中文文档](https://typeorm.bootcss.com/decorator-reference) <br>
-[英文文档](https://typeorm.io)
+[中文文档](https://docs.nestjs.cn/9/introduction) <br>
+[英文文档](https://nestjs.com)
 ## 简介
 
 Nest (NestJS) 是一个用于构建高效、可扩展的 Node.js 服务器端应用程序的开发框架。它利用 JavaScript 的渐进增强的能力，使用并完全支持 TypeScript （仍然允许开发者使用纯 JavaScript 进行开发），并结合了 OOP （面向对象编程）、FP （函数式编程）和 FRP （函数响应式编程）。
@@ -1343,6 +1343,8 @@ Nest (NestJS) 是一个用于构建高效、可扩展的 Node.js 服务器端应
   ~~~
   
 ## TypeORM
+[中文文档](https://typeorm.bootcss.com/decorator-reference) <br>
+[英文文档](https://typeorm.io)
 - 安装 mysql2
   ~~~shell
   npm install --save mysql2
@@ -2097,4 +2099,212 @@ Nest (NestJS) 是一个用于构建高效、可扩展的 Node.js 服务器端应
   // 因为中间表的外键设置了 CASCADE 的级联删除，只要删除了 article 或者 tag，它都会跟着删除关联记录。
   await entityManager.delete(Article, 1);
   await entityManager.delete(Tag, 1);
+  ~~~
+- 双方相互指定外键关系
+  ~~~js
+  // 在 Tag 实体中添加
+  import { Article } from './article'
+  
+  @ManyToMany(() => Article, (article) => article.tags)
+  articles: Article[]
+  ~~~
+  ~~~js
+  // 并在 Article 实体中的外键字段 tag 上指定 Tag 实体中的外键字段
+  @JoinTable()
+  @ManyToMany(() => Tag, (tag) => tag.articles)
+  tag: Tag[]
+  ~~~
+  
+## Nest 中使用 TypeORM
+- 配置数据库连接
+  ~~~js
+  import { Module } from '@nestjs/common';
+  import { TypeOrmModule } from '@nestjs/typeorm';
+  import { AppController } from './app.controller';
+  import { AppService } from './app.service';
+  import { User } from './user/entities/user.entity';
+  import { UserModule } from './user/user.module';
+  
+  @Module({
+    imports: [UserModule,
+      TypeOrmModule.forRoot({
+        type: "mysql",
+        host: "localhost",
+        port: 3306,
+        username: "root",
+        password: "guang",
+        database: "typeorm_test",
+        synchronize: true,
+        logging: true,
+        entities: [User],
+        poolSize: 10,
+        connectorPackage: 'mysql2',
+        extra: {
+          authPlugin: 'sha256_password',
+        }
+      }),
+    ],
+    controllers: [AppController],
+    providers: [AppService],
+  })
+  export class AppModule {}
+  ~~~
+  
+- 使用 EntityManager 操作数据库
+  ~~~js
+  import { Injectable } from '@nestjs/common';
+  import { InjectEntityManager } from '@nestjs/typeorm';
+  import { EntityManager } from 'typeorm';
+  import { CreateUserDto } from './dto/create-user.dto';
+  import { UpdateUserDto } from './dto/update-user.dto';
+  import { User } from './entities/user.entity';
+
+  @Injectable()
+  export class UserService {
+  
+    @InjectEntityManager()
+    private manager: EntityManager;
+  
+    create(createUserDto: CreateUserDto) {
+      this.manager.save(User, createUserDto);
+    }
+
+    findAll() {
+      return this.manager.find(User)
+    }
+  
+    findOne(id: number) {
+      return this.manager.findOne(User, {
+        where: { id }
+      })
+    }
+  
+    update(id: number, updateUserDto: UpdateUserDto) {
+      this.manager.save(User, {
+        id: id,
+        ...updateUserDto
+      })
+    }
+  
+    remove(id: number) {
+      this.manager.delete(User, id);
+    }
+  }
+  // 使用 EntityManager 的缺点是每次都要带上 Entity。如上面的User
+  ~~~
+- 使用引入动态模块
+  ~~~js
+  // 在 user 模块引入 TypeOrmModule.forFeature 对应的动态模块，传入 User 的 Entity
+  import { Module } from '@nestjs/common'
+  import { UserService } from './user.service'
+  import { UserContriller } from './user.controller'
+  import { TypeOrmModule } from '@nestjs/typeorm'
+  import { User } from './ebtities/user.entity'
+  
+  @Module({
+    imports: [TypeOrmModule.forFeature([User])],
+    contrillers: [UserContriller],
+    providers: [UserService]
+  })
+  export class UserModule {}
+  ~~~
+- 在模块中注入 Repository 使用
+  ~~~js
+  @Injectable()
+  export class UserService {
+  
+    @InjectRepository(User)
+    private userRepository: Repository<User>;
+
+    findAll() {
+      return this.userRepository.find()
+    }
+  }
+  ~~~
+## Nest 中使用 Redis
+- 安装 redis 包
+  ~~~shell
+  npm install redis
+  ~~~
+- 简单使用
+  ~~~js
+  import { createClient } from 'redis';
+
+  const client = createClient({
+    socket: {
+      host: 'localhost',    // 服务器域名
+      port: 6379            // redis进程端口号
+    }
+  });
+  
+  client.on('error', err => console.log('Redis Client Error', err));    // 监听错误事件
+  
+  await client.connect();       // 连接到 redis 服务
+  
+  const value = await client.keys('*');     // * 获取 redis 中所有数据
+  
+  console.log(value);
+  
+  await client.disconnect();    // 断开与服务器的连接
+  ~~~
+- nest 中的使用
+  ~~~js
+  import { Module } from '@nestjs/common';
+  import { AppController } from './app.controller';
+  import { AppService } from './app.service';
+  import { createClient } from 'redis';
+  
+  @Module({
+    imports: [],
+    controllers: [AppController],
+    providers: [
+      AppService,
+      {
+        provide: 'REDIS_CLIENT',
+        async useFactory() {
+          const client = createClient({
+            socket: {
+              host: 'localhost',
+              port: 6379
+            }
+          });
+          await client.connect();
+          return client;
+        }
+      }
+    ],
+  })
+  export class AppModule {}
+  // 自定义 provider，通过 useFactory 的方式动态创建 provider，token 为 REDIS_CLIENT。
+  ~~~
+- 注入到 service 里使用
+  ~~~js
+  import { Inject, Injectable } from '@nestjs/common';
+  import { RedisClientType } from 'redis';
+  
+  @Injectable()
+  export class AppService {
+  
+    @Inject('REDIS_CLIENT')
+    private redisClient: RedisClientType;
+  
+    async getHello() {
+      const value = await this.redisClient.keys('*');
+      console.log(value);
+  
+      return 'Hello World!';
+    }
+  }
+  ~~~
+  ~~~js
+  // 因为 service 里加了 async、await, 所以 controller 里也得加下
+  @Controller()
+  export class AppController {
+    constructor(private readonly appService: AppService) {}
+    
+    @Get()
+    async getHello () {
+      return await this.appService.getHello()
+    }
+  }
   ~~~
