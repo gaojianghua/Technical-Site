@@ -65,6 +65,7 @@ function sidebarGuide() {
                 { text: 'CSS', link: '/guide/css' },
                 { text: 'JavaScript', link: '/guide/javascript' },
                 { text: 'TypeScript', link: '/guide/typescript' },
+                { text: 'JQuery', link: '/guide/jquery' },
                 { text: 'Vue', link: '/guide/vue' },
                 { text: 'React', link: '/guide/react' },
                 { text: 'Vite', link: '/guide/vite' },
