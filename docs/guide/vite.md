@@ -1159,28 +1159,170 @@ Vite 意在提供开箱即用的配置，同时它的 插件 API 和 JavaScript 
 而这两件事情全部由性能优异的 Esbuild (基于 Golang 开发)完成，而不是传统的 Webpack/Rollup，所以也不会有明显的打包性能问题，反而是 Vite 项目启动飞快(秒级启动)的一个核心原因
 >Vite 1.x 使用了 Rollup 来进行依赖预构建，在 2.x 版本将 Rollup 换成了 Esbuild，编译速度提升了近 100 倍！
 
+- 开启预构建
+  * 项目第一次启动时自动开启预构建，项目启动成功后，根目录下的node_modules中的.vite目录，就是预构建产物文件存放的目录。并且对于依赖的请求结果，Vite 的 Dev Server 会设置强缓存，缓存过期时间被设置为一年，表示缓存过期前浏览器对 react 预构建产物的请求不会再经过 Vite Dev Server，直接用缓存结果。
+  * 当然，除了 HTTP 缓存，Vite 还设置了本地文件系统的缓存，所有的预构建产物默认缓存在node_modules/.vite目录中。如果以下 3 个地方都没有改动，Vite 将一直使用缓存文件:
+     + package.json 的 dependencies 字段
+     + 各种包管理器的 lock 文件
+     + optimizeDeps 配置内容
 
 
+- 手动开启
+  * 上面提到了预构建中本地文件系统的产物缓存机制，而少数场景下我们不希望用本地的缓存文件，比如需要调试某个包的预构建结果，我推荐使用下面任意一种方法清除缓存:
+    * 删除node_modules/.vite目录。
+    * 在 Vite 配置文件中，将server.force设为true。(注意，Vite 3.0 中配置项有所更新，你需要将 optimizeDeps.force 设为true)
+    * 命令行执行npx vite --force或者npx vite optimize。
+  >Vite 项目的启动可以分为两步，第一步是依赖预构建，第二步才是 Dev Server 的启动，npx vite optimize相比于其它的方案，仅仅完成第一步的功能。
 
 
+- 自定义配置详解
+<br>
+<br>
+  Vite 将预构建相关的配置项都集中在optimizeDeps属性上，我们来一一拆解这些子配置项背后的含义和应用场景。
+  <br>
+  <br>
+  * entries(入口文件)
+    <br>
+    <br>
+    项目第一次启动时，Vite 会默认抓取项目中所有的 HTML 文件（如当前脚手架项目中的index.html），将 HTML 文件作为应用入口，然后根据入口文件扫描出项目中用到的第三方依赖，最后对这些依赖逐个进行编译。
+    <br>
+    <br>
+    当默认扫描 HTML 文件的行为无法满足需求的时候，比如项目入口为vue格式文件时，你可以通过 entries 参数来配置:
+    ~~~js
+    // vite.config.ts
+    {
+      optimizeDeps: {
+        // 为一个字符串数组
+        entries: ["./src/main.vue"];
+      }
+    }
+    ~~~
+    entries 配置也支持 [glob 语法](https://github.com/mrmlnc/fast-glob)，非常灵活
+    ~~~js
+    // 将所有的 .vue 文件作为扫描入口
+    entries: ["**/*.vue"];
+    ~~~
+    不光是.vue文件，Vite 同时还支持各种格式的入口，包括: html、svelte、astro、js、jsx、ts和tsx。可以看到，只要可能存在import语句的地方，Vite 都可以解析，并通过内置的扫描机制搜集到项目中用到的依赖，通用性很强。
 
+  * include(添加依赖)
+    <br>
+    <br>
+    它决定了可以强制预构建的依赖项，使用方式很简单
+    ~~~js
+    // vite.config.ts
+    optimizeDeps: {
+      // 配置为一个字符串数组，将 `lodash-es` 和 `vue`两个包强制进行预构建
+      include: ["lodash-es", "vue"];
+    }
+    ~~~
+    它在使用上并不难，真正难的地方在于，如何找到合适它的使用场景。前文中我们提到，Vite 会根据应用入口(entries)自动搜集依赖，然后进行预构建，这是不是说明 Vite 可以百分百准确地搜集到所有的依赖呢？事实上并不是，某些情况下 Vite 默认的扫描行为并不完全可靠，这就需要联合配置include来达到完美的预构建效果了。接下来，我们好好梳理一下到底有哪些需要配置include的场景。
+    
+    + 场景一: 动态 import
+        
+      在某些动态 import 的场景下，由于 Vite 天然按需加载的特性，经常会导致某些依赖只能在运行时被识别出来。
+      ~~~js
+      // src/locales/zh_CN.js
+      import objectAssign from "object-assign";
+      console.log(objectAssign);
 
+      // main.tsx
+      const importModule = (m) => import(`./locales/${m}.ts`);
+      importModule("zh_CN");
+      ~~~
+      在这个例子中，动态 import 的路径只有运行时才能确定，无法在预构建阶段被扫描出来。因此在 Vite 运行时发现了新的依赖，随之重新进行依赖预构建，并刷新页面。这个过程也叫二次预构建。在一些比较复杂的项目中，这个过程会执行很多次。，如下面的日志信息所示:
+      ~~~
+      [vite] new dependencies found: @material-ui/icons/Dehaze, @material-ui/core/Box, @material-ui/core/Checkbox, updating...
+      [vite] ✨ dependencies updated, reloading page...
+      [vite] new dependencies found: @material-ui/core/Dialog, @material-ui/core/DialogActions, updating...
+      [vite] ✨ dependencies updated, reloading page...
+      [vite] new dependencies found: @material-ui/core/Accordion, @material-ui/core/AccordionSummary, updating...
+      [vite] ✨ dependencies updated, reloading page...
+      ~~~
+      然而，二次预构建的成本也比较大。我们不仅需要把预构建的流程重新运行一遍，还得重新刷新页面，并且需要重新请求所有的模块。尤其是在大型项目中，这个过程会严重拖慢应用的加载速度！因此，我们要尽力避免运行时的二次预构建。具体怎么做呢？你可以通过include参数提前声明需要按需加载的依赖:
+      ~~~js
+      // vite.config.ts
+      {
+        optimizeDeps: {
+          include: [
+            // 按需加载的依赖都可以声明到这个数组里
+            "object-assign",
+          ];
+        }
+      }
+      ~~~
+    
+    + 场景二: 某些包被手动 exclude
+    
+      exclude 是optimizeDeps中的另一个配置项，与include相对，用于将某些依赖从预构建的过程中排除。不过这个配置并不常用，也不推荐大家使用。如果真遇到了要在预构建中排除某个包的情况，需要注意它所依赖的包是否具有 ESM 格式
+      <br>
+      <br>
+      exclude 的包若是本身具有 ESM 格式的产物，但它的某个依赖包并没有提供 ESM 格式，就导致运行时加载失败。
+      <br>
+      <br>
+      这个时候可以使用 include 强制对这个间接依赖进行预构建，如下：
+      ~~~js
+      // vite.config.ts
+      {
+        optimizeDeps: {
+          include: [
+            // 间接依赖的声明语法，通过`>`分开, 如`a > b`表示 a 中依赖的 b
+            "@loadable/component > hoist-non-react-statics",
+          ];
+        }
+      } 
+      ~~~
+      
+  * 自定义 Esbuild 行为
 
+    Vite 提供了esbuildOptions 参数来让我们自定义 Esbuild 本身的配置，常用的场景是加入一些 Esbuild 插件:
+    ~~~js
+    // vite.config.ts
+    {
+      optimizeDeps: {
+        esbuildOptions: {  
+          plugins: [
+            // 加入 Esbuild 插件
+          ];
+        }
+      }
+    }
+    ~~~
+    这个配置主要是处理一些特殊情况，如某个第三方包本身的代码出现问题了。
+    ~~~js
+    // vite.config.ts
+    const esbuildPatchPlugin = {
+      name: "react-virtualized-patch",
+      setup(build) {
+        build.onLoad(
+          {
+            filter: /react-virtualized\/dist\/es\/WindowScroller\/utils\/onScroll.js$/,
+          },
+          async (args) => {
+            const text = await fs.promises.readFile(args.path, "utf8");
+            return {
+              contents: text.replace(
+                'import { bpfrpt_proptype_WindowScroller } from "../WindowScroller.js";',
+                ""
+              ),
+            };
+          }
+        );
+      },
+    };
+    
+    // 插件加入 Vite 预构建配置
+    {
+      optimizeDeps: {
+        esbuildOptions: {
+          plugins: [esbuildPatchPlugin];
+        }
+      }
+    }
+    ~~~
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+## 双引擎架构
+- Esbuild(性能利器)
+  
 
 
 
