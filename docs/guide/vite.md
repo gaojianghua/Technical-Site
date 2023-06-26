@@ -1322,21 +1322,639 @@ Vite 意在提供开箱即用的配置，同时它的 插件 API 和 JavaScript 
 
 ## 双引擎架构
 - Esbuild(性能利器)
+  <br>
+  <br>
+  1. 依赖预构建——作为 Bundle 工具
+     <br>
+     <br>
+     Esbuild是 Vite 高性能的得力助手，在很多关键的构建阶段让 Vite 获得了相当优异的性能，当然，Esbuild 作为打包工具也有一些缺点。
+     * 不支持降级到 ES5 的代码。这意味着在低端浏览器代码会跑不起来。
+     * 不支持 const enum 等语法。这意味着单独使用这些语法在 esbuild 中会直接抛错。
+     * 不提供操作打包产物的接口，像 Rollup 中灵活处理打包产物的能力(如renderChunk钩子)在 Esbuild 当中完全没有。
+     * 不支持自定义 Code Splitting 策略。传统的 Webpack 和 Rollup 都提供了自定义拆包策略的 API，而 Esbuild 并未提供，从而降级了拆包优化的灵活性。
+     <br>
+     <br>
   
+     尽管 Esbuild 作为一个社区新兴的明星项目，有如此多的局限性，但依然不妨碍 Vite 在开发阶段使用它成功启动项目并获得极致的性能提升，生产环境处于稳定性考虑当然是采用功能更加丰富、生态更加成熟的 Rollup 作为依赖打包工具了。
+     <br>
+     <br>
+  2. 单文件编译——作为 TS 和 JSX 编译工具
+     <br>
+     <br>
+     在 TS(X)/JS(X) 单文件编译上面，Vite 也使用 Esbuild 进行语法转译，也就是将 Esbuild 作为 Transformer 来用，Esbuild 转译 TS 或者 JSX 的能力通过 Vite 插件提供，这个 Vite 插件在开发环境和生产环境都会执行。
+     <br>
+     <br>
+     虽然 Esbuild Transfomer 能带来巨大的性能提升，但其自身也有局限性，最大的局限性就在于 TS 中的类型检查问题。这是因为 Esbuild 并没有实现 TS 的类型系统，在编译 TS(或者 TSX) 文件时仅仅抹掉了类型相关的代码，暂时没有能力实现类型检查。
+     <br>
+     <br>
+     vite build之前会先执行tsc命令，也就是借助 TS 官方的编译器进行类型检查。
+     <br>
+     <br>
+  3. 代码压缩——作为压缩工具
+     <br>
+     <br>
+     传统的方式都是使用 Terser 这种 JS 开发的压缩器来实现，在 Webpack 或者 Rollup 中作为一个 Plugin 来完成代码打包后的压缩混淆的工作。但 Terser 其实很慢，主要有 2 个原因。
+  
+     * 压缩这项工作涉及大量 AST 操作，并且在传统的构建流程中，AST 在各个工具之间无法共享，比如 Terser 就无法与 Babel 共享同一个 AST，造成了很多重复解析的过程。
+     * JS 本身属于解释性 + JIT（即时编译） 的语言，对于压缩这种 CPU 密集型的工作，其性能远远比不上 Golang 这种原生语言。
+     <br>
+     <br>
+     
+     因此，Esbuild 这种从头到尾共享 AST 以及原生语言编写的 Minifier 在性能上能够甩开传统工具的好几十倍。
+    <br>
+    <br>
+- Rollup(构建基石)
+  <br>
+  <br>
+  Rollup 在 Vite 中的重要性一点也不亚于 Esbuild，它既是 Vite 用作生产环境打包的核心工具，也直接决定了 Vite 插件机制的设计。
+  <br>
+  <br>
+  1. 生产环境 Bundle
+     <br>
+     <br>
+     虽然 ESM 已经得到众多浏览器的原生支持，但生产环境做到完全no-bundle也不行，会有网络性能问题。为了在生产环境中也能取得优秀的产物性能，Vite 默认选择在生产环境中利用 Rollup 打包，并基于 Rollup 本身成熟的打包能力进行扩展和优化，主要包含 3 个方面:
+     * CSS 代码分割。如果某个异步模块中引入了一些 CSS 代码，Vite 就会自动将这些 CSS 抽取出来生成单独的文件，提高线上产物的缓存复用率。
 
+     * 自动预加载。Vite 会自动为入口 chunk 的依赖自动生成预加载标签<link rel="modulepreload"> ，如:
+       ~~~html
+       <head>
+         <!-- 省略其它内容 -->
+         <!-- 入口 chunk -->
+         <script type="module" crossorigin src="/assets/index.250e0340.js"></script>
+         <!--  自动预加载入口 chunk 所依赖的 chunk-->
+         <link rel="modulepreload" href="/assets/vendor.293dca09.js">
+       </head>
+       ~~~
+       这种适当预加载的做法会让浏览器提前下载好资源，优化页面性能。
+     * 异步 Chunk 加载优化。在异步引入的 Chunk 中，通常会有一些公用的模块，如现有两个异步引入的 Chunk: A 和 B，而且两者有一个公共依赖 C。一般情况下，Rollup 打包之后，会先请求 A，然后浏览器在加载 A 的过程中才决定请求和加载 C，但 Vite 进行优化之后，请求 A 的同时会自动预加载 C，通过优化 Rollup 产物依赖加载方式节省了不必要的网络开销。
+       <br>
+       <br>
+  2. 兼容插件机制
+     <br>
+     <br>
+     无论是开发阶段还是生产环境，Vite 都根植于 Rollup 的插件机制和生态
+     <br>
+     <br>
+     在开发阶段，Vite 借鉴了 WMR 的思路，自己实现了一个 Plugin Container，用来模拟 Rollup 调度各个 Vite 插件的执行逻辑，而 Vite 的插件写法完全兼容 Rollup，因此在生产环境中将所有的 Vite 插件传入 Rollup 也没有问题。
+     <br>
+     <br>
+     反过来说，Rollup 插件却不一定能完全兼容 Vite。不过，目前仍然有不少 Rollup 插件可以直接复用到 Vite 中，你可以通过这个站点查看所有兼容 Vite 的 Rollup 插件: [vite-rollup-plugins.patak.dev](https://vite-rollup-plugins.patak.dev/) 。
 
+## Esbuild
+Esbuild 是由 Figma 的 CTO 「Evan Wallace」基于 Golang 开发的一款打包工具，相比传统的打包工具，主打性能优势，在构建速度上可以比传统工具快 10~100 倍。那么，它是如何达到这样超高的构建性能的呢？主要原因可以概括为 4 点。
+1. 使用 Golang 开发，构建逻辑代码直接被编译为原生机器码，而不用像 JS 一样先代码解析为字节码，然后转换为机器码，大大节省了程序运行时间。
 
+2. 多核并行。内部打包算法充分利用多核 CPU 优势，所有的步骤尽可能并行，这也是得益于 Go 当中多线程共享内存的优势。
 
+3. 从零造轮子。 几乎没有使用任何第三方库，所有逻辑自己编写，大到 AST 解析，小到字符串的操作，保证极致的代码性能。
 
+4. 高效的内存利用。Esbuild 中从头到尾尽可能地复用一份 AST 节点数据，而不用像 JS 打包工具中频繁地解析和传递 AST 数据（如 string -> TS -> JS -> string)，造成内存的大量浪费。
 
+- Esbuild 功能使用
+  ~~~shell
+  # 安装 esbuild
+  pnpm i esbuild
+  ~~~
+  - 命令行调用
+    ~~~shell
+    # 安装一下所需的依赖
+    pnpm install react react-dom
+    ~~~
+    ~~~js
+    // src/index.jsx
+    import Server from "react-dom/server";
+    
+    let Greet = () => <h1>Hello, juejin!</h1>;
+    console.log(Server.renderToString(<Greet />));
+    ~~~
+    接着到package.json中添加build脚本
+    ~~~json
+    {
+       "scripts": {
+         "build": "./node_modules/.bin/esbuild src/index.jsx --bundle --outfile=dist/out.js"
+       }
+    }
+    ~~~
+    终端执行pnpm run build就可以完成打包工作。
+    <br>
+    <br>
+  - 代码调用
+    <br>
+    <br>
+    Esbuild 对外暴露了一系列的 API，主要包括两类: Build API和Transform API，我们可以在 Nodejs 代码中通过调用这些 API 来使用 Esbuild 的各种功能。
+    <br>
+    <br>
+    + 项目打包——Build API
+      <br>
+      <br>
+      Build API主要用来进行项目打包，包括build、buildSync和serve三个方法。
+      <br>
+      <br>
+      首先我们来试着在 Node.js 中使用build 方法。你可以在项目根目录新建build.js文件，内容如下:
+      ~~~ts
+      const { build, buildSync, serve } = require("esbuild");
 
+      async function runBuild() {
+        // 异步方法，返回一个 Promise
+        const result = await build({
+          // ----  如下是一些常见的配置  ---
+          // 当前项目根目录
+          absWorkingDir: process.cwd(),
+          // 入口文件列表，为一个数组
+          entryPoints: ["./src/index.jsx"],
+          // 打包产物目录
+          outdir: "dist",
+          // 是否需要打包，一般设为 true
+          bundle: true,
+          // 模块格式，包括`esm`、`commonjs`和`iife`
+          format: "esm",
+          // 需要排除打包的依赖列表
+          external: [],
+          // 是否开启自动拆包
+          splitting: true,
+          // 是否生成 SourceMap 文件
+          sourcemap: true,
+          // 是否生成打包的元信息文件
+          metafile: true,
+          // 是否进行代码压缩
+          minify: false,
+          // 是否开启 watch 模式，在 watch 模式下代码变动则会触发重新打包
+          watch: false,
+          // 是否将产物写入磁盘
+          write: true,
+          // Esbuild 内置了一系列的 loader，包括 base64、binary、css、dataurl、file、js(x)、ts(x)、text、json
+          // 针对一些特殊的文件，调用不同的 loader 进行加载
+          loader: {
+            '.png': 'base64',
+          }
+        });
+        console.log(result);
+      }
+      runBuild();
+      ~~~
+      执行 ```node build.js```命令进行打包
+      <br>
+      <br>
+      buildSync方法的使用与build几乎相同，不过buildSync为同步执行。
+      <br>
+      <br>
+      并不推荐大家使用 buildSync 这种同步的 API，它们会导致两方面不良后果。一方面容易使 Esbuild 在当前线程阻塞，丧失并发任务处理的优势。另一方面，Esbuild 所有插件中都不能使用任何异步操作，这给插件开发增加了限制。
+      <br>
+      <br>
+      serve 有三个特点：
+        1. 开启 serve 模式后，将在指定的端口和目录上搭建一个静态文件服务，这个服务器用原生 Go 语言实现，性能比 Nodejs 更高。
+        2. 类似 webpack-dev-server，所有的产物文件都默认不会写到磁盘，而是放在内存中，通过请求服务来访问。
+        3. 每次请求到来时，都会进行重新构建(rebuild)，永远返回新的产物。触发 rebuild 的条件并不是代码改动，而是新的请求到来。
+        <br>
+        <br>
+      
+      示例：
+      ~~~js
+      // build.js
+      const { build, buildSync, serve } = require("esbuild");
+    
+      function runBuild() {
+        serve(
+          {
+            port: 8000,
+            // 静态资源目录
+            servedir: './dist'
+          },
+          {
+            absWorkingDir: process.cwd(),
+            entryPoints: ["./src/index.jsx"],
+            bundle: true,
+            format: "esm",
+            splitting: true,
+            sourcemap: true,
+            ignoreAnnotations: true,
+            metafile: true,
+          }
+        ).then((server) => {
+            console.log("HTTP Server starts at port", server.port);
+        });
+      }
+      runBuild();
+      ~~~
+      浏览器访问localhost:8000可以看到 Esbuild 服务器返回的编译产物，后续每次在浏览器请求都会触发 Esbuild 重新构建，而每次重新构建都是一个增量构建的过程，耗时也会比首次构建少很多(一般能减少 70% 左右)。
+      > Serve API 只适合在开发阶段使用，不适用于生产环境。
 
+    - 单文件转译——Transform API
+      <br>
+      <br>
+      Esbuild 还专门提供了单文件编译的能力，即Transform API，与 Build API 类似，它也包含了同步和异步的两个方法，分别是transformSync和transform。下面，我们具体使用下这些方法。
+      ~~~js
+      // transform.js
+      const { transform, transformSync } = require("esbuild");
+    
+      async function runTransform() {
+        // 第一个参数是代码字符串，第二个参数为编译配置
+        const content = await transform(
+          "const isNull = (str: string): boolean => str.length > 0;",
+          {
+            sourcemap: true,
+            loader: "tsx",
+          }
+        );
+        console.log(content);
+      }
+      runTransform();
+      ~~~
+      transformSync 的用法类似，不过由于同步的 API 会使 Esbuild 丧失并发任务处理的优势（Build API的部分已经分析过），不推荐大家使用transformSync。出于性能考虑，Vite 的底层实现也是采用 transform这个异步的 API 进行 TS 及 JSX 的单文件转译的。
+      <br>
+      <br>
+- Esbuild 插件开发
+  <br>
+  <br>
+  * 基本概念
+    <br>
+    <br>
+    插件开发其实就是基于原有的体系结构中进行扩展和自定义。 Esbuild 插件也不例外，通过 Esbuild 插件我们可以扩展 Esbuild 原有的路径解析、模块加载等方面的能力，并在 Esbuild 的构建过程中执行一系列自定义的逻辑。
+    <br>
+    <br>
+    Esbuild 插件结构被设计为一个对象，里面有name和setup两个属性，name是插件的名称，setup是一个函数，其中入参是一个 build 对象，这个对象上挂载了一些钩子可供我们自定义一些钩子函数逻辑。以下是一个简单的Esbuild插件示例:
+    ~~~ts
+    let envPlugin = {
+      name: 'env',
+      setup(build) {
+        build.onResolve({ filter: /^env$/ }, args => ({
+          path: args.path,
+          namespace: 'env-ns',
+        }))
 
+        build.onLoad({ filter: /.*/, namespace: 'env-ns' }, () => ({
+          contents: JSON.stringify(process.env),
+          loader: 'json',
+        }))
+      },
+    }
 
+    require('esbuild').build({
+      entryPoints: ['src/index.jsx'],
+      bundle: true,
+      outfile: 'out.js',
+      // 应用插件
+      plugins: [envPlugin],
+    }).catch(() => process.exit(1))
+    ~~~
+    使用插件后效果如下:
+    ~~~js
+    // 应用了 env 插件后，构建时将会被替换成 process.env 对象
+    import { PATH } from 'env'
 
+    console.log(`PATH is ${PATH}`)
+    ~~~
+    <br>
+  * 钩子函数的使用
+    <br><br>
+    1. onResolve 钩子 和 onLoad钩子
+       <br><br> 
+       在 Esbuild 插件中，onResolve 和 onload是两个非常重要的钩子，分别控制路径解析和模块内容加载的过程。
+       ~~~js
+       build.onResolve({ filter: /^env$/ }, args => ({
+         path: args.path,
+         namespace: 'env-ns',
+       }));
+       build.onLoad({ filter: /.*/, namespace: 'env-ns' }, () => ({
+         contents: JSON.stringify(process.env),
+         loader: 'json',
+       }));
+       ~~~
+       可以发现这两个钩子函数中都需要传入两个参数: Options 和 Callback。
+       <br><br>
+       先说说Options。它是一个对象，对于onResolve 和 onload 都一样，包含filter和namespace两个属性，类型定义如下:
+       ~~~ts
+       interface Options {
+         filter: RegExp;
+         namespace?: string;
+       }
+       ~~~
+       filter 为必传参数，是一个正则表达式，它决定了要过滤出的特征文件。
+       <br><br>
+       namespace 为选填参数，一般在 onResolve 钩子中的回调参数返回namespace属性作为标识，我们可以在onLoad钩子中通过 namespace 将模块过滤出来。如上述插件示例就在onLoad钩子通过env-ns这个 namespace 标识过滤出了要处理的env模块。
+       <br><br>
+       Callback，它的类型根据不同的钩子会有所不同。相比于 Options，Callback 函数入参和返回值的结构复杂得多，涉及很多属性。
+       <br><br>
+       在 onResolve 钩子中函数参数和返回值梳理如下:
+       ~~~ts
+       build.onResolve({ filter: /^env$/ }, (args: onResolveArgs): onResolveResult => {
+         // 模块路径
+         console.log(args.path)
+         // 父模块路径
+         console.log(args.importer)
+         // namespace 标识
+         console.log(args.namespace)
+         // 基准路径
+         console.log(args.resolveDir)
+         // 导入方式，如 import、require
+         console.log(args.kind)
+         // 额外绑定的插件数据
+         console.log(args.pluginData)
 
+         return {
+           // 错误信息
+           errors: [],
+           // 是否需要 external
+           external: false,
+           // namespace 标识
+           namespace: 'env-ns',
+           // 模块路径
+           path: args.path,
+           // 额外绑定的插件数据
+           pluginData: null,
+           // 插件名称
+           pluginName: 'xxx',
+           // 设置为 false，如果模块没有被用到，模块代码将会在产物中会删除。否则不会这么做
+           sideEffects: false,
+           // 添加一些路径后缀，如`?xxx`
+           suffix: '?xxx',
+           // 警告信息
+           warnings: [],
+           // 仅仅在 Esbuild 开启 watch 模式下生效
+           // 告诉 Esbuild 需要额外监听哪些文件/目录的变化
+           watchDirs: [],
+           watchFiles: []
+         }
+       })
+       ~~~
+       在 onLoad 钩子中函数参数和返回值梳理如下:
+       ~~~ts
+       build.onLoad({ filter: /.*/, namespace: 'env-ns' }, (args: OnLoadArgs): OnLoadResult => {
+         // 模块路径
+         console.log(args.path);
+         // namespace 标识
+         console.log(args.namespace);
+         // 后缀信息
+         console.log(args.suffix);
+         // 额外的插件数据
+         console.log(args.pluginData);
 
+         return {
+           // 模块具体内容
+           contents: '省略内容',
+           // 错误信息
+           errors: [],
+           // 指定 loader，如`js`、`ts`、`jsx`、`tsx`、`json`等等
+           loader: 'json',
+           // 额外的插件数据
+           pluginData: null,
+           // 插件名称
+           pluginName: 'xxx',
+           // 基准路径
+           resolveDir: './dir',
+           // 警告信息
+           warnings: [],
+           // 同上
+           watchDirs: [],
+           watchFiles: []
+         }
+       })
+       ~~~
+       <br>
+       <br>
+    2. 其他钩子
+        <br>
+        <br>
+       在 build 对象中，除了onResolve和onLoad，还有onStart和onEnd两个钩子用来在构建开启和结束时执行一些自定义的逻辑，使用上比较简单，如下面的例子所示:
+       ~~~ts
+       let examplePlugin = {
+         name: 'example',
+         setup(build) {
+           build.onStart(() => {
+             console.log('build started')
+           });
+           build.onEnd((buildResult) => {
+             if (buildResult.errors.length) {
+               return;
+             }
+             // 构建元信息
+             // 获取元信息后做一些自定义的事情，比如生成 HTML
+             console.log(buildResult.metafile)
+           })
+         },
+       }
+       ~~~
+       在使用这些钩子的时候，有 2 点需要注意。
+       + onStart 的执行时机是在每次 build 的时候，包括触发 watch 或者 serve模式下的重新构建。
+       + onEnd 钩子中如果要拿到 metafile，必须将 Esbuild 的构建配置中metafile属性设为 true。
+<br>
+<br>
+- 实战 1: CDN 依赖拉取插件
+  <br>
+  <br>
+  Esbuild 原生不支持通过 HTTP 从 CDN 服务上拉取对应的第三方依赖资源，如下代码所示:
+  ~~~tsx
+  // src/index.jsx
+  // react-dom 的内容全部从 CDN 拉取
+  // 这段代码目前是无法运行的
+  import { render } from "https://cdn.skypack.dev/react-dom";
+  import React from 'https://cdn.skypack.dev/react'
+    
+  let Greet = () => <h1>Hello, juejin!</h1>;
+    
+  render(<Greet />, document.getElementById("root"));
+  ~~~
+  示例代码中我们用到了 Skypack 这个提供 npm 第三方包 ESM 产物的 CDN 服务，我们可以通过 url 访问第三方包的资源
+  <br>
+  <br>
+  我们需要通过 Esbuild 插件来识别这样的 url 路径，然后从网络获取模块内容并让 Esbuild 进行加载，甚至不再需要npm install安装依赖了
+  <br>
+  <br>
+  最简单的版本
+  ~~~tsx
+  // http-import-plugin.js
+  module.exports = () => ({
+    name: "esbuild:http",
+    setup(build) {
+      let https = require("https");
+      let http = require("http");
 
+      // 1. 拦截 CDN 请求
+      build.onResolve({ filter: /^https?:\/\// }, (args) => ({
+        path: args.path,
+        namespace: "http-url",
+      }));
+
+      // 2. 通过 fetch 请求加载 CDN 资源
+      build.onLoad({ filter: /.*/, namespace: "http-url" }, async (args) => {
+        let contents = await new Promise((resolve, reject) => {
+          function fetch(url) {
+            console.log(`Downloading: ${url}`);
+            let lib = url.startsWith("https") ? https : http;
+            let req = lib.get(url, (res) => {
+              if ([301, 302, 307].includes(res.statusCode)) {
+                // 重定向
+                fetch(new URL(res.headers.location, url).toString());
+                req.abort();
+              } else if (res.statusCode === 200) {
+                // 响应成功
+                let chunks = [];
+                res.on("data", (chunk) => chunks.push(chunk));
+                res.on("end", () => resolve(Buffer.concat(chunks)));
+              } else {
+                reject(
+                  new Error(`GET ${url} failed: status ${res.statusCode}`)
+                );
+              }
+            })
+            .on("error", reject);
+          }
+          fetch(args.path);
+        });
+        return { contents };
+      });
+    },
+  });
+  ~~~
+  然后我们新建build.js文件，内容如下:
+  ~~~js
+  const { build } = require("esbuild");
+  const httpImport = require("./http-import-plugin");
+  async function runBuild() {
+    build({
+      absWorkingDir: process.cwd(),
+      entryPoints: ["./src/index.jsx"],
+      outdir: "dist",
+      bundle: true,
+      format: "esm",
+      splitting: true,
+      sourcemap: true,
+      metafile: true,
+      plugins: [httpImport()],
+    }).then(() => {
+      console.log("🚀 Build Finished!");
+    });
+  }
+  runBuild();
+  ~~~
+  通过node build.js执行打包脚本，发现插件不能 work，会抛出一个错误。
+  <br>
+  <br>
+  除了要解析 react-dom 这种直接依赖的路径，还要解析它依赖的路径，也就是间接依赖的路径。
+  <br>
+  <br>
+  加入这样一段onResolve钩子逻辑:
+  ~~~js
+  // 拦截间接依赖的路径，并重写路径
+  // tip: 间接依赖同样会被自动带上 `http-url`的 namespace
+  build.onResolve({ filter: /.*/, namespace: "http-url" }, (args) => ({
+    // 重写路径
+    path: new URL(args.path, args.importer).toString(),
+    namespace: "http-url",
+  }));
+  ~~~
+  再次执行node build.js，发现依赖已经成功下载并打包
+<br>
+<br>
+- 实战 2: 实现 HTML 构建插件
+<br>
+<br>
+Esbuild 作为一个前端打包工具，本身并不具备 HTML 的构建能力。也就是说，当它把 js/css 产物打包出来的时候，并不意味着前端的项目可以直接运行了，我们还需要一份对应的入口 HTML 文件。而这份 HTML 文件当然可以手写一个，但手写显得比较麻烦，尤其是产物名称带哈希值的时候，每次打包完都要替换路径。那么，我们能不能通过 Esbuild 插件的方式来自动化地生成 HTML 呢？
+  <br>
+  <br>
+  在 Esbuild 插件的 onEnd 钩子中可以拿到 metafile 对象的信息。那么，这个对象究竟什么样呢？
+  ~~~json
+  {
+    "inputs": { /* 省略内容 */ },
+    "output": {
+      "dist/index.js": {
+        imports: [],
+        exports: [],
+        entryPoint: 'src/index.jsx',
+        inputs: {
+          'http-url:https://cdn.skypack.dev/-/object-assign@v4.1.1-LbCnB3r2y2yFmhmiCfPn/dist=es2019,mode=imports/optimized/object-assign.js': { bytesInOutput: 1792 },
+          'http-url:https://cdn.skypack.dev/-/react@v17.0.1-yH0aYV1FOvoIPeKBbHxg/dist=es2019,mode=imports/optimized/react.js': { bytesInOutput: 10396 },
+          'http-url:https://cdn.skypack.dev/-/scheduler@v0.20.2-PAU9F1YosUNPKr7V4s0j/dist=es2019,mode=imports/optimized/scheduler.js': { bytesInOutput: 9084 },
+          'http-url:https://cdn.skypack.dev/-/react-dom@v17.0.1-oZ1BXZ5opQ1DbTh7nu9r/dist=es2019,mode=imports/optimized/react-dom.js': { bytesInOutput: 183229 },
+          'http-url:https://cdn.skypack.dev/react-dom': { bytesInOutput: 0 },
+          'src/index.jsx': { bytesInOutput: 178 }
+        },
+        bytes: 205284
+      },
+      "dist/index.js.map": { /* 省略内容 */ }
+    }
+  }
+  ~~~
+  从outputs属性中我们可以看到产物的路径，这意味着我们可以在插件中拿到所有 js 和 css 产物，然后自己组装、生成一个 HTML，实现自动化生成 HTML 的效果。
+  <br>
+  <br>
+  我们接着来实现一下这个插件的逻辑，首先新建html-plugin.js，内容如下:
+  ~~~ts
+  const fs = require("fs/promises");
+  const path = require("path");
+  const { createScript, createLink, generateHTML } = require('./util');
+    
+  module.exports = () => {
+    return {
+      name: "esbuild:html",
+      setup(build) {
+        build.onEnd(async (buildResult) => {
+          if (buildResult.errors.length) {
+            return;
+          }
+          const { metafile } = buildResult;
+          // 1. 拿到 metafile 后获取所有的 js 和 css 产物路径
+          const scripts = [];
+          const links = [];
+          if (metafile) {
+            const { outputs } = metafile;
+            const assets = Object.keys(outputs);
+
+            assets.forEach((asset) => {
+              if (asset.endsWith(".js")) {
+                scripts.push(createScript(asset));
+              } else if (asset.endsWith(".css")) {
+                links.push(createLink(asset));
+              }
+            });
+          }
+          // 2. 拼接 HTML 内容
+          const templateContent = generateHTML(scripts, links);
+          // 3. HTML 写入磁盘
+          const templatePath = path.join(process.cwd(), "index.html");
+          await fs.writeFile(templatePath, templateContent);
+        });
+      },
+    };
+  }
+  // util.js
+  // 一些工具函数的实现
+  const createScript = (src) => `<script type="module" src="${src}"></script>`;
+  const createLink = (src) => `<link rel="stylesheet" href="${src}"></link>`;
+  const generateHTML = (scripts, links) => `
+    <!DOCTYPE html>
+    <html lang="en">
+      <head>
+      <meta charset="UTF-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <title>Esbuild App</title>
+        ${links.join("\n")}
+      </head>
+      <body>
+        <div id="root"></div>
+          ${scripts.join("\n")}
+      </body>
+    </html>
+    `;
+  module.exports = { createLink, createScript, generateHTML };
+  ~~~
+  现在我们在 build.js 中引入 html 插件:
+  ~~~ts
+  const html = require("./html-plugin");
+
+  // esbuild 配置
+  plugins: [
+    // 省略其它插件
+    html()
+  ]
+  ~~~
+  然后执行node build.js对项目进行打包，你就可以看到 index.html 已经成功输出到根目录。接着，我们通过 serve 起一个本地静态文件服务器:
+  ~~~shell
+  # 1. 全局安装 serve
+  npm i -g serve
+  # 2. 在项目根目录执行
+  serve .
+  ~~~
 
 
 
