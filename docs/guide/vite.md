@@ -1956,7 +1956,7 @@ Esbuild 作为一个前端打包工具，本身并不具备 HTML 的构建能力
   serve .
   ~~~
 
-## Rollup
+## Rollup 基本概念及使用
 Rollup 是一款基于 ES Module 模块规范实现的 JavaScript 打包工具，在前端社区中赫赫有名，同时也在 Vite 的架构体系中发挥着重要作用。不仅是 Vite 生产环境下的打包工具，其插件机制也被 Vite 所兼容，可以说是 Vite 的构建基石。因此，掌握 Rollup 也是深入学习 Vite 的必经之路。
 - 快速上手
   ~~~shell
@@ -2362,16 +2362,85 @@ Rollup 是一款基于 ES Module 模块规范实现的 JavaScript 打包工具�
     ~~~
     基于如上的两个 JavaScript API 我们可以很方便地在代码中调用 Rollup 的打包流程，相比于配置文件有了更多的操作空间，你可以在代码中通过这些 API 对 Rollup 打包过程进行定制，甚至是二次开发。
 
+## 深入理解 Rollup 的插件机制
+仅仅使用 Rollup 内置的打包能力很难满足项目日益复杂的构建需求。对于一个真实的项目构建场景来说，我们还需要考虑到模块打包之外的问题，比如路径别名(alias) 、全局变量注入和代码压缩等等。
+<br>
+<br>
+可要是把这些场景的处理逻辑与核心的打包逻辑都写到一起，一来打包器本身的代码会变得十分臃肿，二来也会对原有的核心代码产生一定的侵入性，混入很多与核心流程无关的代码，不易于后期的维护。因此 ，Rollup 设计出了一套完整的插件机制，将自身的核心逻辑与插件逻辑分离，让你能按需引入插件功能，提高了 Rollup 自身的可扩展性。
+<br>
+<br>
+Rollup 的打包过程中，会定义一套完整的构建生命周期，从开始打包到产物输出，中途会经历一些标志性的阶段，并且在不同阶段会自动执行对应的插件钩子函数(Hook)。对 Rollup 插件来讲，最重要的部分是钩子函数，一方面它定义了插件的执行逻辑，也就是"做什么"；另一方面也声明了插件的作用阶段，即"什么时候做"，这与 Rollup 本身的构建生命周期息息相关。
+<br>
+<br>
+因此，要真正理解插件的作用范围和阶段，首先需要了解 Rollup 整体的构建过程中到底做了些什么。
 
+- Rollup 整体构建阶段
+  <br>
+  <br>
+  在执行 rollup 命令之后，在 cli 内部的主要逻辑简化如下:
+  ~~~js
+  // Build 阶段
+  const bundle = await rollup.rollup(inputOptions);
 
+  // Output 阶段
+  await Promise.all(outputOptions.map(bundle.write));
 
+  // 构建结束
+  await bundle.close();
+  ~~~
+  首先，Build 阶段主要负责创建模块依赖图，初始化各个模块的 AST 以及模块之间的依赖关系。下面我们用一个简单的例子来感受一下:
+  ~~~js
+  // src/index.js
+  import { a } from './module-a';
+  console.log(a);
 
-
-
-
-
-
-
+  // src/module-a.js
+  export const a = 1;
+  ~~~
+  执行如下构建脚本
+  ~~~js
+  const rollup = require('rollup');
+  const util = require('util');
+  async function build() {
+    const bundle = await rollup.rollup({
+      input: ['./src/index.js'],
+    });
+    console.log(util.inspect(bundle));
+  }
+  build();
+  ~~~
+  可以看到这样的 bundle 对象信息:
+  ~~~js
+  {
+    cache: {
+      modules: [
+        {
+          ast: 'AST 节点信息，具体内容省略',
+          code: 'export const a = 1;',
+          dependencies: [],
+          id: '/Users/code/rollup-demo/src/data.js',
+          // 其它属性省略
+        },
+        {
+          ast: 'AST 节点信息，具体内容省略',
+          code: "import { a } from './data';\n\nconsole.log(a);",
+          dependencies: [
+            '/Users/code/rollup-demo/src/data.js'
+          ],
+          id: '/Users/code/rollup-demo/src/index.js',
+          // 其它属性省略
+        }
+      ],
+      plugins: {}
+    },
+    closed: false,
+    // 挂载后续阶段会执行的方法
+    close: [AsyncFunction: close],
+    generate: [AsyncFunction: generate],
+    write: [AsyncFunction: write]
+  }
+  ~~~
+  从上面的信息中可以看出，目前经过 Build 阶段的 bundle 对象其实并没有进行模块的打包，这个对象的作用在于存储各个模块的内容及依赖关系，同时暴露generate和write方法，以进入到后续的 Output 阶段（write和generate方法唯一的区别在于前者打包完产物会写入磁盘，而后者不会）。
 
 
 
