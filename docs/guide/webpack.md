@@ -1,4 +1,11 @@
 # WebPack
+[官方文档](https://webpack.docschina.org/)
+
+## 简介
+webpack 是一个用于现代 JavaScript 应用程序的 静态模块打包工具。当 webpack 处理应用程序时，它会在内部从一个或多个入口点构建一个 <b>依赖图(dependency graph)</b>，然后将你项目中所需的每一个模块组合成一个或多个 bundles，它们均为静态资源，用于展示你的内容。
+- 依赖图
+
+  每当一个文件依赖另一个文件时，webpack 都会将文件视为直接存在 依赖关系。这使得 webpack 可以获取非代码资源，如 images 或 web 字体等。并会把它们作为 依赖 提供给应用程序。
 ## 安装配置
 
 npm init :	初始化 package.json

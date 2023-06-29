@@ -1,4 +1,5 @@
 # Mysql
+[官方网站](https://www.mysql.com/)
 ## 数据类型
 
 ~~~sql

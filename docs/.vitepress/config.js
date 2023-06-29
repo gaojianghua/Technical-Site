@@ -72,6 +72,7 @@ function sidebarGuide() {
                 { text: 'WebPack', link: '/guide/webpack' },
                 { text: 'Test', link: '/guide/test' },
                 { text: 'RxJS', link: '/guide/rxjs' },
+                { text: 'Electron', link: '/guide/electron' },
             ],
         },
         {

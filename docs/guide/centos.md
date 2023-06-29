@@ -1,4 +1,6 @@
 # CentOS
+[官方文档](https://www.centos.org/)
+[中文文档](http://centos.p2hp.com/)
 
 ## 简介
 CentOS 更适合用于服务器和企业级应用，因为它稳定、可靠、安全，并且提供长期支持。

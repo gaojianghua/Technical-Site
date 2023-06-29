@@ -1,4 +1,5 @@
 # Redis
+[官方文档](https://redis.io/)
 ## 特性
 
 - 速度快

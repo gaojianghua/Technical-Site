@@ -19,7 +19,7 @@ Vite 意在提供开箱即用的配置，同时它的 插件 API 和 JavaScript 
     npm i -g pnpm   # 推荐使用 pnpm 做包管理器
     pnpm config set registry https://registry.npmmirror.com/    # 设置国内镜像源
     ~~~
-- 项目初始化
+- 项目初始化pnpm
   ~~~shell
   pnpm create vite
   ~~~

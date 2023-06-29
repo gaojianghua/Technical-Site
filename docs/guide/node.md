@@ -1,4 +1,5 @@
 # Node
+[官方网站](https://nodejs.org/zh-cn)
 ## node环境
 
 安装node的版本管理工具nvm:

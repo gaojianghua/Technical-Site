@@ -1,4 +1,5 @@
 # React
+[官方文档](https://react.docschina.org/)
 ## 特点
 
 1. 声明式设计: React采用声明范式, 可以轻松描述应用

@@ -1,5 +1,6 @@
 # Nvm
-## 起步
+[GitHub](https://github.com/nvm-sh/nvm)
+## 安装
 node版本管理工具
 
 可在[点此在github](https://github.com/coreybutler/nvm-windows/releases)上下载最新版本,本次下载安装的是windows版本。打开网址我们可以看到有两个版本：
@@ -7,11 +8,7 @@ node版本管理工具
 - nvm-noinstall.zip：绿色免安装版，但使用时需进行配置。
 - nvm-setup.zip：安装版，推荐使用
 
-
-
 chcp 437: 开启活动代码页( 437表示GBK用于显示中文使用的 )
-
-
 
 ## 命令大全:
 
