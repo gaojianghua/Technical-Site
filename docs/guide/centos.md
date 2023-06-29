@@ -1,5 +1,6 @@
 # CentOS
 [官方文档](https://www.centos.org/)
+
 [中文文档](http://centos.p2hp.com/)
 
 ## 简介

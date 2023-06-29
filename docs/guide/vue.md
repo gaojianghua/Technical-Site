@@ -37,7 +37,7 @@
   git clone https://github.com/vuejs/core.git
   ~~~
 - 目录结构
-  ~~~bush
+  ~~~rust
   ├── packages              
   │   ├── compiler-core     # 与平台无关的编译器实现的核心函数包
   │   ├── compiler-dom      # 浏览器相关的编译器上层内容

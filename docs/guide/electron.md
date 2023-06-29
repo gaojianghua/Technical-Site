@@ -75,7 +75,7 @@ Electron 可以使用几乎所有的 Web 前端生态领域及 Node.js 生态领
   <br>
 - 创建主进程入口代码
   ~~~js
-  //src\main\mainEntry.ts
+  //src/main/mainEntry.ts
   import { app, BrowserWindow } from "electron";
 
   let mainWindow: BrowserWindow;
@@ -100,30 +100,54 @@ Electron 可以使用几乎所有的 Web 前端生态领域及 Node.js 生态领
 - 开发环境 Vite 插件  
   <br>
   主进程的代码写好之后，只有编译过之后才能被 Electron 加载，我们是通过 Vite 插件的形式来完成这个编译工作和加载工作的，如下代码所示：
-  ![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/electron-vite-plugin.webp)
   ~~~js
-  //plugins\devPlugin.ts
+  //plugins/devPlugin.ts
   import { ViteDevServer } from "vite";
-  
+  /**
+   * vite 插件作用是用来监听vite 启动时候去触发 electron 启动‘mainEntry.ts^
+   * 并且传入°mainEntry.ts°中监听的从vite传入的启动地址
+   */
   export let devPlugin = () => {
     return {
       name: "dev-plugin",
       configureServer(server: ViteDevServer) {
+        // Electron 的内置模块都是通过 CJS Module 的形式导出的，这里之所以可以用 ES Module，完全利用 esbuild 进行了转换。
         require("esbuild").buildSync({
+          // 转换文件
           entryPoints: ["./src/main/mainEntry.ts"],
           bundle: true,
+          // 平台
           platform: "node",
+          // 转换后输出文件
           outfile: "./dist/mainEntry.js",
-          external: ["electron"],
+          // 不会构建原样输出
+          external: ["electron"], 
         });
+        // 开始监听vite的启动，如果vite 启动了触发钩子再去启动electron
         server.httpServer.once("listening", () => {
+          // 启动一个子进程来执行命令，理解成通过node 脚本执行一个控制 输入的指令
           let { spawn } = require("child_process");
           let addressInfo = server.httpServer.address();
+          /**
+           * 如果打印出来的地址 http://：：1:5173 需要把${addressInfo.address} 改为 localhost
+           */ 
           let httpAddress = `http://${addressInfo.address}:${addressInfo.port}`;
-          let electronProcess = spawn(require("electron").toString(), ["./dist/mainEntry.js", httpAddress], {
-            cwd: process.cwd(),
-            stdio: "inherit",
-          });
+          /**
+           * 下面代码中用到的 spawn 方法：第一个参数是要运行的命令，第二个参数是字符串参数的列表，第三个参数是一些配置项
+           * 下面代码实际执行的是: node_moduleslelectronldistlelectron.exe ./dist/mainEntry .js http://127.0.0.1:5173/
+           */
+          let electronProcess = spawn(
+            require("electron").toString(), 
+            // ./dist/mainEntry. js是我们在上面利用esbuild输出的cjs形式的真正 electron 入口使用配置
+            ["./dist/mainEntry.js", httpAddress],
+            {
+              // 设置触发的根目录process.cwd(）返回的值就是当前项目的根目录
+              cwd: process.cwd(), 
+              // 设置了stdio："inherit’，在执行代码的时候，子进程会继承主进程的stdin, stdout, stderr。这会使子进程data事件处理函数的打印输出到主进程的标准输出中
+              stdio: "inherit", 
+            }
+          );
+          // 当electron 子进程退出的时候，我们要关闭 Vite的http服务，并且控制父进程退出
           electronProcess.on("close", () => {
             server.close();
             process.exit();
@@ -140,7 +164,7 @@ Electron 可以使用几乎所有的 Web 前端生态领域及 Node.js 生态领
   <br>
   <br>
   为什么这里传递了两个命令行参数，而主进程的代码接收第三个参数（process.argv[2]）当作 http 页面的地址呢？因为默认情况下 electron.exe 的文件路径将作为第一个参数。也就是我们通过 require("electron") 获得的字符串。
-  > 这个路径一般是：node_modules\electron\dist\electron.exe，如果这个路径下没有对应的文件，说明你的 Electron 模块没有安装好。
+  > 这个路径一般是：node_modules/electron/dist/electron.exe，如果这个路径下没有对应的文件，说明你的 Electron 模块没有安装好。
   
   我们是通过 Node.js child_process 模块的 spawn 方法启动 electron 子进程的，除了两个命令行参数外，还传递了一个配置对象。
   <br>
@@ -180,7 +204,7 @@ Electron 可以使用几乎所有的 Web 前端生态领域及 Node.js 生态领
   <br>
   现在主进程内可以自由的使用 Electron 和 Node.js 的内置模块了，但渲染进程还不行。首先我们修改一下主进程的代码，打开渲染进程的一些开关，允许渲染进程使用 Node.js 的内置模块，如下代码所示：
   ~~~js
-  // src\main\mainEntry.ts
+  // src/main/mainEntry.ts
   import { app, BrowserWindow } from "electron";
   process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = "true";
   let mainWindow: BrowserWindow;
@@ -245,7 +269,7 @@ Electron 可以使用几乎所有的 Web 前端生态领域及 Node.js 生态领
   <br>
   getReplacer 方法是我们为 vite-plugin-optimizer 插件提供的内置模块列表。代码如下所示：
   ~~~ts
-  // plugins\devPlugin.ts
+  // plugins/devPlugin.ts
   export let getReplacer = () => {
     let externalModels = ["os", "fs", "path", "events", "child_process", "crypto", "http", "buffer", "url", "better-sqlite3", "knex"];
     let result = {};
@@ -270,7 +294,7 @@ Electron 可以使用几乎所有的 Web 前端生态领域及 Node.js 生态领
   <br>
   再次运行你的应用，看看现在渲染进程是否可以正确加载内置模块了呢？你可以通过如下代码在 Vue 组件中做这项测试：
   ~~~js
-  //src\App.vue
+  //src/App.vue
   import fs from "fs";
   import { ipcRenderer } from "electron";
   import { onMounted } from "vue";
@@ -282,3 +306,107 @@ Electron 可以使用几乎所有的 Web 前端生态领域及 Node.js 生态领
 
 
 - 开发打包 Vite 插件
+  <br>
+  <br>
+  1. 编译结束钩子函数
+     <br>
+     <br>
+     新增 build 配置项
+     ~~~js
+     //vite.config.ts
+     //import { buildPlugin } from "./plugins/buildPlugin";
+     build: {
+       rollupOptions: {
+         plugins: [buildPlugin()]
+       }
+     }
+     ~~~
+     新建 buildPlugin 插件
+     ~~~ts
+     //plugins/buildPlugin.ts
+     export let buildPlugin = () => {
+       return {
+         name: "build-plugin",
+         closeBundle: () => {
+           let buildObj = new BuildObj();
+           buildObj.buildMain();
+           buildObj.preparePackageJson();
+           buildObj.buildInstaller();
+         },
+       };
+     };
+     ~~~
+     这是一个标准的 Rollup 插件（Vite 底层就是 Rollup，所以 Vite 兼容 Rollup 的插件），我们在这个插件中注册了 closeBundle 钩子。
+     <br>
+     <br>
+     在 Vite 编译完代码之后（也就是我们执行 npm run build 指令，而且这个指令的工作完成之后），这个钩子会被调用。我们在这个钩子中完成了安装包的制作过程。
+     <br>
+     <br>
+  2. 制作应用安装包
+     <br>
+     <br>
+     Vite 编译完成之后，将在项目dist目录内会生成一系列的文件（如下图所示），此时closeBundle钩子被调用，我们在这个钩子中把上述生成的文件打包成一个应用程序安装包。
+     <br>
+     <br>
+     这些工作是通过一个名为buildObj的对象完成的，它的代码如下所示：
+     ~~~ts
+     //plugins/buildPlugin.ts
+     import path from "path";
+     import fs from "fs";
+
+     class BuildObj {
+       //编译主进程代码
+       buildMain() {
+         require("esbuild").buildSync({
+           entryPoints: ["./src/main/mainEntry.ts"],
+           bundle: true,
+           platform: "node",
+           minify: true,
+           outfile: "./dist/mainEntry.js",
+           external: ["electron"],
+         });
+       }
+       //为生产环境准备package.json
+       preparePackageJson() {
+         let pkgJsonPath = path.join(process.cwd(), "package.json");
+         let localPkgJson = JSON.parse(fs.readFileSync(pkgJsonPath, "utf-8"));
+         let electronConfig = localPkgJson.devDependencies.electron.replace("^", "");
+         localPkgJson.main = "mainEntry.js";
+         delete localPkgJson.scripts;
+         delete localPkgJson.devDependencies;
+         localPkgJson.devDependencies = { electron: electronConfig };
+         let tarJsonPath = path.join(process.cwd(), "dist", "package.json");
+         fs.writeFileSync(tarJsonPath, JSON.stringify(localPkgJson));
+         fs.mkdirSync(path.join(process.cwd(), "dist/node_modules"));
+       }
+       //使用electron-builder制成安装包
+       buildInstaller() {
+         let options = {
+           config: {
+             directories: {
+               output: path.join(process.cwd(), "release"),
+               app: path.join(process.cwd(), "dist"),
+             },
+             files: ["**"],
+             extends: null,
+             productName: "JueJin",
+             appId: "com.juejin.desktop",
+             asar: true,
+             nsis: {
+               oneClick: true,
+               perMachine: true,
+               allowToChangeInstallationDirectory: false,
+               createDesktopShortcut: true,
+               createStartMenuShortcut: true,
+               shortcutName: "juejinDesktop",
+             },
+             publish: [{ provider: "generic", url: "http://localhost:5500/" }],
+           },
+           project: process.cwd(),
+         };
+         return require("electron-builder").build(options);
+       }
+     }
+     ~~~
+     这个对象通过三个方法提供了三个功能，按照这三个方法的执行顺序，它们的功能如下：
+     
