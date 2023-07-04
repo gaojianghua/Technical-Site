@@ -3348,6 +3348,141 @@ Rollup 的打包过程中，会定义一套完整的构建生命周期，从开�
   再次启动项目时，会多出一个调试地址，通过这个地址来查看项目中各个模块的编译结果。
 
 
+## HMR
+HMR 的全称叫做`Hot Module Replacement`，即模块热替换或者模块热更新。在计算机领域当中也有一个类似的概念叫热插拔，我们经常使用的 USB 设备就是一个典型的代表，当我们插入 U 盘的时候，系统驱动会加载在新增的 U 盘内容，不会重启系统，也不会修改系统其它模块的内容。HMR 的作用其实一样，就是在页面模块更新的时候，直接把**页面中发生变化的模块替换为新的模块**，同时不会影响其它模块的正常运作。
+
+- **深入 HMR API**
+
+  Vite 作为一个完整的构建工具，本身实现了一套 HMR 系统，值得注意的是，这套 HMR 系统基于原生的 ESM 模块规范来实现，在文件发生改变时 Vite 会侦测到相应 ES 模块的变化，从而触发相应的 API，实现局部的更新。
+  
+  HMR API 的类型定义:
+  ~~~ts
+  interface ImportMeta {
+    readonly hot?: {
+      readonly data: any
+      accept(): void
+      accept(cb: (mod: any) => void): void
+      accept(dep: string, cb: (mod: any) => void): void
+      accept(deps: string[], cb: (mods: any[]) => void): void
+      prune(cb: () => void): void
+      dispose(cb: (data: any) => void): void
+      decline(): void
+      invalidate(): void
+      on(event: string, cb: (...args: any[]) => void): void
+    }
+  }
+  ~~~
+  **import.meta** 对象为现代浏览器原生的一个内置对象，Vite 所做的事情就是在这个对象上的 hot 属性中定义了一套完整的属性和方法。因此，在 Vite 当中，你就可以通过`import.meta.hot`来访问关于 HMR 的这些属性和方法，比如`import.meta.hot.accept()`。
+  <br>
+  <br>
+  * **模块更新时逻辑: hot.accept**
+
+    `import.meta.hot` 对象上有一个非常关键的方法 `accept`，因为它决定了 Vite 进行热更新的边界。它就是用来接受模块更新的。 一旦 Vite 接受了这个更新，当前模块就会被认为是 HMR 的边界。那么，Vite 接受谁的更新呢？这里会有三种情况：
+    * 接受**自身模块**的更新
+    * 接受**某个子模块**的更新
+    * 接受**多个子模块**的更新
+    <br>
+    <br>
+  
+    **1. 接受自身更新**
+
+    当模块接受自身的更新时，则当前模块会被认为 HMR 的边界。也就是说，除了当前模块，其他的模块均未受到任何影响。示例如下：
+    ~~~html
+    <!-- index.html -->
+    <!DOCTYPE html>
+    <html lang="en">
+      <head>
+        <meta charset="UTF-8" />
+        <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Vite App</title>
+      </head>
+      <body>
+        <div id="app"></div>
+        <p>
+          count: <span id="count">0</span>
+        </p>
+        <script type="module" src="/src/main.ts"></script>
+      </body>
+    </html>
+    ~~~
+    ~~~ts
+    // src/main.ts
+    import { render } from './render';
+    import { initState } from './state';
+    render();
+    initState();
+    ~~~
+    ~~~ts
+    // src/render.ts
+    // 负责渲染文本内容
+    import './style.css'
+    export const render = () => {
+      const app = document.querySelector<HTMLDivElement>('#app')!
+      app.innerHTML = `
+        <h1>Hello Vite!</h1>
+        <p target="_blank">This is hmr test.123</p>
+      `
+    }
+    // src/state.ts
+    // 负责记录当前的页面状态
+    export function initState() {
+      let count = 0;
+      setInterval(() => {
+        let countEle = document.getElementById('count');
+        countEle!.innerText =  ++count + '';
+      }, 1000);
+    }
+    ~~~
+    执行`pnpm i`安装依赖，然后`npm run dev`启动项目，在浏览器中查看，每隔一秒钟，你可以看到这里的`count`值会加 1。
+    <br>
+    <br>
+    下面改动一下 render.ts 的渲染内容：
+    ~~~ts
+    // render.ts
+    export const render = () => {
+      const app = document.querySelector<HTMLDivElement>('#app')!
+      app.innerHTML = `
+        <h1>Hello Vite!</h1>
+        <p target="_blank">This is hmr test.123 这是增加的文本</p>
+      `
+    }
+    ~~~
+    页面的渲染内容更新了，但count值瞬间被置零了，并且查看控制台，也有这样的 log：
+    ~~~shell
+    [vite] page reload src/render.ts
+    ~~~
+    很明显，当 render.ts 模块发生变更时，Vite 发现并没有 HMR 相关的处理，然后直接刷新页面了。现在让我们在render.ts中加上如下的代码:
+    ~~~ts
+    // 条件守卫
+    if (import.meta.hot) {
+      import.meta.hot.accept((mod) => mod.render())
+    }
+    ~~~
+    `import.meta.hot`对象只有在开发阶段才会被注入到全局，生产环境是访问不到的，另外增加条件守卫之后，打包时识别到 if 条件不成立，会自动把这部分代码从打包产物中移除，来优化资源体积。因此，我们需要增加这个条件守卫语句。
+    <br>
+    <br>
+    `import.meta.hot.accept`中传入了一个回调函数作为参数，入参即为 Vite 给我们提供的更新后的模块内容，在浏览器中打印mod内容如下，正好是render模块最新的内容。
+    <br>
+    <br>
+    回调中调用了一下 `mod.render` 方法，也就是当模块变动后，每次都重新渲染一遍内容。这时你可以试着改动一下渲染的内容，然后到浏览器中注意一下`count`的情况，并没有被重新置零，而是保留了原有的状态。
+    <br>
+    <br>
+    现在 render 模块更新后，只会重新渲染这个模块的内容，而对于 state 模块的内容并没有影响，并且控制台的 log 也发生了变化:
+    ~~~shell
+    [vite] hmr update /src/render.ts
+    ~~~
+    现在我们算是实现了初步的 **HMR**，也在实际的代码中体会到了 **accept** 方法的用途。当然，在这个例子中我们传入了一个回调函数来手动调用 `render` 逻辑，但事实上你也可以什么参数都不传，这样 Vite 只会把 `render模块`的最新内容执行一遍，但 render 模块内部只声明了一个函数，因此直接调用`import.meta.hot.accept()`并不会重新渲染页面。
+
+
+
+
+
+
+
+
+
+
 
 
 
