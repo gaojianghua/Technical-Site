@@ -3473,24 +3473,192 @@ HMR 的全称叫做`Hot Module Replacement`，即模块热替换或者模块热�
     [vite] hmr update /src/render.ts
     ~~~
     现在我们算是实现了初步的 **HMR**，也在实际的代码中体会到了 **accept** 方法的用途。当然，在这个例子中我们传入了一个回调函数来手动调用 `render` 逻辑，但事实上你也可以什么参数都不传，这样 Vite 只会把 `render模块`的最新内容执行一遍，但 render 模块内部只声明了一个函数，因此直接调用`import.meta.hot.accept()`并不会重新渲染页面。
+    <br>
+    <br>
+    **2. 接受依赖模块的更新**
 
+    举例: main模块依赖render 模块，也就是说，main模块是render父模块，那么我们也可以在 main 模块中接受render模块的更新，此时 HMR 边界就是main模块了。
+    ~~~diff
+    // 移除 render.ts 中 accept 相关代码
+    - if (import.meta.hot) {
+    -   import.meta.hot.accept((mod) => mod.render())
+    - }
+    ~~~
+    ~~~diff
+    // main.ts 中添加以下代码
+    import { render } from './render';
+    import './state';
+    render();
+    +if (import.meta.hot) {
+    +  import.meta.hot.accept('./render.ts', (newModule) => {
+    +    newModule.render();
+    +  })
+    +}
+    ~~~
+    在这里我们同样是调用 `accept` 方法，与之前不同的是，第一个参数传入一个依赖的路径，也就是**render模块的路径**，这就相当于告诉 Vite: 我监听了 render 模块的更新，当它的内容更新的时候，请把最新的内容传给我。同样的，第二个参数中定义了模块变化后的回调函数，这里拿到了 render 模块最新的内容，然后执行其中的渲染逻辑，让页面展示最新的内容。
 
+    通过接受一个依赖模块的更新，我们同样又实现了 `HMR` 功能，你可以试着改动 render模块的内容，可以发现页面内容正常更新，并且状态依然保持着原样。
+    <br>
+    <br>
+    **3. 接受多个子模块的更新**
 
+    父模块可以接受多个子模块的更新，当其中任何一个子模块更新之后，父模块会成为 HMR 边界。示例：
+    ~~~diff
+    // 更改 main.ts 代码
+    import { render } from './render';
+    import { initState } from './state';
+    render();
+    initState();
+    +if (import.meta.hot) {
+    +  import.meta.hot.accept(['./render.ts', './state.ts'], (modules) => {
+    +    console.log(modules);
+    +  })
+    +}
+    ~~~
+    在代码中我们通过 `accept` 方法接受了`render`和`state`两个模块的更新，接着让我们手动改动一下某一个模块的代码，观察一下回调中`modules`的打印内容。
 
+    可以看到 Vite 给我们的回调传来的参数`modules`其实是一个数组，和我们第一个参数声明的子模块数组一一对应。因此`modules`数组第一个元素是 `undefined`，表示`render`模块并没有发生变化，第二个元素为一个 `Module` 对象，也就是经过变动后`state`模块的最新内容。于是在这里，我们根据 `modules` 进行自定义的更新，修改 main.ts:
+    ~~~ts
+    // main.ts
+    import { render } from './render';
+    import { initState } from './state';
+    render();
+    initState();
+    if (import.meta.hot) {
+      import.meta.hot.accept(['./render.ts', './state.ts'], (modules) => {
+        // 自定义更新
+        const [renderModule, stateModule] = modules;
+        if (renderModule) {
+          renderModule.render();
+        }
+        if (stateModule) {
+          stateModule.initState();
+        }
+      })
+    }
+    ~~~
+    现在，你可以改动两个模块的内容，可以发现，页面的相应模块会更新，并且对其它的模块没有影响。但实际上你会发现另外一个问题，当改动了**state模块**的内容之后，页面的内容会变得错乱。
 
+    我们快速回顾一下 `state` 模块的内容:
+    ~~~ts
+    // state.ts
+    export function initState() {
+      let count = 0;
+      setInterval(() => {
+        let countEle = document.getElementById('count');
+        countEle!.innerText =  ++count + '';
+      }, 1000);
+    }
+    ~~~
+    其中设置了一个定时器，但当模块更改之后，这个定时器并没有被销毁，紧接着我们在 `accept` 方法调用 `initState` 方法又创建了一个新的定时器，导致 `count` 的值错乱。那如何来解决这个问题呢？这就涉及到新的 HMR 方法——**dispose方法**了。
+    <br>
+    <br>
+  * **模块销毁时逻辑: hot.dispose**
+  
+    代表在模块更新、旧模块需要销毁时需要做的一些事情，拿刚刚的场景来说，我们可以通过在state模块中调用 `dispose` 方法来轻松解决定时器共存的问题，代码改动如下:
+    ~~~ts
+    // state.ts
+    let timer: number | undefined;
+    if (import.meta.hot) {
+      import.meta.hot.dispose(() => {
+        if (timer) {
+          clearInterval(timer);
+        }
+      })
+    }
+    export function initState() {
+      let count = 0;
+      timer = setInterval(() => {
+        let countEle = document.getElementById('count');
+        countEle!.innerText =  ++count + ''; 
+      }, 1000);
+    }
+    ~~~
+    可以看到，当我稍稍改动一下state模块的内容(比如加个空格)，页面确实会更新，而且也没有状态错乱的问题，说明我们在模块销毁前清除定时器的操作是生效的。但你又可以很明显地看到一个新的问题: 原来的状态丢失了，`count`的内容从64突然变成1。这又是为什么呢？
 
+    当我们改动了state模块的代码，main模块接受更新，执行 `accept` 方法中的回调，接着会执行 state 模块的`initState`方法。注意了，此时新建的 `initState` 方法的确会初始化定时器，但同时也会初始化 `count` 变量，也就是`count`从 0 开始计数了！
 
+    这显然是不符合预期的，我们期望的是每次改动state模块，之前的状态都保存下来。这就要使用到共享数据: `hot.data` 属性
+    <br>
+    <br>
+  * **共享数据: hot.data 属性**
 
+    这个属性用来在不同的模块实例间共享一些数据。使用上也非常简单，让我们来重构一下 state 模块:
+    ~~~diff
+    // state.ts
+    let timer: number | undefined;
+    if (import.meta.hot) {
+    + // 初始化 count
+    + if (!import.meta.hot.data.count) {
+    +   import.meta.hot.data.count = 0;
+    + }
+      import.meta.hot.dispose(() => {
+        if (timer) {
+          clearInterval(timer);
+        }
+      })
+    }
+    export function initState() {
+    + const getAndIncCount = () => {
+    +   const data = import.meta.hot?.data || {
+    +     count: 0
+    +   };
+    +   data.count = data.count + 1;
+    +   return data.count;
+    + };
+      timer = setInterval(() => {
+        let countEle = document.getElementById('count');
+    +   countEle!.innerText =  getAndIncCount() + '';
+      }, 1000);
+    }
+    ~~~
+    我们在 `import.meta.hot.data` 对象上挂载了一个`count` 属性，在二次执行`initState`的时候便会复用 `import.meta.hot.data `上记录的 `count` 值，从而实现状态的保存。
+    <br>
+    <br>
+  * **其它方法**
+  
+    1. **import.meta.hot.decline()**
 
+       这个方法调用之后，相当于表示此模块不可热更新，当模块更新时会强制进行页面刷新。
 
+    2. **import.meta.hot.invalidate()**
 
+       用来强制刷新页面。
+    
+    3. **自定义事件**
 
+       你还可以通过 `import.meta.hot.on` 来监听 HMR 的自定义事件，内部有这么几个事件会自动触发:
+       + `vite:beforeUpdate` 当模块更新时触发；
+       + `vite:beforeFullReload` 当即将重新刷新页面时触发；
+       + `vite:beforePrune` 当不再需要的模块即将被剔除时触发；
+       + `vite:error` 当发生错误时（例如，语法错误）触发。
+       
+       自定义事件可以通过上面提到的 `handleHotUpdate` 这个插件 `Hook` 来进行触发:
+       ~~~ts
+       // 插件 Hook
+       handleHotUpdate({ server }) {
+         server.ws.send({
+           type: 'custom',
+           event: 'custom-update',
+           data: {}
+         })
+         return []
+       }
+       // 前端代码
+       import.meta.hot.on('custom-update', (data) => {
+         // 自定义更新逻辑
+       })
+       ~~~
 
+## 代码分割
+随着前端工程的日渐复杂，单份的打包产物体积越来越庞大，会出现一系列应用加载性能问题，而代码分割可以很好地解决它们。
 
+需要注意的是，下面会多次提到 `bundle`、`chunk`、`vendor` 这些构建领域的专业概念，这里给大家提前解释一下:
+  * `bundle` 指的是整体的打包产物，包含 JS 和各种静态资源。
+  * `chunk` 指的是打包后的 JS 文件，是 `bundle` 的子集。
+  * `vendor` 是指第三方包的打包产物，是一种特殊的 chunk。
 
-
-
-
+**Code Splitting 解决的问题**
 
 
 
