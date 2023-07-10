@@ -2308,3 +2308,153 @@ Nest (NestJS) 是一个用于构建高效、可扩展的 Node.js 服务器端应
     }
   }
   ~~~
+
+
+## Nest 中使用 Session 和 JWT
+Nest 里实现 session 用的 express 的中间件 `express-session`。安装 express-session 和它的 ts 类型定义：
+~~~shell
+npm install express-session @types/express-session
+~~~
+在入口模块里启用：
+~~~js
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import * as session from 'express-session';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  app.use(session({
+    secret: 'guang',    // 指定加密的密钥
+    resave: false,      // true: 不管有无修改，每次访问必更新 session；false：能容变化才更新 session
+    saveUninitialized: false    // true：无论 session 是否设置，都会初始化一个空 session；false：不设置即不初始化
+  }));
+  await app.listen(3000);
+}
+bootstrap();
+~~~
+在 controller 里就注入 session 对象：
+~~~ts
+@Get('sss')
+sss(@Session() session) {
+    console.log(session)
+    session.count = session.count ? session.count + 1 : 1;
+    return session.count;
+}
+~~~
+session 里有个 count 的变量，每次访问加一，然后返回这个 count。使用命令启动：
+~~~shell
+nest start --watch
+~~~
+可以使用postmain进行测试，每次请求返回的数据都不同，而且返回了一个 cookie 是 connect.sid，这个就是对应 session 的 id。因为 cookie 在请求的时候会自动带上，就可以实现请求的标识，给 http 请求加上状态。
+
+使用 JWT 需要引入 @nestjs/jwt 这个包
+~~~shell
+npm install @nestjs/jwt
+~~~
+AppModule 里引入 JwtModule：
+~~~ts
+// 通过 register 传入 option。
+import { Module } from '@nestjs/common';
+import { JwtModule } from '@nestjs/jwt';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+
+@Module({
+  imports: [
+    JwtModule.register({
+      secret: 'guang',  // 加密的秘钥
+      signOptions: {
+        expiresIn: '7d' // 设置过期时间：7d(7天)
+      }
+    })
+  ],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}
+~~~
+~~~ts
+// 通过 registerAsync 传入 useFactory 函数返回一个配置对象。
+import { Module } from '@nestjs/common';
+import { JwtModule } from '@nestjs/jwt';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+
+@Module({
+  imports: [
+    JwtModule.register({
+      secret: 'guang',  // 加密的秘钥
+      signOptions: {
+        expiresIn: '7d' // 设置过期时间：7d(7天)
+      }
+    })
+  ],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}
+~~~
+controller 里注入 JwtModule 里的 JwtService：
+~~~ts
+@Controller()
+export class AppController {
+  constructor(private readonly appService: AppService) {}
+  
+  @Inject(JwtService)
+  private jwtService: JwtService;
+
+  @Get('ttt')
+  ttt(@Res({ passthrough: true}) response: Response) {
+    // 使用 jwtService.sign 来生成一个 jwt token
+    const newToken = this.jwtService.sign({
+      count: 1
+    });
+    // 将生成的 token 放到 response header 里
+    response.setHeader('authorization', 'bearer ' + newToken);
+    return 'hello';
+  }
+}
+~~~
+> 注入 response 对象之后，默认不会把返回值作为 body 了，需要设置 passthrough 为 true 才可以。
+
+使用 postmain 测试后可以看到，返回的响应确实带上了这个 header。下面让后面的请求需要带上这个 token，在服务端取出来，然后 +1 之后再放回去：
+~~~ts
+@Controller()
+export class AppController {
+  constructor(private readonly appService: AppService) {
+  }
+
+  @Inject(JwtService)
+  private jwtService: JwtService;
+
+  // @Headers 装饰器取出 autorization 的 header
+  @Get('ttt')
+  ttt(@Headers('authorization') authorization: string, @Res({passthrough: true}) response: Response) {
+    if (authorization) {
+      try {
+        const token = authorization.split(' ')[1];
+        // 通过 jwtService.verify 对 token 做验证
+        const data = this.jwtService.verify(token);
+        // 验证成功 count 加1后重新生成 token 并返回
+        const newToken = this.jwtService.sign({
+          count: data.count + 1
+        });
+        response.setHeader('authorization', 'bearer ' + newToken);
+        return data.count + 1
+      } catch (e) {
+        console.log(e);
+        // 验证失败抛出异常
+        throw new UnauthorizedException();
+      }
+    } else {
+      const newToken = this.jwtService.sign({
+        count: 1
+      });
+
+      response.setHeader('authorization', 'bearer ' + newToken);
+      return 1;
+    }
+  }
+}
+~~~

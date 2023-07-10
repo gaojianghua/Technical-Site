@@ -2537,7 +2537,7 @@ Rollup 的打包过程中，会定义一套完整的构建生命周期，从开�
   8. 随后会调用 `generateBundle` 钩子，这个钩子的入参里面会包含所有的打包产物信息，包括 **chunk** (打包后的代码)、**asset**(最终的静态资源文件)。你可以在这里删除一些 `chunk` 或者 `asset`，最终这些内容将不会作为产物输出。
 
   9. 前面提到了 `rollup.rollup` 方法会返回一个 `bundle` 对象，这个对象是包含 `generate` 和 `write` 两个方法，两个方法唯一的区别在于后者会将代码写入到磁盘中，同时会触发 `writeBundle` 钩子，传入所有的打包产物信息，包括 `chunk` 和 `asset`，和 `generateBundle` 钩子非常相似。不过值得注意的是，这个钩子执行的时候，产物已经输出了，而 `generateBundle` 执行的时候产物还并没有输出。顺序如下图所示:
-     ![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/12142ea189be4a8f918cf247f408487e~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.png)
+     ![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/12142ea189be4a8f918cf247f408487e~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
   10. 当上述的 `bundle` 的 `close` 方法被调用时，会触发`closeBundle`钩子，到这里 `Output` 阶段正式结束。
   >注意: 当打包过程中任何阶段出现错误，会触发 renderError 钩子，然后执行 closeBundle 钩子结束打包。
 
@@ -3993,6 +3993,820 @@ import "core-js/modules/es6.set.js"
 * [@babel/runtime-corejs3](https://babeljs.io/docs/en/babel-runtime-corejs3)
 
 看似各种运行时库眼花缭乱，其实都是`core-js`和`regenerator-runtime`不同版本的封装罢了(`@babel/runtime`是个特例，不包含 `core-js` 的 `Polyfill`)。这类库是项目运行时必须要使用到的，因此一定要放到`package.json`中的`dependencies`中！
+
+2. **实际使用**
+初始化项目:
+~~~shell
+mkdir babel-test
+npm init -y
+~~~
+安装一些必要的依赖:
+~~~shell
+pnpm i @babel/cli @babel/core @babel/preset-env
+~~~
+各个依赖的作用:
+* `@babel/cli`: 为 babel 官方的脚手架工具，很适合我们练习用。
+* `@babel/core`: babel 核心编译库。
+* `@babel/preset-env`: babel 的预设工具集，基本为 babel 必装的库。
+
+新建 src 目录，在目录下增加index.js文件:
+~~~js
+const func = async () => {
+  console.log(12123)
+}
+
+Promise.resolve().finally();
+~~~
+示例代码中既包含了`高级语法`也包含现代浏览器的API，正好可以针对语法降级和 `Polyfill` 注入两个功能进行测试。
+
+新建`.babelrc.json`即 babel 的配置文件，内容如下:
+~~~json
+{
+  "presets": [
+    [
+      "@babel/preset-env", 
+      {
+        // 指定兼容的浏览器版本
+        "targets": {
+          "ie": "11"
+        },
+        // 基础库 core-js 的版本，一般指定为最新的大版本
+        "corejs": 3,
+        // Polyfill 注入策略，后文详细介绍
+        "useBuiltIns": "usage",
+        // 不将 ES 模块语法转换为其他模块语法
+        "modules": false
+      }
+    ]
+  ]
+}
+~~~
+通过 `targets` 参数指定要兼容的浏览器版本，也可以用 [Browserslist](https://github.com/browserslist/browserslist) 配置语法:
+~~~ts
+{ 
+  // ie 不低于 11 版本，全球超过 0.5% 使用，且还在维护更新的浏览器
+  "targets": "ie >= 11, > 0.5%, not dead"
+}
+~~~
+Browserslist 是一个帮助我们设置目标浏览器的工具，不光是 Babel 用到，其他的编译工具如`postcss-preset-env`、`autoprefix`中都有所应用。对于B`rowserslist`的配置内容，你既可以放到 Babel 这种特定工具当中，也可以在`package.json`中通过`browserslist`声明:
+~~~json
+// package.json
+{ 
+  "browserslist": "ie >= 11"
+} 
+~~~
+或者通过`.browserslistrc`进行声明:
+~~~ts
+// .browserslistrc
+ie >= 11
+~~~
+在实际的项目中，一般我们可以将使用下面这些最佳实践集合来描述不同的浏览器类型，减轻配置负担:
+~~~ts
+// 现代浏览器
+last 2 versions and since 2018 and > 0.5%
+// 兼容低版本 PC 浏览器
+IE >= 11, > 0.5%, not dead
+// 兼容低版本移动端浏览器
+iOS >= 9, Android >= 4.4, last 2 versions, > 0.2%, not dead
+~~~
+另外一个重要的配置**useBuiltIns**，它决定了添加 Polyfill 策略，默认是 `false`，即不添加任何的 Polyfill。你可以手动将`useBuiltIns`配置为`entry`或者`usage`
+
+首先你可以将这个字段配置为`entry`，需要注意的是，`entry`配置规定你必须在入口文件手动添加一行这样的代码:
+~~~ts
+// index.js 开头加上
+import 'core-js';
+~~~
+接着在终端执行下面的命令进行 Babel 编译:
+~~~shell
+npx babel src --out-dir dist
+~~~
+产物输出在dist目录中，Babel 已经根据`目标浏览器`的配置为我们添加了大量的 Polyfill 代码，`index.js`文件简单的几行代码被编译成近 300 行。实际上，Babel 所做的事情就是将你的`import "core-js"`代码替换成了产物中的这些具体模块的导入代码。
+
+但这个配置有一个问题，即无法做到按需导入，上面的产物代码其实有大部分的 `Polyfill` 的代码我们并没有用到。接下来我们试试`useBuiltIns: usage`这个按需导入的配置，改动配置后执行编译命令:
+~~~shell
+npx babel src --out-dir dist
+~~~
+同样可以看到产物输出在了dist/index.js中
+>Polyfill 代码主要来自 `corejs` 和 `regenerator-runtime`，因此如果要运行起来，必须要装这两个库。
+
+Polyfill 的代码精简了许多，真正地实现了按需 Polyfill 导入。因此，在实际的使用当中，还是推荐大家尽量使用`useBuiltIns: "usage"`，进行按需的 Polyfill 注入。
+
+梳理一下，上面我们利用`@babel/preset-env`进行了目标浏览器语法的降级和`Polyfill`注入，同时用到了`core-js`和`regenerator-runtime`两个核心的运行时库。但`@babel/preset-env` 的方案也存在一定局限性:
+* 如果使用新特性，往往是通过基础库(如 core-js)往全局环境添加 Polyfill，如果是开发应用没有任何问题，如果是开发第三方工具库，则很可能会对`全局空间造成污染`。
+* 很多工具函数的实现代码(如上面示例中的`_defineProperty`方法)，会在许多文件中重现出现，造成`文件体积冗余`。
+
+
+3. **更优的 Polyfill 注入方案: transform-runtime**
+
+接下来要介绍的`transform-runtime`方案，就是为了解决`@babel/preset-env`的种种局限性。
+>需要提前说明的是，`transform-runtime`方案可以作为`@babel/preset-env`中`useBuiltIns`配置的替代品，也就是说，一旦使用`transform-runtime`方案，你应该把`useBuiltIns`属性设为 `false`。
+
+尝试一下这个方案，首先安装必要的依赖:
+~~~shell
+pnpm i @babel/plugin-transform-runtime -D
+pnpm i @babel/runtime-corejs3 -S
+~~~
+这两个依赖的作用: 前者是编译时工具，用来转换语法和添加 Polyfill，后者是运行时基础库，封装了`core-js`、`regenerator-runtime`和各种语法转换用到的**工具函数**。
+> core-js 有三种产物，分别是`core-js`、`core-js-pure`和`core-js-bundle`。第一种是全局 Polyfill 的做法，`@babel/preset-env` 就是用的这种产物；第二种不会把 Polyfill 注入到全局环境，可以按需引入；第三种是打包好的版本，包含所有的 Polyfill，不太常用。@babel/runtime-corejs3 使用的是第二种产物。
+
+`.babelrc.json`配置：
+~~~json
+{
+  "plugins": [
+    // 添加 transform-runtime 插件
+    [
+      "@babel/plugin-transform-runtime", 
+      {
+        "corejs": 3
+      }
+    ]
+  ],
+  "presets": [
+    [
+      "@babel/preset-env", 
+      {
+        "targets": {
+          "ie": "11"
+        },
+        "corejs": 3,
+        // 关闭 @babel/preset-env 默认的 Polyfill 注入
+        "useBuiltIns": false,
+        "modules": false
+      }
+    ]
+  ]
+}
+~~~
+~~~shell
+npx babel src --out-dir dist
+~~~
+`transform-runtime` 一方面能够让我们在代码中使用**非全局版本**的 Polyfill，这样就避免全局空间的污染，这也得益于 `core-js` 的 pure 版本产物特性；另一方面对于`asyncToGeneator`这类的工具函数，它也将其转换成了一段引入语句，不再将完整的实现放到文件中，节省了编译后文件的体积。
+
+另外，`transform-runtime`方案引用的基础库也发生了变化，不再是直接引入`core-js`和`regenerator-runtime`，而是引入`@babel/runtime-corejs3`。
+
+
+**Vite 语法降级与 Polyfill 注入**
+
+Vite 官方已经为我们封装好了一个开箱即用的方案: `@vitejs/plugin-legacy`，我们可以基于它来解决项目语法的浏览器兼容问题。这个插件内部同样使用 `@babel/preset-env` 以及 `core-js` 等一系列基础库来进行语法降级和 Polyfill 注入，因此对于上文所介绍的底层工具链的掌握是必要的，否则无法理解插件内部所做的事情，真正遇到问题时往往会不知所措。
+~~~shell
+# 安装插件
+pnpm i @vitejs/plugin-legacy -D
+~~~
+~~~ts
+// vite.config.ts
+import legacy from '@vitejs/plugin-legacy';
+import { defineConfig } from 'vite'
+
+export default defineConfig({
+  plugins: [
+    // 省略其它插件
+    legacy({
+      // 设置目标浏览器，browserslist 配置语法
+      targets: ['ie >= 11'],
+    })
+  ]
+})
+~~~
+通过 `targets` 指定目标浏览器，这个参数在插件内部会透传给 `@babel/preset-env`。
+
+执行 `npm run build` 打包后，多出了index-legacy.js、vendor-legacy.js以及polyfills-legacy.js三份产物文件。观察一下index.html的产物内容:
+~~~html
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/assets/favicon.17e50649.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vite App</title>
+    <!-- 1. Modern 模式产物 -->
+    <script type="module" crossorigin src="/assets/index.c1383506.js"></script>
+    <link rel="modulepreload" href="/assets/vendor.0f99bfcc.js">
+    <link rel="stylesheet" href="/assets/index.91183920.css">
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- 2. Legacy 模式产物 -->
+    <script nomodule>兼容 iOS nomodule 特性的 polyfill 省略具体代码</script>
+    <script nomodule id="vite-legacy-polyfill" src="/assets/polyfills-legacy.36fe2f9e.js"></script>
+    <script nomodule id="vite-legacy-entry" data-src="/assets/index-legacy.c3d3f501.js">System.import(document.getElementById('vite-legacy-entry').getAttribute('data-src'))</script>
+  </body>
+</html>
+~~~
+通过官方的`legacy`插件， Vite 会分别打包出`Modern`模式和`Legacy`模式的产物，然后将两种产物插入同一个 HTML 里面，`Modern`产物被放到 `type="module"`的 script 标签中，而`Legacy`产物则被放到带有 `nomodule` 的 script 标签中。
+
+这样产物便就能够同时放到现代浏览器和不支持 `type="module"` 的低版本浏览器当中执行。当然，在具体的代码语法层面，插件还需要考虑语法降级和 Polyfill 按需注入的问题，接下来我们就来分析一下 Vite 的官方 `legacy` 插件是如何解决这些问题的。
+
+**插件执行原理**
+
+官方的legacy插件是一个相对复杂度比较高的插件，直接看源码可能会很难理解，这里我梳理了画了一张简化后的流程图，接下来我们就根据这张流程图来一一拆解这个插件在各个钩子阶段到底做了些什么。
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/3363652bc9bd4118af2896c9b1cce9cf~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
+
+首先是在 `configResolved` 钩子中调整了 `output` 属性，这么做的目的是让 Vite 底层使用的打包引擎 Rollup 能另外打包出一份 `Legacy 模式` 的产物，实现代码如下:
+~~~ts
+const createLegacyOutput = (options = {}) => {
+  return {
+    ...options,
+    // system 格式产物
+    format: 'system',
+    // 转换效果: index.[hash].js -> index-legacy.[hash].js
+    entryFileNames: getLegacyOutputFileName(options.entryFileNames),
+    chunkFileNames: getLegacyOutputFileName(options.chunkFileNames)
+  }
+}
+
+const { rollupOptions } = config.build
+const { output } = rollupOptions
+if (Array.isArray(output)) {
+  rollupOptions.output = [...output.map(createLegacyOutput), ...output]
+} else {
+  rollupOptions.output = [createLegacyOutput(output), output || {}]
+}
+~~~
+接着，在`renderChunk`阶段，插件会对 Legacy 模式产物进行语法转译和 Polyfill 收集，值得注意的是，这里并不会真正注入`Polyfill`，而仅仅只是收集`Polyfill`:
+~~~ts
+{
+  renderChunk(raw, chunk, opts) {
+    // 1. 使用 babel + @babel/preset-env 进行语法转换与 Polyfill 注入
+    // 2. 由于此时已经打包后的 Chunk 已经生成
+    //   这里需要去掉 babel 注入的 import 语句，并记录所需的 Polyfill
+    // 3. 最后的 Polyfill 代码将会在 generateBundle 阶段生成
+  }
+}
+~~~
+由于场景是应用打包，这里直接使用 **@babel/preset-env 的useBuiltIns: 'usage'** 来进行全局 Polyfill 的收集是比较标准的做法。
+
+回到 Vite 构建的主流程中，接下来会进入`generateChunk`钩子阶段，现在 Vite 会对之前收集到的`Polyfill`进行统一的打包，实现也比较精妙，主要逻辑集中在`buildPolyfillChunk`函数中:
+~~~ts
+// 打包 Polyfill 代码
+async function buildPolyfillChunk(
+  name,
+  imports
+  bundle,
+  facadeToChunkMap,
+  buildOptions,
+  externalSystemJS
+) {
+  let { minify, assetsDir } = buildOptions
+  minify = minify ? 'terser' : false
+  // 调用 Vite 的 build API 进行打包
+  const res = await build({
+    // 根路径设置为插件所在目录
+    // 由于插件的依赖包含`core-js`、`regenerator-runtime`这些运行时基础库
+    // 因此这里 Vite 可以正常解析到基础 Polyfill 库的路径
+    root: __dirname,
+    write: false,
+    // 这里的插件实现了一个虚拟模块
+    // Vite 对于 polyfillId 会返回所有 Polyfill 的引入语句
+    plugins: [polyfillsPlugin(imports, externalSystemJS)],
+    build: {
+      rollupOptions: {
+        // 访问 polyfillId
+        input: {
+          // name 暂可视作`polyfills-legacy`
+          // pofyfillId 为一个虚拟模块，经过插件处理后会拿到所有 Polyfill 的引入语句
+          [name]: polyfillId
+        },
+      }
+    }
+  });
+  // 拿到 polyfill 产物 chunk
+  const _polyfillChunk = Array.isArray(res) ? res[0] : res
+  if (!('output' in _polyfillChunk)) return
+  const polyfillChunk = _polyfillChunk.output[0]
+  // 后续做两件事情:
+  // 1. 记录 polyfill chunk 的文件名，方便后续插入到 Modern 模式产物的 HTML 中；
+  // 2. 在 bundle 对象上手动添加 polyfill 的 chunk，保证产物写到磁盘中
+}
+~~~
+因此，你可以理解为这个函数的作用即通过 `vite build` 对 `renderChunk` 中收集到 polyfill 代码进行打包，生成一个单独的 chunk:
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/48ef64e0100a46f38b602b3b9a08560b~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
+
+>需要注意的是，polyfill chunk 中除了包含一些 core-js 和 regenerator-runtime 的相关代码，也包含了 `SystemJS` 的实现代码，你可以将其理解为 ESM 的加载器，实现了在旧版浏览器下的模块加载能力。
+
+现在我们已经能够拿到 `Legacy` 模式的产物文件名及 `Polyfill Chunk` 的文件名，那么就可以通过`transformIndexHtml`钩子来将这些产物插入到 HTML 的结构中:
+~~~ts
+{
+  transformIndexHtml(html) {
+    // 1. 插入 Polyfill chunk 对应的 <script nomodule> 标签
+    // 2. 插入 Legacy 产物入口文件对应的 <script nomodule> 标签
+  }
+}
+~~~
+主流程中的细节：
+* 当插件参数中开启了`modernPolyfills`选项时，Vite 也会自动对 Modern 模式的产物进行 Polyfill 收集，并单独打包成`polyfills-modern.js`的 chunk，原理和 Legacy 模式下处理 Polyfill 一样。
+* SaFari 10.1 版本不支持 `nomodule`，为此需要单独引入一些补丁代码，[点击查看](https://gist.github.com/samthor/64b114e4a4f539915a95b91ffd340acc)。
+* 部分低版本 Edge 浏览器虽然支持 type="module"，但不支持动态 import，为此也需要插入一些[补丁代码](https://github.com/vitejs/vite/pull/3885)，针对这种情况下降级使用 Legacy 模式的产物。
+
+
+
+## 预渲染 SSR 工程
+客户端渲染存在着一定的问题，例如首屏加载比较慢、对 SEO 不太友好，因此 SSR (Server Side Render)即服务端渲染技术应运而生，它在保留 CSR 技术栈的同时，也能解决 CSR 的各种问题。
+
+**SSR 基本概念**
+
+首先我们来分析一下 CSR 的问题，它的 HTML 产物一般是如下的结构:
+~~~html
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title></title>
+  <link rel="stylesheet" href="xxx.css" />
+</head>
+<body>
+  <!-- 一开始没有页面内容 -->
+  <div id="root"></div>
+  <!-- 通过 JS 执行来渲染页面 -->
+  <script src="xxx.chunk.js"></script>
+</body>
+</html>
+~~~
+浏览器的渲染流程，如下图所示:
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/3d8044772f7849f6824febf1599559d8~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
+
+当浏览器拿到如上的 HTML 内容之后，其实并不能渲染完整的页面内容，因为此时的 body 中基本只有一个空的 div 节点，并没有填入真正的页面内容。而接下来浏览器开始下载并执行 JS 代码，经历了框架初始化、数据请求、DOM 插入等操作之后才能渲染出完整的页面。也就是说，在 CSR 中完整的页面内容本质上通过 JS 代码执行之后才能够渲染。这主要会导致两个方面的问题:
+* **首屏加载速度比较慢**。首屏加载需要依赖 JS 的执行，下载和执行 JS 都可能是非常耗时的操作，尤其是在一些网络不佳的场景，或者性能敏感的低端机下。
+* **对 SEO(搜索引擎优化) 不友好**。页面 HTML 没有具体的页面内容，导致搜索引擎爬虫无法获取关键词信息，导致网站排名受到影响。
+
+在 SSR 的场景下，服务端生成好**完整的 HTML 内容**，直接返回给浏览器，浏览器能够根据 HTML 渲染出完整的首屏内容，而不需要依赖 JS 的加载，这样一方面能够降低首屏渲染的时间，另一方面也能将完整的页面内容展现给搜索引擎的爬虫，利于 SEO。
+
+当然，SSR 中只能生成页面的内容和结构，并不能完成事件绑定，因此需要在浏览器中执行 CSR 的 JS 脚本，完成事件绑定，让页面拥有交互的能力，这个过程被称作`hydrate`(翻译为`注水`或者`激活`)。同时，像这样服务端渲染 + 客户端 hydrate 的应用也被称为`同构应用`。
+
+
+**SSR 生命周期分析**
+
+SSR 在服务端(这里主要指 Node.js 端)提前渲染出完整的 HTML 内容，首先需要保证前端的代码经过编译后放到服务端中能够正常执行，其次在服务端渲染前端组件，生成并组装应用的 HTML。这就涉及到 SSR 应用的两大生命周期: **构建时**和**运行时**
+
+**构建时：**
+1. **解决模块加载问题**。在原有的构建过程之外，需要加入 `SSR 构建`的过程 ，具体来说，我们需要另外生成一份 `CommonJS` 格式的产物，使之能在 Node.js 正常加载。当然，随着 Node.js 本身对 ESM 的支持越来越成熟，我们也可以复用前端 ESM 格式的代码，Vite 在开发阶段进行 SSR 构建也是这样的思路。
+    <br>
+    ![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/5a6c6311afab4279bdb2e39e1a6094d5~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
+
+2. **移除样式代码的引入**。直接引入一行 css 在服务端其实是无法执行的，因为 Node.js 并不能解析 CSS 的内容。但 `CSS Modules` 的情况除外，如下所示:
+    ~~~ts
+    import styles from './index.module.css'
+    
+    // 这里的 styles 是一个对象，如{ "container": "xxx" }，而不是 CSS 代码
+    console.log(styles)
+    ~~~
+3. **依赖外部化(external)**。对于某些第三方依赖我们并不需要使用构建后的版本，而是直接从 `node_modules` 中读取，比如 `react-dom`，这样在 `SSR 构建`的过程中将不会构建这些依赖，从而极大程度上加速 SSR 的构建。
+
+**运行时**
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/ec6c0b862c904299a61ac563351805b1~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
+
+1. **加载 SSR 入口模块**。在这个阶段，我们需要确定 SSR 构建产物的入口，即组件的入口在哪里，并加载对应的模块。
+2. **进行数据预取**。这时候 Node 侧会通过查询数据库或者网络请求来获取应用所需的数据。
+3. **渲染组件**。这个阶段为 SSR 的核心，主要将第 `1` 步中加载的组件渲染成 HTML 字符串或者 Stream 流。
+4. **HTML 拼接**。在组件渲染完成之后，我们需要拼接完整的 HTML 字符串，并将其作为响应返回给浏览器。
+
+从上面的分析中可以发现，SSR 其实是**构建时**和**运行时**互相配合才能实现的，也就是说，仅靠构建工具是不够的，写一个 Vite 插件严格意义上无法实现 SSR 的能力，我们需要对 Vite 的构建流程做一些整体的调整，并且加入一些服务端运行时的逻辑才能实现。
+
+**基于 Vite 搭建 SSR 项目**
+
+**1. SSR 构建 API**
+
+Vite 如何支持 SSR 构建的，可以分为两种情况，在开发环境下，Vite 依然秉承 ESM 模块按需加载即 `no-bundle` 的理念，对外提供了 `ssrLoadModule API`，你可以无需打包项目，将入口文件的路径传入 `ssrLoadModule` 即可:
+~~~ts
+// 加载服务端入口模块
+const xxx = await vite.ssrLoadModule('/src/entry-server.tsx')
+~~~
+而在生产环境下，`Vite` 会默认进行打包，对于 `SSR` 构建输出 `CommonJS` 格式的产物。我们可以在`package.json`中加入这样类似的构建指令:
+~~~json
+{
+  "build:ssr": "vite build --ssr 服务端入口路径"
+}
+~~~
+这样 `Vite` 会专门为 `SSR` 打包出一份构建产物。因此你可以看到，大部分 `SSR` 构建时的事情，`Vite` 已经帮我们提供了开箱即用的方案，我们后续直接使用即可。
+
+**2. 项目骨架搭建**
+
+通过脚手架初始化一个`react+ts`的项目:
+~~~shell
+npm init vite
+pnpm i
+~~~
+删除项目自带的`src/main.ts`，然后在 src 目录下新建`entry-client.tsx`和`entry-server.tsx`两个入口文件:
+~~~tsx
+// entry-client.ts
+// 客户端入口文件
+import React from 'react'
+import ReactDOM from 'react-dom'
+import './index.css'
+import App from './App'
+
+ReactDOM.hydrate(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+  document.getElementById('root')
+)
+
+// entry-server.ts
+// 导出 SSR 组件入口
+import App from "./App";
+import './index.css'
+
+function ServerEntry(props: any) {
+  return (
+    <App/>
+  );
+}
+
+export { ServerEntry };
+~~~
+以 Express 框架为例来实现 Node 后端服务，后续的 SSR 逻辑会接入到这个服务中。安装以下的依赖:
+~~~shell
+pnpm i express -S
+pnpm i @types/express -D
+~~~
+~~~ts
+// 新建 src/ssr-server/index.ts
+// 后端服务
+import express from 'express';
+
+async function createServer() {
+  const app = express();
+  
+  app.listen(3000, () => {
+    console.log('Node 服务器已启动~')
+    console.log('http://localhost:3000');
+  });
+}
+
+createServer();
+~~~
+~~~json
+// package.json
+{
+  "scripts": {
+    // 开发阶段启动 SSR 的后端服务
+    "dev": "nodemon --watch src/ssr-server --exec 'esno src/ssr-server/index.ts'",
+    // 打包客户端产物和 SSR 产物
+    "build": "npm run build:client && npm run build:server",
+    "build:client": "vite build --outDir dist/client",
+    "build:server": "vite build --ssr src/entry-server.tsx --outDir dist/server",
+    // 生产环境预览 SSR 效果
+    "preview": "NODE_ENV=production esno src/ssr-server/index.ts"
+  }
+}
+~~~
+其中涉及到两个额外的工具：
+* `nodemon`: 一个监听文件变化自动重启 Node 服务的工具。
+* `esno`: 类似 `ts-node` 的工具，用来执行 ts 文件，底层基于 Esbuild 实现。
+  
+安装这两个依赖:
+~~~shell
+pnpm i esno nodemon -D
+~~~
+
+**3. SSR 运行时实现**
+
+SSR 作为一种特殊的后端服务，我们可以将其封装成一个中间件的形式，如以下的代码所示:
+~~~ts
+import express, { RequestHandler, Express } from 'express';
+import { ViteDevServer } from 'vite';
+
+const isProd = process.env.NODE_ENV === 'production';
+const cwd = process.cwd();
+
+async function createSsrMiddleware(app: Express): Promise<RequestHandler> {
+  let vite: ViteDevServer | null = null;
+  if (!isProd) { 
+    vite = await (await import('vite')).createServer({
+      root: process.cwd(),
+      server: {
+        middlewareMode: 'ssr',
+      }
+    })
+    // 注册 Vite Middlewares
+    // 主要用来处理客户端资源
+    app.use(vite.middlewares);
+  }
+  return async (req, res, next) => {
+    // SSR 的逻辑
+    // 1. 加载服务端入口模块
+    // 2. 数据预取
+    // 3. 「核心」渲染组件
+    // 4. 拼接 HTML，返回响应
+  };
+}
+
+async function createServer() {
+  const app = express();
+  // 加入 Vite SSR 中间件
+  app.use(await createSsrMiddleware(app));
+
+  app.listen(3000, () => {
+    console.log('Node 服务器已启动~')
+    console.log('http://localhost:3000');
+  });
+}
+
+createServer();
+~~~
+接下来把焦点放在中间件内 SSR 的逻辑实现上，首先实现第一步即`加载服务端入口模块`:
+~~~ts
+async function loadSsrEntryModule(vite: ViteDevServer | null) {
+  // 生产模式下直接 require 打包后的产物
+  if (isProd) {
+    const entryPath = path.join(cwd, 'dist/server/entry-server.js');
+    return require(entryPath);
+  } 
+  // 开发环境下通过 no-bundle 方式加载
+  else {
+    const entryPath = path.join(cwd, 'src/entry-server.tsx');
+    return vite!.ssrLoadModule(entryPath);
+  }
+}
+~~~
+中间件内的逻辑如下:
+~~~ts
+async function createSsrMiddleware(app: Express): Promise<RequestHandler> {
+  // 省略前面的代码
+  return async (req, res, next) => {
+    const url = req.originalUrl;
+    // 1. 服务端入口加载
+    const { ServerEntry } = await loadSsrEntryModule(vite);
+    // ...
+  }
+}
+~~~
+接下来实现服务端的数据预取操作，你可以在`entry-server.tsx`中添加一个简单的获取数据的函数:
+~~~ts
+export async function fetchData() {
+  return { user: 'xxx' }
+}
+~~~
+然后在 SSR 中间件中完成数据预取的操作:
+~~~ts
+// src/ssr-server/index.ts
+async function createSsrMiddleware(app: Express): Promise<RequestHandler> {
+  // 省略前面的代码
+  return async (req, res, next) => {
+    const url = req.originalUrl;
+    // 1. 服务端入口加载
+    const { ServerEntry, fetchData } = await loadSsrEntryModule(vite);
+    // 2. 预取数据
+    const data = await fetchData();
+  }
+}
+~~~
+接着我们进入到核心的组件渲染阶段:
+~~~ts
+// src/ssr-server/index.ts
+import { renderToString } from 'react-dom/server';
+import React from 'react';
+
+async function createSsrMiddleware(app: Express): Promise<RequestHandler> {
+  // 省略前面的代码
+  return async (req, res, next) => {
+    const url = req.originalUrl;
+    // 1. 服务端入口加载
+    const { ServerEntry, fetchData } = await loadSsrEntryModule(vite);
+    // 2. 预取数据
+    const data = await fetchData();
+    // 3. 组件渲染 -> 字符串
+    const appHtml = renderToString(React.createElement(ServerEntry, { data }));
+  }
+}
+~~~
+由于在第一步之后我们拿到了入口组件，现在可以调用前端框架的 `renderToStringAPI` 将组件渲染为字符串，组件的具体内容便就此生成了。
+
+目前我们已经拿到了组件的 HTML 以及预取的数据，接下来我们在根目录下的 HTML 中提供相应的插槽，方便内容的替换:
+~~~html
+// index.html
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/src/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vite App</title>
+  </head>
+  <body>
+    <div id="root"><!-- SSR_APP --></div>
+    <script type="module" src="/src/entry-client.tsx"></script>
+    <!-- SSR_DATA -->
+  </body>
+</html>
+~~~
+紧接着我们在 SSR 中间件中补充 HTML 拼接的逻辑:
+~~~ts
+// src/ssr-server/index.ts
+function resolveTemplatePath() {
+  return isProd ?
+    path.join(cwd, 'dist/client/index.html') :
+    path.join(cwd, 'index.html');
+}
+
+async function createSsrMiddleware(app: Express): Promise<RequestHandler> {
+  // 省略之前的代码
+  return async (req, res, next) => {
+    const url = req.originalUrl;
+    // 省略前面的步骤
+    // 4. 拼接完整 HTML 字符串，返回客户端
+    const templatePath = resolveTemplatePath();
+    let template = await fs.readFileSync(templatePath, 'utf-8');
+    // 开发模式下需要注入 HMR、环境变量相关的代码，因此需要调用 vite.transformIndexHtml
+    if (!isProd && vite) {
+      template = await vite.transformIndexHtml(url, template);
+    }
+    const html = template
+      .replace('<!-- SSR_APP -->', appHtml)
+      // 注入数据标签，用于客户端 hydrate
+      .replace(
+        '<!-- SSR_DATA -->',
+        `<script>window.__SSR_DATA__=${JSON.stringify(data)}</script>`
+      );
+    res.status(200).setHeader('Content-Type', 'text/html').end(html);
+  }
+}
+~~~
+在拼接 HTML 的逻辑中，除了添加页面的具体内容，同时我们也注入了一个挂载全局数据的`script`标签。
+
+在 SSR 的基本概念中我们就提到过，为了激活页面的交互功能，我们需要执行 CSR 的 JavaScript 代码来进行 hydrate 操作，而客户端 hydrate 的时候需要和服务端**同步预取后的数据**，保证页面渲染的结果和服务端渲染一致，因此，我们刚刚注入的数据 script 标签便派上用场了。由于全局的 window 上挂载服务端预取的数据，我们可以在`entry-client.tsx`也就是客户端渲染入口中拿到这份数据，并进行 hydrate:
+~~~tsx
+import React from 'react'
+import ReactDOM from 'react-dom'
+import './index.css'
+import App from './App'
+
+// @ts-ignore
+const data = window.__SSR_DATA__;
+
+ReactDOM.hydrate(
+  <React.StrictMode>
+    <App data={data}/>
+  </React.StrictMode>,
+  document.getElementById('root')
+)
+~~~
+执行`npm run dev`启动项目，打开浏览器后查看页面源码，可以发现 SSR 生成的 HTML 已经顺利返回了。
+
+**4. 生产环境的 CSR 资源处理**
+
+如果你现在执行`npm run build`及`npm run preview`进行生产环境的预览，会发现 SSR 可以正常返回内容，但所有的静态资源及 CSR 的代码都失效了
+
+开发阶段并没有这个问题，这是因为对于开发阶段的静态资源 `Vite Dev Server` 的中间件已经帮我们处理了，而生产环境所有的资源都已经打包完成，我们需要启用单独的静态资源服务来承载这些资源。这里你可以`serve-static`中间件来完成这个服务，首先安装对应第三方包:
+~~~shell
+pnpm i serve-static -S
+~~~
+到 server 端注册:
+~~~ts
+// 过滤出页面请求
+function matchPageUrl(url: string) {
+  if (url === '/') {
+    return true;
+  }
+  return false;
+}
+
+async function createSsrMiddleware(app: Express): Promise<RequestHandler> {
+  return async (req, res, next) => {
+    try {
+      const url = req.originalUrl;
+      if (!matchPageUrl(url)) {
+        // 走静态资源的处理
+        return await next();
+      }
+      // SSR 的逻辑省略
+    } catch(e: any) {
+      vite?.ssrFixStacktrace(e);
+      console.error(e);
+      res.status(500).end(e.message);
+    }
+  }
+}
+
+async function createServer() {
+  const app = express();
+  // 加入 Vite SSR 中间件
+  app.use(await createSsrMiddleware(app));
+
+  // 注册中间件，生产环境端处理客户端资源
+  if (isProd) {
+    app.use(serve(path.join(cwd, 'dist/client')))
+  }
+  // 省略其它代码
+}
+~~~
+> 这样一来，我们就解决了生产环境下静态资源失效的问题。不过，一般情况下，我们会将静态资源部上传到 CDN 上，并且将 Vite 的 `base` 配置为域名前缀，这样我们可以通过 CDN 直接访问到静态资源，而不需要加上服务端的处理。不过作为本地的生产环境预览而言，`serve-static`还是一个不错的静态资源处理手段。
+
+
+**工程化问题**
+
+以上已经基本实现了 SSR 核心的构建和运行时功能，可以初步运行一个基于 Vite 的 SSR 项目，但在实际的场景中仍然是有不少的工程化问题需要我们注意。下面梳理一下到底需要考虑哪些问题，以及相应的解决思路是如何的，同时也会推荐一些比较成熟的解决方案。
+
+**1. 路由管理**
+
+在 SPA 场景下，对于不同的前端框架，一般会有不同的路由管理方案，如 Vue 中的 `vue-router`、React 的`react-router`。不过归根结底，路由方案在 SSR 过程中所完成的功能都是差不多的:
+1. 告诉框架现在渲染哪个路由。在 Vue 中我们可以通过 `router.push` 确定即将渲染的路由，React 中则通过 `StaticRouter` 配合 `location` 参数来完成。
+2. 设置 `base` 前缀。规定路径的前缀，如`vue-router` 中 **base** 参数、`react-router`中`StaticRouter`组件的 **basename**。
+
+**2. 全局状态管理**
+
+对于全局的状态管理而言，对于不同的框架也有不同的生态和方案，比如 Vue 中的 `Vuex`、`Pinia`，React 中的 `Redux`、`Recoil`。各个状态管理工具的用法并不是本文的重点，接入 SSR 的思路也比较简单，在**预取数据**阶段初始化服务端的 `store` ，将异步获取的数据存入 `store` 中，然后在 `拼接 HTML`阶段将数据从 `store` 中取出放到数据 script 标签中，最后在客户端 hydrate 的时候通过 window 即可访问到预取数据。
+> 需要注意的服务端处理许多不同的请求，对于每个请求都需要分别初始化 store，即一个请求一个 store，不然会造成全局状态污染的问题。
+
+
+**3. CSR 降级**
+
+在某些比较极端的情况下，我们需要降级到 CSR，也就是客户端渲染。一般而言包括如下的降级场景:
+1. 服务器端**预取数据**失败，需要降级到客户端获取数据。
+2. 服务器出现异常，需要返回**兜底的 CSR 模板**，完全降级为 CSR。
+3. 本地**开发调试**，有时需要跳过 SSR，仅进行 CSR。
+
+对于第一种情况，在客户端入口文件中需要有重新获取数据的逻辑，我们可以进行这样的补充:
+~~~tsx
+// entry-client.tsx
+import React from 'react'
+import ReactDOM from 'react-dom'
+import './index.css'
+import App from './App'
+
+const fetchData = async () => {
+  // 客户端获取数据
+}
+
+const hydrate = async () => {
+  let data;
+  if (window.__SSR_DATA__) {
+    data = window.__SSR_DATA__;
+  } else {
+    // 降级逻辑 
+    data = await fetchData();
+  }
+  // 也可简化为 const data = window.__SSR_DATA__ ?? await fetchData();
+  ReactDOM.hydrate(
+    <React.StrictMode>
+      <App data={data}/>
+    </React.StrictMode>,
+    document.getElementById('root')
+  )
+}
+~~~
+对于第二种场景，即`服务器执行出错`，我们可以在之前的 SSR 中间件逻辑追加 catch 逻辑:
+~~~ts
+async function createSsrMiddleware(app: Express): Promise<RequestHandler> {
+  return async (req, res, next) => {
+    try {
+      // SSR 的逻辑省略
+    } catch(e: any) {
+      vite?.ssrFixStacktrace(e);
+      console.error(e);
+      // 在这里返回浏览器 CSR 模板内容
+    }
+  }
+}
+~~~
+对于第三种情况，我们可以通过通过 `?csr` 的 url query 参数来强制跳过 SSR，在 SSR 中间件添加如下逻辑:
+~~~ts
+async function createSsrMiddleware(app: Express): Promise<RequestHandler> {
+  return async (req, res, next) => {
+    try {
+      if (req.query?.csr) {
+        // 响应 CSR 模板内容
+        return;
+      }
+      // SSR 的逻辑省略
+    } catch(e: any) {
+      vite?.ssrFixStacktrace(e);
+      console.error(e);
+    }
+  }
+}
+~~~
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
