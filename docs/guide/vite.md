@@ -4781,18 +4781,206 @@ async function createSsrMiddleware(app: Express): Promise<RequestHandler> {
 }
 ~~~
 
+**4. 浏览器 API 兼容**
+
+由于 Node.js 中不能使用浏览器里面诸如 window、document之类的 API，因此需要通过 `import.meta.env.SSR` 这个 Vite 内置的环境变量来判断是否处于 SSR 环境，以此来规避业务代码在服务端出现浏览器的 API:
+~~~ts
+if (import.meta.env.SSR) {
+  // 服务端执行的逻辑
+} else {
+  // 在此可以访问浏览器的 API
+}
+~~~
+我们也可以通过 polyfill 的方式，在 Node 中注入浏览器的 API，使这些 API 能够正常运行起来，解决如上的问题。推荐使用一个比较成熟的 polyfill 库 `jsdom`，使用方式如下:
+~~~ts
+const jsdom = require('jsdom');
+const { window } = new JSDOM(`<!DOCTYPE html><p>Hello world</p>`);
+const { document } = window;
+// 挂载到 node 全局
+global.window = window;
+global.document = document;
+~~~
+
+**5. 自定义 Head**
+
+在 SSR 的过程中，我们虽然可以决定组件的内容，即`<div id="root"></div>`这个容器 div 中的内容，但对于 HTML 中`head`的内容我们无法根据**组件的内部状态**来决定，比如对于一个直播间的页面，我们需要在服务端渲染出 title 标签，title 的内容是不同主播的直播间名称，不能在代码中写死，这种情况怎么办？
+
+React 生态中的 [react-helmet](https://github.com/nfl/react-helmet) 以及 Vue 生态中的 [vue-meta](https://github.com/nuxt/vue-meta) 库就是为了解决这样的问题，让我们可以直接在组件中写一些 Head 标签，然后在服务端能够拿到组件内部的状态。这里我以一个`react-helmet`例子来说明:
+~~~tsx
+// 前端组件逻辑
+import { Helmet } from "react-helmet";
+
+function App(props) {
+  const { data } = props;
+  return (
+    <div>
+       <Helmet>
+        <title>{ data.user }的页面</title>
+        <link rel="canonical" href="http://mysite.com/example" />
+      </Helmet>
+    </div>
+  )
+}
+// 服务端逻辑
+import Helmet from 'react-helmet';
+
+// renderToString 执行之后
+const helmet = Helmet.renderStatic();
+console.log("title 内容: ", helmet.title.toString());
+console.log("link 内容: ", helmet.link.toString())
+~~~
+
+**6. 流式渲染**
+
+在不同前端框架的底层都实现了流式渲染的能力，即边渲染边响应，而不是等整个组件树渲染完毕之后再响应，这么做可以让响应提前到达浏览器，提升首屏的加载性能。Vue 中的 [renderToNodeStream](https://www.npmjs.com/package/@vue/server-renderer) 和 React 中的 [renderToPipeableStream](https://zh-hans.react.dev/reference/react-dom/server/renderToPipeableStream) 都实现了流式渲染的能力, 大致的使用方式如下:
+~~~tsx
+import { renderToPipeableStream } from 'react-dom/server';
+
+// The route handler syntax depends on your backend framework
+app.use('/', (request, response) => {
+  const { pipe } = renderToPipeableStream(<App />, {
+    bootstrapScripts: ['/main.js'],
+    onShellReady() {
+      response.setHeader('content-type', 'text/html');
+      pipe(response);
+    }
+  });
+});
+~~~
+~~~tsx
+export default function App() {
+  return (
+    <html>
+      <head>
+        <meta charSet="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <link rel="stylesheet" href="/styles.css"></link>
+        <title>My app</title>
+      </head>
+      <body>
+        <Router />
+      </body>
+    </html>
+  );
+}
+~~~
+不过，流式渲染在我们带来首屏性能提升的同时，也给我们带来了一些限制: **如果我们需要在 HTML 中填入一些与组件状态相关的内容，则不能使用流式渲染**。比如`react-helmet`中自定义的 head 内容，即便在渲染组件的时候收集到了 head 信息，但在流式渲染中，此时 HTML 的 head 部分已经发送给浏览器了，而这部分响应内容已经无法更改，因此 `react-helmet` 在 SSR 过程中将会失效。
 
 
+**7. SSR 缓存**
+
+SSR 是一种典型的 CPU 密集型操作，为了尽可能降低线上机器的负载，设置缓存是一个非常重要的环节。在 SSR 运行时，缓存的内容可以分为这么几个部分:
+- **文件读取缓存**。尽可能避免多次重复读磁盘的操作，每次磁盘 IO 尽可能地复用缓存结果。如下代码所示:
+  ~~~ts
+  function createMemoryFsRead() {
+    const fileContentMap = new Map();
+    return async (filePath) => {
+      const cacheResult = fileContentMap.get(filePath);
+      if (cacheResult) {
+        return cacheResult;
+      }
+      const fileContent = await fs.readFile(filePath);
+      fileContentMap.set(filePath, fileContent);
+      return fileContent;
+    }
+  }
+
+  const memoryFsRead = createMemoryFsRead();
+  memoryFsRead('file1');
+  // 直接复用缓存
+  memoryFsRead('file1');
+  ~~~
+- **预取数据缓存**。对于某些实时性不高的接口数据，我们可以采取缓存的策略，在下次相同的请求进来时复用之前预取数据的结果，这样预取数据过程的各种 IO 消耗，也可以一定程度上减少首屏时间。
+
+- **HTML 渲染缓存**。拼接完成的`HTML`内容是缓存的重点，如果能将这部分进行缓存，那么下次命中缓存之后，将可以节省 `renderToString`、`HTML 拼接`等一系列的消耗，服务端的性能收益会比较明显。
+
+对于以上的缓存内容，具体的缓存位置可以是：
+1. **服务器内存**。如果是放到内存中，需要考虑缓存淘汰机制，防止内存过大导致服务宕机，一个典型的缓存淘汰方案是 [lru-cache](https://github.com/isaacs/node-lru-cache) (基于 LRU 算法)。
+2. **Redis 数据库**。相当于以传统后端服务器的设计思路来处理缓存。
+3. **CDN 服务**。我们可以将页面内容缓存到 CDN 服务上，在下一次相同的请求进来时，使用 CDN 上的缓存内容，而不用消费源服务器的资源。对于 CDN 上的 SSR 缓存，大家可以通过阅读[这篇文章](https://juejin.cn/post/6887884087915184141#heading-8)深入了解。
+
+>Vue 中另外实现了组件级别的缓存，这部分缓存一般放在内存中，可以实现更细粒度的 SSR 缓存。
+
+**8. 性能监控**
+
+在实际的 SSR 项目中，我们时常会遇到一些 SSR 线上性能问题，如果没有一个完整的性能监控机制，那么将很难发现和排查问题。对于 SSR 性能数据，有一些比较通用的指标:
+- SSR 产物加载时间
+- 数据预取的时间
+- 组件渲染的时间
+- 服务端接受请求到响应的完整时间
+- SSR 缓存命中情况
+- SSR 成功率、错误日志
+
+我们可以通过`perf_hooks`来完成数据的采集，如下代码所示:
+~~~ts
+import { performance, PerformanceObserver } from 'perf_hooks';
+
+// 初始化监听器逻辑
+const perfObserver = new PerformanceObserver((items) => {
+  items.getEntries().forEach(entry => { 
+    console.log('[performance]', entry.name, entry.duration.toFixed(2), 'ms');
+  });
+  performance.clearMarks();
+});
+
+perfObserver.observe({ entryTypes: ["measure"] })
+
+// 接下来我们在 SSR 进行打点
+// 以 renderToString  为例
+performance.mark('render-start');
+// renderToString 代码省略
+performance.mark('render-end');
+performance.measure('renderToString', 'render-start', 'render-end');
+~~~
+启动服务后访问，可以看到日志信息。同样的，我们可以将其它阶段的指标通过上述的方式收集起来，作为性能日志；另一方面，在生产环境下，我们一般需要结合具体的性能监控平台，对上述的各项指标进行打点上报，完成线上的 SSR 性能监控服务。
 
 
+**9. SSG/ISR/SPR**
 
+有时候对于一些静态站点(如博客、文档)，不涉及到动态变化的数据，因此我们并不需要用上服务端渲染。此时只需要在构建阶段产出完整的 HTML 进行部署即可，这种构建阶段生成 HTML 的做法也叫`SSG`(Static Site Generation，静态站点生成)。
 
+SSG 与 SSR 最大的区别就是产出 HTML 的时间点从 SSR **运行时**变成了**构建时**，但核心的生命周期流程并没有发生变化:
 
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/ec6c0b862c904299a61ac563351805b1~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
 
+简单的实现代码:
+~~~ts
+// scripts/ssg.ts
+// 以下的工具函数均可以从 SSR 流程复用
+async function ssg() {
+  // 1. 加载服务端入口
+  const { ServerEntry, fetchData } = await loadSsrEntryModule(null);
+  // 2. 数据预取
+  const data = await fetchData();
+  // 3. 组件渲染
+  const appHtml = renderToString(React.createElement(ServerEntry, { data }));
+  // 4. HTML 拼接
+  const template = await resolveTemplatePath();
+  const templateHtml = await fs.readFileSync(template, 'utf-8');
+  const html = templateHtml
+  .replace('<!-- SSR_APP -->', appHtml)
+  .replace(
+    '<!-- SSR_DATA -->',
+    `<script>window.__SSR_DATA__=${JSON.stringify(data)}</script>`
+  ); 
+  // 最后，我们需要将 HTML 的内容写到磁盘中，将其作为构建产物
+  fs.mkdirSync('./dist/client', { recursive: true });
+  fs.writeFileSync('./dist/client/index.html', html);
+}
 
-
-
-
+ssg();
+~~~
+接着你可以在`package.json`中加入这样一段 `npm scripts`:
+~~~json
+{
+  "scripts": {
+    "build:ssg": "npm run build && NODE_ENV=production esno scripts/ssg.ts"  
+  }
+}
+~~~
+这样我们便初步实现了 SSG 的逻辑。当然，除了 SSG，业界还流传着一些其它的渲染模式，诸如`SPR`、`ISR`，听起来比较高大上，但实际上只是 SSR 和 SSG 所衍生出来的新功能罢了，这里简单给大家解释一下:
+- **SPR**即`Serverless Pre Render`，即把 SSR 的服务部署到 Serverless(FaaS) 环境中，实现服务器实例的自动扩缩容，降低服务器运维的成本。
+- **ISR**即`Incremental Site Rendering`，即增量站点渲染，将一部分的 SSG 逻辑从构建时搬到了 `SSR` 运行时，解决的是大量页面 SSG 构建耗时长的问题。
 
 
 

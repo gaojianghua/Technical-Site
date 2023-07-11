@@ -2458,3 +2458,1295 @@ export class AppController {
   }
 }
 ~~~
+
+
+## 实现 ACL 权限控制
+
+新建数据库：
+~~~shell
+CREATE DATABASE acl_test DEFAULT CHARACTER SET utf8mb4;
+~~~
+新建项目：
+~~~shell
+nest new acl-test -p npm
+~~~
+安装 typeorm 的依赖：
+~~~shell
+npm install --save @nestjs/typeorm typeorm mysql2
+~~~
+AppModule 引入 TypeOrmModule：
+~~~ts
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+import { Permission } from './user/entities/permission.entity'
+import { User } from './user/entities/user.entity'
+
+@Module({
+  imports: [ 
+    TypeOrmModule.forRoot({
+      type: "mysql",
+      host: "localhost",
+      port: 3306,
+      username: "root",
+      password: "guang",
+      database: "acl_test",
+      synchronize: true,
+      logging: true,
+      entities: [User,Permission],
+      poolSize: 10,
+      connectorPackage: 'mysql2',
+      extra: {
+          authPlugin: 'sha256_password',
+      }
+    }),
+  ],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}
+~~~
+创建 user 模块：
+~~~shell
+nest g resource user
+~~~
+添加 User 和 Permission 的 Entity：
+~~~ts
+import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from "typeorm";
+
+@Entity()
+export class User {
+    @PrimaryGeneratedColumn()
+    id: number;
+
+    @Column({
+        length: 50
+    })
+    username: string;
+
+    @Column({
+        length: 50
+    })
+    password: string;
+
+    @CreateDateColumn()
+    createTime: Date;
+
+    @UpdateDateColumn()
+    updateTime: Date;
+
+    @ManyToMany(() => Permission)
+    @JoinTable({    // 指定中间表名
+        name: 'user_permission_relation'
+    })
+    permissions: Permission[]
+}
+~~~
+~~~ts
+import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from "typeorm";
+
+@Entity()
+export class Permission {
+    @PrimaryGeneratedColumn()
+    id: number;
+
+    @Column({
+        length: 50
+    })
+    name: string;
+    
+    @Column({
+        length: 100,
+        nullable: true
+    })
+    desc: string;
+
+    @CreateDateColumn()
+    createTime: Date;
+
+    @UpdateDateColumn()
+    updateTime: Date;
+}
+~~~
+启动服务：
+~~~shell
+npm run start:dev
+~~~
+修改下 UserService，插入一些数据：
+~~~ts
+@InjectEntityManager()
+entityManager: EntityManager;
+
+async initData() {
+  const permission1 = new Permission();
+  permission1.name = 'create_aaa';
+  permission1.desc = '新增 aaa';
+
+  const permission2 = new Permission();
+  permission2.name = 'update_aaa';
+  permission2.desc = '修改 aaa';
+
+  const permission3 = new Permission();
+  permission3.name = 'remove_aaa';
+  permission3.desc = '删除 aaa';
+
+  const permission4 = new Permission();
+  permission4.name = 'query_aaa';
+  permission4.desc = '查询 aaa';
+
+  const permission5 = new Permission();
+  permission5.name = 'create_bbb';
+  permission5.desc = '新增 bbb';
+
+  const permission6 = new Permission();
+  permission6.name = 'update_bbb';
+  permission6.desc = '修改 bbb';
+
+  const permission7 = new Permission();
+  permission7.name = 'remove_bbb';
+  permission7.desc = '删除 bbb';
+
+  const permission8 = new Permission();
+  permission8.name = 'query_bbb';
+  permission8.desc = '查询 bbb';
+
+  const user1 = new User();
+  user1.username = '东东';
+  user1.password = 'aaaaaa';
+  user1.permissions  = [
+    permission1, permission2, permission3, permission4
+  ]
+
+  const user2 = new User();
+  user2.username = '光光';
+  user2.password = 'bbbbbb';
+  user2.permissions  = [
+    permission5, permission6, permission7, permission8
+  ]
+
+  await this.entityManager.save([
+    permission1,
+    permission2,
+    permission3,
+    permission4,
+    permission5,
+    permission6,
+    permission7,
+    permission8
+  ])
+  await this.entityManager.save([
+    user1,
+    user2
+  ]);
+}
+~~~
+注入 EntityManager，实现权限和用户的保存。user1 有 aaa 的 4 个权限，user2 有 bbb 的 4 个权限。调用 entityManager.save 来保存。
+
+然后改下 UserController：
+~~~ts
+@Get('init')
+async initData() {
+    await this.userService.initData();
+    return 'done'
+}
+~~~
+浏览器访问 init 路由会由一个事务包裹执行一堆 `insert into` 插入数据的SQL。
+
+实现登录的接口，通过 session + cookie 的方式。安装 session 相关的包：
+~~~shell
+npm install express-session @types/express-session
+~~~
+在 main.ts 里使用这个中间件：
+~~~ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import * as session from 'express-session';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  app.use(session({
+    secret: 'guang',
+    resave: false,
+    saveUninitialized: false
+  }));
+  await app.listen(3000);
+}
+bootstrap();
+~~~
+在 UserController 添加一个 login 的路由：
+~~~ts
+@Post('login')
+login(@Body() loginUser: LoginUserDto, @Session() session){
+    console.log(loginUser)
+    return 'success'
+}
+~~~
+安装 ValidationPipe 依赖包：
+~~~shell
+npm install --save class-validator class-transformer
+~~~
+创建 dto 对象：
+~~~ts
+import { IsNotEmpty, Length } from "class-validator";
+
+export class LoginUserDto {
+  @IsNotEmpty()
+  @Length(1, 50)
+  username: string;
+
+  @IsNotEmpty()
+  @Length(1, 50)
+  password: string;
+}
+~~~
+全局启用 ValidationPipe：
+~~~ts
+// 在 main.ts 中添加下面代码
+import { ValidationPipe } from '@nestjs/common'
+
+app.useGlobalPipes(new ValidationPipe())
+~~~
+实现查询数据库的逻辑，在 UserService 添加 login 方法：
+~~~ts
+async login(loginUserDto: LoginUserDto) {
+    const user = await this.entityManager.findOneBy(User, {
+      username: loginUserDto.username
+    });
+
+    if(!user) {
+      throw new HttpException('用户不存在', HttpStatus.ACCEPTED);
+    }
+
+    if(user.password !== loginUserDto.password) {
+      throw new HttpException('密码错误', HttpStatus.ACCEPTED);
+    }
+
+    return user;
+}
+~~~
+然后改下 UserController 的 login 方法：
+~~~ts
+@Post('login')
+async login(@Body() loginUser: LoginUserDto, @Session() session){
+    const user = await this.userService.login(loginUser);
+
+    session.user = {
+      username: user.username
+    }
+
+    return 'success';
+}
+~~~
+添加 aaa、bbb 两个模块，分别生成 CRUD 方法：
+~~~shell
+nest g resource aaa 
+nest g resource bbb 
+~~~
+对接口的调用做限制。先添加一个 LoginGuard，限制只有登录状态才可以访问这些接口：
+~~~shell
+nest g guard login --no-spec --flat
+~~~
+然后增加登录状态的检查：
+~~~ts
+import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import { Request } from 'express';
+import { Observable } from 'rxjs';
+
+// 因为默认的 session 里没有 user 的类型，所以需要扩展。
+declare module 'express-session' {
+  interface Session {
+    user: {
+      username: string
+    }
+  }
+}
+
+@Injectable()
+export class LoginGuard implements CanActivate {
+  canActivate(
+    context: ExecutionContext,
+  ): boolean | Promise<boolean> | Observable<boolean> {
+    const request: Request = context.switchToHttp().getRequest();
+    
+    if(!request.session?.user){
+      throw new UnauthorizedException('用户未登录');
+    }
+
+    return true;
+  }
+}
+~~~
+然后给 aaa bbb 的所有接口上都加上这个 Guard。举例：
+~~~ts
+@Get()
+@UseGuards(LoginGuard)
+findAll () {
+    return this.aaaService.findAll()
+}
+~~~
+再做登录用户的权限控制，所以再写个 PermissionGuard:
+~~~shell
+nest g guard permission --no-spec --flat
+~~~
+因为 PermissionGuard 里需要用到 UserService 来查询数据库，所以需要把它移动到 User 文件夹里。
+
+注入 UserService：
+~~~ts
+import { CanActivate, ExecutionContext, Inject, Injectable } from '@nestjs/common';
+import { Request } from 'express';
+import { Observable } from 'rxjs';
+import { UserService } from './user.service';
+
+@Injectable()
+export class PermissionGuard implements CanActivate {
+
+  @Inject(UserService) 
+  private userService: UserService;
+
+  canActivate(
+    context: ExecutionContext,
+  ): boolean | Promise<boolean> | Observable<boolean> {
+
+    console.log(this.userService);
+
+    return true;
+  }
+}
+~~~
+在 UserModule 的 providers、exports 里添加 UserService 和 PermissionGuard：
+~~~ts
+import { Module, UseGuards } from '@nestjs/common';
+import { UserService } from './user.service';
+import { UserController } from './user.controller';
+import { PermissionGuard } from './permission.guard';
+
+@Module({
+  controllers: [UserController],
+  providers: [UserService, PermissionGuard],
+  exports: [UserService, PermissionGuard]
+})
+export class UserModule {}
+~~~
+在 AaaModule 里引入这个 UserModule：
+~~~ts
+import { Module } from 'anestjs/common';
+import { AaaService } from '. /aaa, service';
+import { AaaController } from './aaa. controller';
+import { UserModule } from 'src/user/user module';
+
+@Module ({
+  imports: [
+      UserModule
+  ],
+  controllers: [AaaController], 
+  providers: [AaaService]
+})
+export class AaaModule {}
+~~~
+然后在 aaa 的 handler 里添加 PermissionGuard 即可。访问 aaa 的接口，服务端会打印 UserService，说明在 PermissionGuard 里成功注入了 UserService。
+~~~ts
+@Get()
+@UseGuards(LoginGuard, PermissionGuard)
+findAll () {
+    return this.aaaService.findAll()
+}
+~~~
+接下来实现权限检查的逻辑。在 UserService 里添加一个方法：
+~~~ts
+// 根据用户名查找用户，并且查询出关联的权限来。
+async findByUsername(username: string) {
+  const user = await this.entityManager.findOne(User, {
+    where: {
+      username,
+    },
+    relations: {
+      permissions: true
+    }
+  });
+  return user;
+}
+~~~
+在 PermissionGuard 里调用下：
+~~~ts
+import { CanActivate, ExecutionContext, Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { Request } from 'express';
+import { Observable } from 'rxjs';
+import { UserService } from './user.service';
+
+@Injectable()
+export class PermissionGuard implements CanActivate {
+
+  @Inject(UserService) 
+  private userService: UserService;
+
+  async canActivate(
+    context: ExecutionContext,
+  ): Promise<boolean> {
+    const request: Request = context.switchToHttp().getRequest();
+
+    const user = request.session.user;
+    if(!user) {
+      throw new UnauthorizedException('用户未登录');
+    }
+
+    const foundUser = await this.userService.findByUsername(user.username);
+
+    console.log(foundUser);
+
+    return true;
+  }
+}
+~~~
+通过 metadata 设置接口所需要的权限：
+~~~ts
+@Get()
+@UseGuards(LoginGuard, PermissionGuard)
+@SetMetedata('permission', 'query_aaa')
+findAll () {
+    return this.aaaService.findAll()
+}
+~~~
+然后在 PermissionGuard 里通过 reflector 取出来：
+~~~ts
+import { CanActivate, ExecutionContext, Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { Request } from 'express';
+import { Observable } from 'rxjs';
+import { UserService } from './user.service';
+
+@Injectable()
+export class PermissionGuard implements CanActivate {
+
+  @Inject(UserService) 
+  private userService: UserService;
+
+  @Inject(Reflector)
+  private reflector: Reflector;
+
+  async canActivate(
+    context: ExecutionContext,
+  ): Promise<boolean> {
+    const request: Request = context.switchToHttp().getRequest();
+
+    const user = request.session.user;
+    if(!user) {
+      throw new UnauthorizedException('用户未登录');
+    }
+
+    const foundUser = await this.userService.findByUsername(user.username);
+
+    const permission = this.reflector.get('permission', context.getHandler());
+
+    if(foundUser.permissions.some(item => item.name === permission)) {
+       return true;
+    } else {
+      throw new UnauthorizedException('没有权限访问该接口');
+    }
+  }
+}
+~~~
+进行测试后可以发现每次访问接口，都会触发 3 个表的关联查询。我们使用 redis 进行优化。安装 redis 依赖：
+~~~shell
+npm install redis 
+~~~
+新建一个模块来封装 redis 操作：
+~~~shell
+nest g module redis
+~~~
+新建一个 service：
+~~~shell
+nest g service redis --no-spec
+~~~
+在 RedisModule 里添加 redis 的 provider：
+~~~ts
+import { Global, Module } from '@nestjs/common';
+import { createClient } from 'redis';
+import { RedisService } from './redis.service';
+
+@Global()
+@Module({
+  providers: [RedisService, 
+    {
+      provide: 'REDIS_CLIENT',
+      async useFactory() {
+        const client = createClient({
+            socket: {
+                host: 'localhost',
+                port: 6379
+            }
+        });
+        await client.connect();
+        return client;
+      }
+    }
+  ],
+  exports: [RedisService]
+})
+export class RedisModule {}
+~~~
+然后在 RedisService 里添加一些 redis 操作方法：
+~~~ts
+// 注入 redisClient，封装 listGet 和 listSet 方法，listSet 方法支持传入过期时间。
+import { Inject, Injectable } from '@nestjs/common';
+import { RedisClientType } from 'redis';
+
+@Injectable()
+export class RedisService {
+
+  @Inject('REDIS_CLIENT')
+  private redisClient: RedisClientType
+
+  async listGet(key: string) {
+    return await this.redisClient.lRange(key, 0, -1);
+  }
+
+  async listSet(key: string, list: Array<string>, ttl?: number) {
+    for (let i = 0; i < list.length; i++) {
+      await this.redisClient.lPush(key, list[i]);
+    }
+    if (ttl) {
+      await this.redisClient.expire(key, ttl);
+    }
+  }
+}
+~~~
+然后在 PermissionGuard 里注入:
+~~~ts
+import { RedisService } from './../redis/redis.service';
+import { CanActivate, ExecutionContext, Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { Request } from 'express';
+import { Observable } from 'rxjs';
+import { UserService } from './user.service';
+
+@Injectable()
+export class PermissionGuard implements CanActivate {
+
+  @Inject(UserService) 
+  private userService: UserService;
+
+  @Inject(Reflector)
+  private reflector: Reflector;
+
+  @Inject(RedisService)
+  private redisService: RedisService;
+
+  async canActivate(
+    context: ExecutionContext,
+  ): Promise<boolean> {
+    const request: Request = context.switchToHttp().getRequest();
+
+    const user = request.session.user;
+    if(!user) {
+      throw new UnauthorizedException('用户未登录');
+    }
+    // 先查询 redis、没有就查数据库并存到 redis，有的话就直接用 redis 的缓存结果。
+    // key 为 user_${username}_permissions，这里的 username 是唯一的。
+    let permissions = await this.redisService.listGet(`user_${user.username}_permissions`); 
+
+    if(permissions.length === 0) {
+      const foundUser = await this.userService.findByUsername(user.username);
+      permissions = foundUser.permissions.map(item => item.name);
+      // 缓存过期时间为 30 分钟
+      this.redisService.listSet(`user_${user.username}_permissions`, permissions, 60 * 30)
+    }
+
+    const permission = this.reflector.get('permission', context.getHandler());
+
+    if(permissions.some(item => item === permission)) {
+      return true;
+    } else {
+      throw new UnauthorizedException('没有权限访问该接口');
+    }
+  }
+}
+~~~
+接下来测试后会发现：第一次会产生 2 条关联查询的 sql，后面无论请求多少次都不会打印 sql，而是会去 redis 中获取。
+
+
+## 实现 RBAC 权限控制
+用户、角色、权限都是多对多的关系。
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/1bbade0f25c94049b3a5ff0362ecaa82~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
+
+新建数据库：
+~~~shell
+CREATE DATABASE rbac_test DEFAULT CHARACTER SET utf8mb4;
+~~~
+新建项目：
+~~~shell
+nest new rbac-test -p npm
+~~~
+安装 typeorm 的依赖：
+~~~shell
+npm install --save @nestjs/typeorm typeorm mysql2
+~~~
+在 AppModule 引入 TypeOrmModule：
+~~~ts
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+import { User } from './user/entities/user.entity';
+import { Role } from './user/entities/role.entity';
+import { Permission } from './user/entities/permission.entity';
+
+@Module({
+  imports: [ 
+    TypeOrmModule.forRoot({
+      type: "mysql",
+      host: "localhost",
+      port: 3306,
+      username: "root",
+      password: "guang",
+      database: "rbac_test",
+      synchronize: true,
+      logging: true,
+      entities: [User, Role, Permission],
+      poolSize: 10,
+      connectorPackage: 'mysql2',
+      extra: {
+          authPlugin: 'sha256_password',
+      }
+    }),
+  ],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}
+~~~
+然后创建 user 模块：
+~~~shell
+nest g resource user
+~~~
+添加 User、Role、Permission 的 Entity：
+~~~ts
+import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from "typeorm";
+
+@Entity()
+export class User {
+    @PrimaryGeneratedColumn()
+    id: number;
+
+    @Column({
+        length: 50
+    })
+    username: string;
+
+    @Column({
+        length: 50
+    })
+    password: string;
+
+    @CreateDateColumn()
+    createTime: Date;
+
+    @UpdateDateColumn()
+    updateTime: Date;
+    
+    @ManyToMany(() => Role)
+    @JoinTable({
+        name: 'user_role_relation'
+    })
+    roles: Role[] 
+}
+~~~
+~~~ts
+import { Column, CreateDateColumn, Entity,PrimaryGeneratedColumn, UpdateDateColumn } from "typeorm";
+
+@Entity()
+export class Role {
+    @PrimaryGeneratedColumn()
+    id: number;
+
+    @Column({
+        length: 20
+    })
+    name: string;
+
+    @CreateDateColumn()
+    createTime: Date;
+
+    @UpdateDateColumn()
+    updateTime: Date;
+    
+    @ManyToMany(() => Permission)
+    @JoinTable({
+        name: 'role_permission_relation'
+    })
+    permissions: Permission[] 
+}
+~~~
+~~~ts
+import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from "typeorm";
+
+@Entity()
+export class Permission {
+    @PrimaryGeneratedColumn()
+    id: number;
+
+    @Column({
+        length: 50
+    })
+    name: string;
+    
+    @Column({
+        length: 100,
+        nullable: true
+    })
+    desc: string;
+
+    @CreateDateColumn()
+    createTime: Date;
+
+    @UpdateDateColumn()
+    updateTime: Date;
+}
+~~~
+启动项目：
+~~~shell
+npm run start:dev
+~~~
+修改下 UserService，添加数据：
+~~~ts
+@InjectEntityManager()
+entityManager: EntityManager;
+
+async initData() {
+    const user1 = new User();
+    user1.username = '张三';
+    user1.password = '111111';
+
+    const user2 = new User();
+    user2.username = '李四';
+    user2.password = '222222';
+
+    const user3 = new User();
+    user3.username = '王五';
+    user3.password = '333333';
+
+    const role1 = new Role();
+    role1.name = '管理员';
+
+    const role2 = new Role();
+    role2.name = '普通用户';
+
+    const permission1 = new Permission();
+    permission1.name = '新增 aaa';
+
+    const permission2 = new Permission();
+    permission2.name = '修改 aaa';
+
+    const permission3 = new Permission();
+    permission3.name = '删除 aaa';
+
+    const permission4 = new Permission();
+    permission4.name = '查询 aaa';
+
+    const permission5 = new Permission();
+    permission5.name = '新增 bbb';
+
+    const permission6 = new Permission();
+    permission6.name = '修改 bbb';
+
+    const permission7 = new Permission();
+    permission7.name = '删除 bbb';
+
+    const permission8 = new Permission();
+    permission8.name = '查询 bbb';
+
+
+    role1.permissions = [
+      permission1,
+      permission2,
+      permission3,
+      permission4,
+      permission5,
+      permission6,
+      permission7,
+      permission8
+    ]
+
+    role2.permissions = [
+      permission1,
+      permission2,
+      permission3,
+      permission4
+    ]
+
+    user1.roles = [role1];
+
+    user2.roles = [role2];
+
+    await this.entityManager.save(Permission, [
+      permission1, 
+      permission2,
+      permission3,
+      permission4,
+      permission5,
+      permission6,
+      permission7,
+      permission8
+    ])
+
+    await this.entityManager.save(Role, [
+      role1,
+      role2
+    ])
+
+    await this.entityManager.save(User, [
+      user1,
+      user2
+    ])  
+}
+~~~
+然后在 UserController 里添加一个 handler (接口方法)：
+~~~ts
+@Get('init')
+async initData() {
+    await this.userService.initData();
+    return 'done';
+}
+~~~
+启动服务：
+~~~shell
+npm run start:dev
+~~~
+在浏览器访问 init 接口，这时会产生一批 sql 进行数据插入。
+
+然后通过 jwt 的方式来实现登录，在 UserController 里增加一个 login 的 handler：
+~~~ts
+@Post('login')
+login(@Body() loginUser: UserLoginDto){
+    console.log(loginUser)
+    return 'success'
+}
+~~~
+安装 ValidationPipe 依赖包：
+~~~shell
+npm install --save class-validator class-transformer
+~~~
+创建 dto 对象：
+~~~ts
+// user/dto/user-login.dto.ts
+import { IsNotEmpty, Length } from "class-validator";
+
+export class UserLoginDto {
+  @IsNotEmpty()
+  @Length(1, 50)
+  username: string;
+
+  @IsNotEmpty()
+  @Length(1, 50)
+  password: string;
+}
+~~~
+全局启用 ValidationPipe：
+~~~ts
+// 在 main.ts 中添加下面代码
+import { ValidationPipe } from '@nestjs/common'
+
+app.useGlobalPipes(new ValidationPipe())
+~~~
+实现查询数据库的逻辑，在 UserService 添加 login 方法：
+~~~ts
+async login(loginUserDto: UserLoginDto) {
+    const user = await this.entityManager.findOne(User, {
+      where: {
+        username: loginUserDto.username
+      },
+      relations: {
+        roles: true
+      }
+    });
+
+    if(!user) {
+      throw new HttpException('用户不存在', HttpStatus.ACCEPTED);
+    }
+
+    if(user.password !== loginUserDto.password) {
+      throw new HttpException('密码错误', HttpStatus.ACCEPTED);
+    }
+
+    return user;
+}   
+~~~
+在 UserController 的 login 方法里调用:
+~~~ts
+@Post('login')
+async login(@Body() loginUser: UserLoginDto){
+    const user = await this.userService.login(loginUser);
+
+    console.log(user);
+
+    return 'success'
+}
+~~~
+安装 JWT：
+~~~shell
+npm install --save @nestjs/jwt
+~~~
+然后在 AppModule 里引入 JwtModule：
+~~~ts
+@Module({
+  imports: [
+      JwtModule.register({
+        global: true,
+        secret: 'guang',
+        signOptions: {
+            expiresIn: '7d'
+        }
+      })
+  ]
+})
+export class AppModule {}
+~~~
+然后在 UserController 里注入 JwtModule 里的 JwtService：
+
+~~~ts
+@Controller('user')
+export class UserController {
+  @Inject(JwtService)
+  private jwtService: JwtService
+
+  constructor(private readonly userService: UserService) {}
+
+  @Post('login')
+  async login(@Body() loginUser: UserLoginDto){
+    const user = await this.userService.login(loginUser);
+
+    const token = this.jwtService.sign({
+      user: {
+        username: user.username,
+        roles: user.roles
+      }
+    });
+
+    return {
+      token
+    }
+  }
+}
+~~~
+添加 aaa、bbb 两个模块，分别生成 CRUD 方法：
+~~~shell
+nest g resource aaa 
+nest g resource bbb 
+~~~
+对接口的调用做权限限制，先添加一个 LoginGuard，限制只有登录状态才可以访问这些接口：
+~~~shell
+nest g guard login --no-spec --flat
+~~~
+然后增加登录状态的检查：
+~~~ts
+import { CanActivate, ExecutionContext, Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { Request } from 'express';
+import { Observable } from 'rxjs';
+import { Role } from './user/entities/role.entity'
+
+declare module 'express' {
+    interface Request {
+        user: {
+            username: string,
+            roles: Role[]
+        }
+    }
+}
+
+@Injectable()
+export class LoginGuard implements CanActivate {
+  
+  @Inject(JwtService)
+  private jwtService: JwtService;
+  
+  canActivate(
+    context: ExecutionContext,
+  ): boolean | Promise<boolean> | Observable<boolean> {
+    const request: Request = context.switchToHttp().getRequest();
+    
+    const authorization = request.headers.authorization;
+
+    if(!authorization) {
+      throw new UnauthorizedException('用户未登录');
+    }
+
+    try{
+      const token = authorization.split(' ')[1];
+      const data = this.jwtService.verify(token);
+      request.user = data.user
+      return true;
+    } catch(e) {
+      throw new UnauthorizedException('token 失效，请重新登录');
+    }
+  }
+}
+~~~
+全局添加 Guard：
+~~~ts
+@Module({
+  imports: [
+      JwtModule.register({
+        global: true,
+        secret: 'guang',
+        signOptions: {
+            expiresIn: '7d'
+        }
+      }), UserModule, AaaModule, BbbModule
+  ],
+  controllers: [AppController],
+  providers:[
+    AppService,
+    {
+      provide: APP_GUARD,
+      useClass: LoginGuard
+    }
+  ]
+})
+export class AppModule {}
+~~~
+使用 SetMetadata 区分哪些接口需要登录，哪些接口不需要。添加一个 `custom-decorator.ts` 来放自定义的装饰器：
+~~~ts
+import { SetMetadata } from "@nestjs/common";
+
+export const  RequireLogin = () => SetMetadata('require-login', true);
+~~~
+声明一个 RequireLogin 的装饰器。在 aaa、bbb 的 controller 上使用即可：
+~~~ts
+@Controller('aaa')
+@RequireLogin()
+export class AaaController {
+  constructor(private readonly aaaService: AaaService) {}
+}
+~~~
+然后需要改造下 LoginGuard，取出目标 handler 的 metadata 来判断是否需要登录：
+~~~ts
+import { CanActivate, ExecutionContext, Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { Request } from 'express';
+import { Observable } from 'rxjs';
+import { Role } from './user/entities/role.entity'
+
+declare module 'express' {
+  interface Request {
+    user: {
+      username: string,
+      roles: Role[]
+    }
+  }
+}
+
+@Injectable()
+export class LoginGuard implements CanActivate {
+  // 取 metadata
+  @Inject()
+  private reflector: Reflector;
+  
+  @Inject(JwtService)
+  private jwtService: JwtService;
+  
+  canActivate(
+    context: ExecutionContext,
+  ): boolean | Promise<boolean> | Observable<boolean> {
+    const request: Request = context.switchToHttp().getRequest();
+    
+    // 如果目标 handler 或者 controller 不包含 require-login 的 metadata，那就放行，否则才检查 jwt。
+    const requireLogin = this.reflector.getAllAndOverride('require-login', [
+      context.getClass(),
+      context.getHandler()
+    ]);
+
+    console.log(requireLogin)
+
+    if(!requireLogin) {
+      return true;
+    }
+    
+    const authorization = request.headers.authorization;
+
+    if(!authorization) {
+      throw new UnauthorizedException('用户未登录');
+    }
+
+    try{
+      const token = authorization.split(' ')[1];
+      const data = this.jwtService.verify(token);
+      request.user = data.user
+      return true;
+    } catch(e) {
+      throw new UnauthorizedException('token 失效，请重新登录');
+    }
+  }
+}
+~~~
+再做登录用户的权限控制，所以再写个 PermissionGuard:
+~~~shell
+nest g guard permission --no-spec --flat
+~~~
+同样声明成全局 Guard：
+~~~ts
+@Module({
+  providers:[
+    AppService,
+    {
+      provide: APP_GUARD,
+      useClass: LoginGuard
+    },
+    {
+      provide: APP_GUARD,
+      useClass: PermissionGuard
+    }
+  ]
+})
+export class AppModule {}
+~~~
+PermissionGuard 里需要用到 UserService，所以在 UserModule 里导出下 UserService：
+~~~ts
+@Module({
+  exports:[UserService]
+})
+export class UserModule {}
+~~~
+注入 UserService：
+~~~ts
+import { CanActivate, ExecutionContext, Inject, Injectable } from '@nestjs/common';
+import { Request } from 'express';
+import { Observable } from 'rxjs';
+import { UserService } from './user.service';
+
+@Injectable()
+export class PermissionGuard implements CanActivate {
+
+  @Inject(UserService) 
+  private userService: UserService;
+
+  canActivate(
+    context: ExecutionContext,
+  ): boolean | Promise<boolean> | Observable<boolean> {
+
+    console.log(this.userService);
+
+    return true;
+  }
+}
+~~~
+然后在 userService 里实现查询 role 的信息的 service：
+~~~ts
+async findRolesByIds(roleIds: number[]) {
+    return this.entityManager.find(Role, {
+      where: {
+        id: In(roleIds)
+      },
+      relations: {
+        permissions: true
+      }
+    });
+}
+~~~
+然后在 PermissionGuard 里调用：
+~~~ts
+import { CanActivate, ExecutionContext, Inject, Injectable } from '@nestjs/common';
+import { Request } from 'express';
+import { UserService } from './user/user.service';
+
+@Injectable()
+export class PermissionGuard implements CanActivate {
+
+  @Inject(UserService) 
+  private userService: UserService;
+
+  async canActivate(
+    context: ExecutionContext,
+  ): Promise<boolean> {
+    const request: Request = context.switchToHttp().getRequest();
+
+    if(!request.user) {
+      return true;
+    }
+
+    const roles = await this.userService.findRolesByIds(request.user.roles.map(item => item.id))
+
+    const permissions: Permission[]  = roles.reduce((total, current) => {
+      total.push(...current.permissions);
+      return total;
+    }, []);
+
+    console.log(permissions);
+
+    return true;
+  }
+}
+~~~
+因为这个 PermissionGuard 在 LoginGuard 之后调用（在 AppModule 里声明在 LoginGuard 之后），所以走到这里 request 里就有 user 对象了。
+
+但也不一定，因为 LoginGuard 没有登录也可能放行，所以要判断下 request.user 如果没有，这里也放行。
+
+然后取出 user 的 roles 的 id，查出 roles 的 permission 信息，然后合并到一个数组里。
+
+再增加个自定义装饰器：
+~~~ts
+export const  RequirePermission = (...permissions: string[]) => SetMetadata('require-permission', permissions);
+~~~
+然后在 BbbController 上声明需要的权限：
+~~~ts
+@Get()
+@RequirePermission('查询 bbb')
+findAll() {
+    return this.bbbService.findAll()
+}
+~~~
+修改 PermissionGuard：
+~~~ts
+import { CanActivate, ExecutionContext, Inject, Injectable } from '@nestjs/common';
+import { Request } from 'express';
+import { UserService } from './user/user.service';
+
+@Injectable()
+export class PermissionGuard implements CanActivate {
+
+  @Inject(UserService) 
+  private userService: UserService;
+  
+  @Inject(Reflector) 
+  private reflector: Reflector;
+
+  async canActivate(
+    context: ExecutionContext,
+  ): Promise<boolean> {
+    const request: Request = context.switchToHttp().getRequest();
+
+    if(!request.user) {
+      return true;
+    }
+
+    const roles = await this.userService.findRolesByIds(request.user.roles.map(item => item.id))
+
+    const permissions: Permission[]  = roles.reduce((total, current) => {
+      total.push(...current.permissions);
+      return total;
+    }, []);
+
+    console.log(permissions);
+
+    const requiredPermissions = this.reflector.getAllAndOverride<string[]>('require-permission', [
+      context.getClass(),
+      context.getHandler()
+    ])
+
+    console.log(requiredPermissions);
+
+    for(let i = 0; i < requiredPermissions.length; i++) {
+      const curPermission = requiredPermissions[i];
+      const found = permissions.find(item => item.name === curPermission);
+      if(!found) {
+        throw new UnauthorizedException('您没有访问该接口的权限');
+      }
+    }
+
+    return true;
+  }
+}
+~~~
+这样就实现了基于 RBAC 的权限控制。此外，这里查询角色需要的权限没必要每次都查数据库，可以通过 redis 来加一层缓存，减少数据库访问，提高性能。（具体写法参考上节）
