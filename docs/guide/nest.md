@@ -3750,3 +3750,253 @@ export class PermissionGuard implements CanActivate {
 }
 ~~~
 这样就实现了基于 RBAC 的权限控制。此外，这里查询角色需要的权限没必要每次都查数据库，可以通过 redis 来加一层缓存，减少数据库访问，提高性能。（具体写法参考上节）
+
+
+## 动态读取环境配置
+
+新建项目：
+~~~shell
+nest new nest-config-test -p npm
+~~~
+安装 @nestjs/config 包：
+~~~shell
+npm install --save @nestjs/config
+~~~
+在根目录加一个配置文件 .env：
+~~~js
+aaa = 1
+bbb = 2
+~~~
+在 AppModule 里面引入:
+~~~ts
+import { Module } from '@nestjs/common'
+import { ConfigModule } from '@nestjs/config';
+import { AppController } from './app.controller'
+import { AppService } from './app.service'
+
+@Module({
+  imports: [ConfigModule.forRoot()],
+  controllers: [AppController],
+  providers: [AppService]
+})
+export class AppModule{}
+~~~
+然后在 AppController 里注入 ConfigService 来读取配置：
+~~~ts
+import { Controller, Get, Inject } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { AppService } from './app.service';
+
+@Controller()
+export class AppController {
+  constructor(private readonly appService: AppService) {}
+
+  @Inject(ConfigService)
+  private configService: ConfigService;
+
+  @Get()
+  getHello() {
+    return {
+      aaa: this.configService.get('aaa'),
+      bbb: this.configService.get('bbb')
+    }
+  }
+}
+~~~
+启动服务：
+~~~shell
+npm run start:dev
+~~~
+在浏览器中访问服务地址会出现：`{"aaa":"1","bbb":"2"}`。
+
+如果有多个配置文件，比如还有个 .aaa.env：
+~~~ts
+aaa = 3
+~~~
+在 AppModule 里面这样指定：
+~~~ts
+imports: [
+  ConfigModule.forRoot({    // 前面 aaa.env 的配置会覆盖后面的
+    envFilePath: [path.join(process.cwd(), '.aaa.env'), path.join(process.cwd(), '.env')]
+  })
+]
+~~~
+重新访问服务地址会出现：`{"aaa":"3","bbb":"2"}`。
+
+**使用 ts 文件来配置**
+
+新建 config.ts：
+~~~ts
+// config.ts
+export default async () => {
+  const dbPort = await 3306;
+
+  return {
+    port: parseInt(process.env.PORT, 10) || 3000,
+    db: {
+      host: 'localhost',
+      port: dbPort
+    }
+  }
+}
+~~~
+在 AppModule 里面指定：
+~~~ts
+import config from './config.ts'
+
+imports: [
+  ConfigModule.forRoot({
+    load: [config]
+  })
+]
+~~~
+在 Controller 里取出来:
+~~~ts
+@Get()
+getHello() {
+  return {
+    db: this.configService.get('db')
+  }
+}
+~~~
+在浏览器中访问会出现：`{"db":{"host":"localhost","port":"3306"}}`。
+
+**使用 yaml 文件来配置**
+
+安装 yaml 包：
+~~~shell
+npm install js-yaml
+~~~
+新建一个配置文件 aaa.yaml：
+~~~yaml
+application:
+  host: 'localhost'
+  port: 8080
+
+aaa:
+  bbb:
+    ccc: 'ccc'
+    port: 3306
+~~~
+新建 common.ts 加载 yaml：
+~~~ts
+import { readFile } from 'fs/promises';
+import * as yaml from 'js-yaml';
+import { join } from 'path';
+
+
+export default async () => {
+    const configFilePath = join(process.cwd(), 'aaa.yaml');
+
+    const config = await readFile(configFilePath);
+
+    return yaml.load(config);
+};
+~~~
+在 AppModule 引入：
+~~~ts
+import common from './common.ts'
+
+imports: [
+  ConfigModule.forRoot({
+    load: [common]
+  })
+]
+~~~
+改下 Controller：
+~~~ts
+@Controller ()
+export class AppController {
+  constructor (private readonly appService: AppService) {}
+  
+  @Inject (ConfigService)
+  private configService: ConfigService;
+  
+  @Get ()
+  getHello() {
+    return {
+      common: this.configService.get ('aaa.bbb.ccc')
+    }
+  }
+}
+~~~
+在浏览器中访问会出现：`{"common":"ccc"}`。
+
+让别的模块也能使用到配置，新建一个模块：
+~~~shell
+nest g resource bbb --no-spec
+~~~
+修改 AppModule：
+~~~ts
+import common from './common.ts'
+import { BbbModule } from './bbb/bbb.module'
+
+imports: [
+  ConfigModule.forRoot({
+    isGlobal: true,
+    load: [common]
+  }),
+  BbbModule
+]
+~~~
+在 BbbController 中使用：
+
+~~~ts
+@Controller('bbb')
+export class BbbController {
+  constructor(private readonly bbbService:BbbService) {}
+  
+  @Inject(ConfigService)
+  private configService: ConfigService
+  
+  @Post()
+  create(@Body() createBbbDto: CreateBbbDto) {
+      return this.bbbService.create(createBbbDto)
+  }
+  
+  @Get()
+  findAll() {
+      return this.configService.get('aaa.bbb.ccc')
+  }
+}
+~~~
+浏览器中访问会出现：`ccc`。
+
+此外，还可以通过 ConfigModule.forFeature 来注册局部配置：
+~~~ts
+import { Module } from '@nestjs/common';
+import { BbbService } from './bbb.service';
+import { BbbController } from './bbb.controller';
+import { ConfigModule } from '@nestjs/config';
+
+@Module({
+  imports: [
+    ConfigModule.forFeature(() => {
+      return {
+        ddd: 222
+      }
+    })
+  ],
+  controllers: [BbbController],
+  providers: [BbbService]
+})
+export class BbbModule {}
+~~~
+BbbController 里读取下：
+~~~ts
+@Get()
+findAll() {
+    return {
+      ccc: this.configService.get('aaa.bbb.ccc'),
+      ddd: this.configService.get('ddd')
+    }
+}
+~~~
+浏览器中访问会出现：`{"ccc":"ccc", "ddd":"222"}`。
+
+这里是再次验证了**动态模块的 forRoot 用于在 AppModule 里注册，一般指定为全局模块，forFeature 用于局部配置，在不同模块里 imports，而 register 用于一次性的配置。**
+
+比如 JwtModule.register、TypeOrmModule.ForRoot、TypeOrmModule.forFeature。
+
+
+## 使用 Docker Compose
