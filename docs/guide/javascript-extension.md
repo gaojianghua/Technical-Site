@@ -572,7 +572,7 @@ render(template, person); // 我是布兰，年龄12，性别undefined
 - 图片全部加载完成后移除事件监听；
 - 加载完的图片，从 imgList 移除；
 
-```diff
+~~~js
 let imgList = [...document.querySelectorAll('img')]
 let length = imgList.length
 
@@ -599,7 +599,7 @@ const imgLazyLoad = (function() {
 
 // 这里最好加上防抖处理
 document.addEventListener('scroll', imgLazyLoad)
-```
+~~~
 
 参考：[图片懒加载](https://juejin.cn/post/6844903856489365518#heading-19)
 
