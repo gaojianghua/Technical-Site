@@ -4000,3 +4000,358 @@ findAll() {
 
 
 ## 使用 Docker Compose
+**不使用 Docker Compose 部署项目**
+
+新建项目：
+~~~shell
+nest new docker-compose-test -p npm
+~~~
+安装 typeorm、mysql2：
+~~~shell
+npm install --save @nestjs/typeorm typeorm mysql2
+~~~
+新建数据库：
+~~~shell
+CREATE DATABASE `aaa` DEFAULT CHARACTER SET utf8mb4;
+~~~
+新建一个aaa.entity.ts:
+~~~ts
+import { Column, Entity, PrimaryGeneratedColumn } from "typeorm";
+
+@Entity()
+export class Aaa {
+    @PrimaryGeneratedColumn()
+    id: number;
+
+    @Column({
+        length: 30
+    })
+    aaa: string;
+
+    @Column({
+        length: 30
+    })
+    bbb: string;
+}
+~~~
+AppModule 引入 TypeOrmModule：
+~~~ts
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+import { Aaa } from './aaa.entity'
+
+@Module({
+  imports: [
+    TypeOrmModule.forRoot({
+      type: "mysql",
+      host: "localhost",
+      port: 3306,
+      username: "root",
+      password: "guang",
+      database: "aaa",
+      synchronize: true,
+      logging: true,
+      entities: [Aaa],
+      poolSize: 10,
+      connectorPackage: 'mysql2',
+      extra: {
+          authPlugin: 'sha256_password',
+      }
+    }),
+  ],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}
+~~~
+启动服务：
+~~~shell
+npm run start:dev
+~~~
+安装 redis：
+~~~shell
+npm install redis 
+~~~
+AppModule 中添加 redis client 的 provider：
+~~~ts
+{
+  provide: 'REDIS_CLIENT',
+  async useFactory() {
+    const client = createClient({
+        socket: {
+            host: 'localhost',
+            port: 6379
+        }
+    });
+    await client.connect();
+    return client;
+  }
+}
+~~~
+在 AppService 里注入下：
+~~~ts
+import { Controller, Get, Inject } from '@nestjs/common';
+import { RedisClientType } from 'redis';
+import { AppService } from './app.service';
+
+@Controller()
+export class AppController {
+  constructor(private readonly appService: AppService) {
+  }
+
+  @Inject('REDIS_CLIENT')
+  private redisClient: RedisClientType;
+
+  @Get()
+  async getHello() {
+    const keys = await this.redisClient.keys('*');
+    console.log(keys);
+
+    return this.appService.getHello();
+  }
+}
+~~~
+需要先编辑 mysql redis 以及 nest项目的 dockerFile 并执行生成镜像，下面以 nest 为例，mysql redis以此为例请自行编写，通过 docker build 命令执行 dockerFile 文件生成镜像。
+
+编写 nest 的 dockerFile 生成镜像：
+~~~shell
+FROM node:18.0-alpine3.14 as build-stage
+
+WORKDIR /app
+
+COPY package.json .
+
+RUN npm install
+
+COPY . .
+
+RUN npm run build
+
+# production stage
+FROM node:18.0-alpine3.14 as production-stage
+
+COPY --from=build-stage /app/dist /app
+COPY --from=build-stage /app/package.json /app/package.json
+
+WORKDIR /app
+
+RUN npm install --production
+
+EXPOSE 3000
+
+CMD ["node", "/app/main.js"]
+~~~
+执行 dockerFile 生成 nest项目镜像：
+~~~shell
+docker build -t eee .
+~~~
+在服务中部署需要使用命令行的方式，先启动 mysql 的 docker 容器：
+~~~shell
+docker run -d -p 3306:3306 -v /Users/guang/mysql-data:/var/lib/mysql --name mysql-container mysql
+~~~
+- -d 是 demon，放到后台运行的意思。
+- -p 是端口映射
+- -v 是挂载数据卷，把宿主机目录映射到容器内的目录（这里要换成你自己的）
+- -name 是容器名
+- 可能还需要指定环境变量： -e MYSQL_ROOT_PASSWORD=xxx 设置 root 用户的密码
+- 最后面的 mysql 是执行 dockerFile 生成的镜像的名称
+
+然后再启动 redis 的 docker 容器：
+~~~shell
+docker run -d -p 6379:6379 -v /Users/guang/aaa:/data --name redis-container redis
+~~~
+接着启动 nest 的：
+~~~shell
+docker run -d -p 3000:3000 --name nest-container eee
+~~~
+查看 nest 容器日志：
+~~~shell
+docker logs nest-container
+~~~
+会发现连接数据库失败，因为这里的 127.0.0.1 是容器内的端口，不是宿主机的，需要将 IP 改为宿主机 IP ：
+~~~ts
+imports: [
+  TypeOrmModule.forRoot({
+    type: "mysql",
+    host: "192.168.1.10",   // 查询本机 IP 地址并写入
+    port: 3306,
+    username: "root",
+    password: "guang",
+    database: "aaa",
+    synchronize: true,
+    logging: true,
+    entities: [Aaa],
+    poolSize: 10,
+    connectorPackage: 'mysql2',
+    extra: {
+        authPlugin: 'sha256_password',
+    }
+  }),
+]
+~~~
+执行 `docker build -t fff .` 重新生成镜像，将之前的容器删掉：`docker rm nest-container`，再执行 `docker run -d -p 3000:3000 --name nest-container fff
+` 启动容器。
+
+**使用 Docker Compose 部署项目**
+
+先停掉那 3 个容器：
+~~~shell
+docker stop nest-container mysql-container redis-container
+~~~
+然后在根目录添加一个 docker-compose.yaml：
+~~~yaml
+services:
+  nest-app:
+    build:
+      context: ./
+      dockerfile: ./Dockerfile
+    depends_on:
+      - mysql-container
+      - redis-container
+    ports:
+      - '3000:3000'
+  mysql-container:
+    image: mysql
+    ports:
+      - '3306:3306'
+    volumes:
+      - /Users/guang/mysql-data:/var/lib/mysql
+  redis-container:
+    image: redis
+    ports:
+      - '6379:6379'
+    volumes:
+      - /Users/guang/aaa:/data
+~~~
+services 下的每个子项都是一个 docker 容器，名字随便指定。nest-app 配置了 depends_on 其他两个 service，docker-compose 就会先启动另外两个，再启动这个，这样解决了顺序问题。然后 mysql-container、redis-container 的 service 指定了 image 和 ports、volumes 的映射。
+
+通过 docker-compose 把它们启动起来：
+~~~shell
+docker-compose up
+~~~
+我们只需要定义 docker-compose.yaml 来声明容器的顺序和启动方式，之后执行 docker-compose up 一条命令就能按照顺序启动所有的容器。
+
+
+## Docker通信之桥接网络
+上面的 Docker Compose 部署方式涉及到多个 docker 容器的通信，我们是通过指定宿主机 ip 和端口的方式。
+
+Docker 通过 Namespace 的机制实现了容器的隔离，其中就包括 Network Namespace。因为每个容器都有独立的 Network Namespace，所以不能直接通过端口访问其他容器的服务。
+
+桥接网络：可以创建一个 Network Namespace，然后设置到多个 Docker 容器，这样这些容器就可以在一个 Namespace 下直接访问对应端口了。
+
+创建一个网络：
+~~~shell
+docker network create common-network
+~~~
+把之前的 3 个容器停掉并删除：
+~~~shell
+docker stop mysql-container redis-container nest-container
+docker rm mysql-container redis-container nest-container
+~~~
+指定 --network 重新启动容器：
+~~~shell
+# mysql
+docker run -d --network common-network -v /Users/guang/mysql-data:/var/lib/mysql --name mysql-container mysql
+~~~
+~~~shell
+# redis
+docker run -d --network common-network -v /Users/guang/aaa:/data --name redis-container redis
+~~~
+修改 AppModule 的代码，改成用容器名来访问：
+~~~ts
+@Module({
+  imports: [
+    TypeOrmModule.forRoot({
+      type: "mysql",
+      host: "mysql-container",  // 使用 mysql 容器名来访问
+      port: 3306,
+      username: "root",
+      password: "guang",
+      database: "aaa",
+      synchronize: true,
+      logging: true,
+      entities: [Aaa],
+      poolSize: 10,
+      connectorPackage: 'mysql2',
+      extra: {
+        authPlugin: 'sha256_password',
+      }
+    }),
+  ],
+  controllers: [AppController],
+  providers: [AppService,
+    {
+      provide: 'REDIS_CLIENT',
+      async useFactory() {
+        const client = createClient({
+          socket: {
+            host: 'redis-container',    // 使用 redis 容器名来访问
+            port: 6379
+          }
+        });
+        await client.connect();
+        return client;
+      }
+    }
+  ],
+})
+export class AppModule {}
+~~~
+重新生成镜像：
+~~~shell
+docker build -t mmm .
+~~~
+指定 --network 运行启动容器：
+~~~shell
+# mysql
+docker run -d --network common-network -p 3000:3000 --name nest-container mmm
+~~~
+
+**使用 Docker Compose 的方式**
+
+修改 yaml 文件：
+~~~yaml
+version: '3.8'
+services:
+  nest-app:
+    build:
+      context: ./
+      dockerfile: ./Dockerfile
+    depends_on:
+      - mysql-container
+      - redis-container
+    ports:
+      - '3000:3000'
+    networks:
+      - common-network
+  mysql-container:
+    image: mysql
+    volumes:
+      - /Users/guang/mysql-data:/var/lib/mysql
+    networks:
+      - common-network
+  redis-container:
+    image: redis
+    volumes:
+      - /Users/guang/aaa:/data
+    networks:
+      - common-network
+networks:
+  common-network:
+    driver: bridge
+~~~
+version 是指定 docker-compose.yml 的版本，因为不同版本配置不同。把 mysql-container、redis-container 的 ports 映射去掉，指定桥接网络为 common-network。通过 networks 指定创建的 common-network 桥接网络，网络驱动程序指定为 bridge。
+
+删除 3 个容器和它们的镜像：
+~~~shell
+docker-compose down --rmi all
+~~~
+重新启动：
+~~~shell
+docker-compose up
+~~~
+**其实不指定 networks 也可以，docker-compose 会创建个默认的。** 可以尝试将 networks 属性都注释掉，然后删掉容器和镜像，再重新启动试试。
+
+## Nest 中使用邮件
