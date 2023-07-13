@@ -5203,6 +5203,469 @@ Module Federation 使用比较简单，对已有项目来说改造成本并不�
 - **Remote模块**: 即远程模块，用来生产一些模块，并暴露运行时容器供本地模块消费。
 - **Shared依赖**: 即共享依赖，用来在本地模块和远程模块中实现第三方依赖的共享。
 
+首先，我们来看看本地模块是如何消费远程模块的。之前，我们在本地模块中写过这样的引入语句:
+~~~ts
+import RemoteApp from "remote_app/App";
+~~~
+Vite 编译后的代码：
+~~~ts
+// 为了方便阅读，以下部分方法的函数名进行了简化
+// 远程模块表
+const remotesMap = {
+  'remote_app':{url:'http://localhost:3001/assets/remoteEntry.js',format:'esm',from:'vite'},
+  'shared':{url:'vue',format:'esm',from:'vite'}
+};
+
+async function ensure() {
+  const remote = remoteMap[remoteId];
+  // 做一些初始化逻辑，暂时忽略
+  // 返回的是运行时容器
+}
+
+async function getRemote(remoteName, componentName) {
+  return ensure(remoteName)
+    // 从运行时容器里面获取远程模块
+    .then(remote => remote.get(componentName))
+    .then(factory => factory());
+}
+
+// import 语句被编译成了这样
+// tip: es2020 产物语法已经支持顶层 await
+const __remote_appApp = await getRemote("remote_app" , "./App");
+~~~
+除了 import 语句被编译之外，在代码中还添加了 `remoteMap` 和一些工具函数，它们的目的很简单，就是通过访问远端的**运行时容器**来拉取对应名称的模块。
+
+而运行时容器其实就是指远程模块打包产物 `remoteEntry.js` 的导出对象，我们来看看它的逻辑是怎样的:
+~~~ts
+// remoteEntry.js
+const moduleMap = {
+  "./Button": () => {
+    return import('./__federation_expose_Button.js').then(module => () => module)
+  },
+  "./App": () => {
+    dynamicLoadingCss('./__federation_expose_App.css');
+    return import('./__federation_expose_App.js').then(module => () => module);
+  },
+  './utils': () => {
+    return import('./__federation_expose_Utils.js').then(module => () => module);
+  }
+};
+
+// 加载 css
+const dynamicLoadingCss = (cssFilePath) => {
+  const metaUrl = import.meta.url;
+  if (typeof metaUrl == 'undefined') {
+    console.warn('The remote style takes effect only when the build.target option in the vite.config.ts file is higher than that of "es2020".');
+    return
+  }
+  const curUrl = metaUrl.substring(0, metaUrl.lastIndexOf('remoteEntry.js'));
+  const element = document.head.appendChild(document.createElement('link'));
+  element.href = curUrl + cssFilePath;
+  element.rel = 'stylesheet';
+};
+
+// 关键方法，暴露模块
+const get =(module) => {
+  return moduleMap[module]();
+};
+
+const init = () => {
+  // 初始化逻辑，用于共享模块，暂时省略
+}
+
+export { dynamicLoadingCss, get, init }
+~~~
+从运行时容器的代码中我们可以得出一些关键的信息:
+- `moduleMap`用来记录导出模块的信息，所有在`exposes`参数中声明的模块都会打包成单独的文件，然后通过 `dynamic import` 进行导入。
+- 容器导出了十分关键的`get`方法，让本地模块能够通过调用这个方法来访问到该远程模块。
+
+至此，我们就梳理清楚了远程模块的`运行时容器`与本地模块的交互流程，如下图所示
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/0091bec4ab12419085316153d7d1a6fb~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
+
+接下来，我们继续分析共享依赖的实现。拿之前的示例项目来说，本地模块设置了`shared: ['vue']`参数之后，当它执行远程模块代码的时候，一旦遇到了引入`vue`的情况，会优先使用本地的 `vue`，而不是远端模块中的`vue`。
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/e800a628da434dff9c57ca9cf172fd97~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
+
+让我们把焦点放到容器初始化的逻辑中，回到本地模块编译后的`ensure`函数逻辑:
+~~~ts
+// host
+
+// 下面是共享依赖表。每个共享依赖都会单独打包
+const shareScope = {
+  'vue':{'3.2.31':{get:()=>get('./__federation_shared_vue.js'), loaded:1}}
+};
+async function ensure(remoteId) {
+  const remote = remotesMap[remoteId];
+  if (remote.inited) {
+    return new Promise(resolve => {
+        if (!remote.inited) {
+          remote.lib = window[remoteId];
+          remote.lib.init(shareScope);
+          remote.inited = true;
+        }
+        resolve(remote.lib);
+    });
+  }
+}
+~~~
+可以发现，`ensure`函数的主要逻辑是将共享依赖信息传递给远程模块的运行时容器，并进行容器的初始化。接下来我们进入容器初始化的逻辑`init`中:
+~~~ts
+const init =(shareScope) => {
+  globalThis.__federation_shared__= globalThis.__federation_shared__|| {};
+  // 下面的逻辑大家不用深究，作用很简单，就是将本地模块的`共享模块表`绑定到远程模块的全局 window 对象上
+  Object.entries(shareScope).forEach(([key, value]) => {
+    const versionKey = Object.keys(value)[0];
+    const versionValue = Object.values(value)[0];
+    const scope = versionValue.scope || 'default';
+    globalThis.__federation_shared__[scope] = globalThis.__federation_shared__[scope] || {};
+    const shared= globalThis.__federation_shared__[scope];
+    (shared[key] = shared[key]||{})[versionKey] = versionValue;
+  });
+};
+~~~
+当本地模块的`共享依赖表`能够在远程模块访问时，远程模块内也就能够使用本地模块的依赖(如 `vue`)了。现在我们来看看远程模块中对于`import { h } from 'vue'`这种引入代码被转换成了什么样子:
+~~~ts
+// __federation_expose_Button.js
+import {importShared} from './__federation_fn_import.js'
+const { h } = await importShared('vue')
+~~~
+不难看到，第三方依赖模块的处理逻辑都集中到了 `importShared` 函数，让我们来一探究竟:
+~~~ts
+// __federation_fn_import.js
+const moduleMap= {
+  'vue': {
+     get:()=>()=>__federation_import('./__federation_shared_vue.js'),
+     import:true
+   }
+};
+// 第三方模块缓存
+const moduleCache = Object.create(null);
+async function importShared(name,shareScope = 'default') {
+  return moduleCache[name] ? 
+    new Promise((r) => r(moduleCache[name])) : 
+    getProviderSharedModule(name, shareScope);
+}
+
+async function getProviderSharedModule(name, shareScope) {
+  // 从 window 对象中寻找第三方包的包名，如果发现有挂载，则获取本地模块的依赖
+  if (xxx) {
+    return await getHostDep();
+  } else {
+    return getConsumerSharedModule(name); 
+  }
+}
+
+async function getConsumerSharedModule(name , shareScope) {
+  if (moduleMap[name]?.import) {
+    const module = (await moduleMap[name].get())();
+    moduleCache[name] = module;
+    return module;
+  } else {
+    console.error(`consumer config import=false,so cant use callback shared module`);
+  }
+}
+~~~
+由于远程模块运行时容器初始化时已经挂载了共享依赖的信息，远程模块内部可以很方便的感知到当前的依赖是不是共享依赖，如果是共享依赖则使用本地模块的依赖代码，否则使用远程模块自身的依赖产物代码。可以参考下面的流程图学习:
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/0f8d0e3158264c45bfd25dd205d65fd0~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
+
+
+## ESM 高阶特性 & Pure ESM 时代
+Vite 本身是借助浏览器原生的 ESM 解析能力(`type="module"`)实现了开发阶段的 `no-bundle`，即不用打包也可以构建 Web 应用。不过我们对于原生 ESM 的理解仅仅停留在 `type="module"` 这个特性上面未免有些狭隘了，一方面浏览器和 Node.js 各自提供了不同的 ESM 使用特性，如 `import maps`、package.json 的 `imports` 和 `exports` 属性等等，另一方面前端社区开始逐渐向 ESM 过渡，有的包甚至仅留下 ESM 产物，`Pure ESM` 的概念随之席卷前端圈，而与此同时，基于 ESM 的 CDN 基础设施也如雨后春笋般不断涌现，诸如`esm.sh`、`skypack`、`jspm`等等。
+
+**高阶特性**
+
+**1. import map**
+
+在浏览器中我们可以使用包含`type="module"`属性的`script`标签来加载 ES 模块，而模块路径主要包含三种:
+- 绝对路径，如 `https://cdn.skypack.dev/react`
+- 相对路径，如 `./module-a`
+- `bare import`即直接写一个第三方包名，如 `react`、`lodash`
+
+对于前两种模块路径浏览器是原生支持的，而对于 `bare import`，在 Node.js 能直接执行，因为 Node.js 的路径解析算法会从项目的 node_modules 找到第三方包的模块路径，但是放在浏览器中无法直接执行。
+
+现代浏览器内置的 `import map` 就是为了解决上述的问题，我们可以用一个简单的例子来使用这个特性:
+~~~html
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+</head>
+
+<body>
+  <div id="root"></div>
+  <script type="importmap">
+  {
+    "imports": {
+      "react": "https://cdn.skypack.dev/react"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import React from 'react';
+    console.log(React)
+  </script>
+</body>
+
+</html>
+~~~
+在浏览器中执行这个 HTML，如果正常执行，那么你可以看到浏览器已经从网络中获取了 react 的内容。
+> 注意: import map 可能存在浏览器兼容性问题，这里出现浏览器报错也属于正常情况，后文会介绍解决方案。
+
+在支持 `import map` 的浏览器中，在遇到`type="importmap"`的 script 标签时，浏览器会记录下第三方包的路径映射表，在遇到`bare import`时会根据这张表拉取远程的依赖代码。如上述的例子中，我们使用 `skypack` 这个第三方的 ESM CDN 服务，通过 `https://cdn.skypack.dev/react` 这个地址我们可以拿到 React 的 ESM 格式产物。
+
+`import map` 特性虽然简洁方便，但浏览器的兼容性却是个大问题，它只能兼容市面上 **68%** 左右的浏览器份额，而反观`type="module"`的兼容性(兼容 **95%** 以上的浏览器)，`import map`的兼容性实属不太乐观。但幸运的是，社区已经有了对应的 Polyfill 解决方案：[es-module-shims](https://github.com/guybedford/es-module-shims)，完整地实现了包含 `import map`在内的各大 ESM 特性，还包括:
+- **dynamic import**。即动态导入，部分老版本的 Firefox 和 Edge 不支持。
+- **import.meta和import.meta.url**。当前模块的元信息，类似 Node.js 中的 `__dirname`、`__filename`。
+- **module preload**。以前我们会在 link 标签中加上 `rel="preload"` 来进行资源预加载，即在浏览器解析 HTML 之前就开始加载资源，现在对于 ESM 也有对应的`module preload`来支持这个行为。
+- **JSON Modules和 CSS Modules**。即通过如下方式来引入`json`或者`css`:
+  ~~~html
+  <script type="module">
+    // 获取 json 对象
+    import json from 'https://site.com/data.json' assert { type: 'json' };
+    // 获取 CSS Modules 对象
+    import sheet from 'https://site.com/sheet.css' assert { type: 'css' };
+  </script>
+  ~~~
+`es-module-shims` 基于 wasm 实现，性能并不差，相比浏览器原生的行为没有明显的性能下降。`import map`虽然并没有得到广泛浏览器的原生支持，但是我们仍然可以通过 Polyfill 的方式在支持 `type="module"` 的浏览器中使用 `import map`。
+
+**2. Nodejs 包导入导出策略**
+
+在 Node.js 中(**>=12.20 版本**)有一般如下几种方式可以使用原生 ES Module:
+- 文件以 `.mjs` 结尾；
+- package.json 中声明 `type: "module"`。
+
+那么，Nodejs 在处理 ES Module 导入导出的时候，如果是处理 npm 包级别的情况，其中的细节可能比你想象中更加复杂。
+
+首先来看看如何导出一个包，你有两种方式可以选择: `main`和 `exports`属性。这两个属性均来自于`package.json`，并且根据 Node 官方的 resolve 算法([查看详情](http://nodejs.cn/api/esm.html#resolver-algorithm-specification))，exports 的优先级比 main 更高，也就是说如果你同时设置了这两个属性，那么 `exports`会优先生效。  
+
+main 的使用比较简单，设置包的入口文件路径即可，如:
+~~~json
+"main": "./dist/index.js"
+~~~
+需要重点梳理的是`exports`属性，它包含了多种导出形式: `默认导出`、`子路径导出`和`条件导出`，这些导出形式如以下的代码所示:
+~~~json
+// package.json
+{
+  "name": "package-a",
+  "type": "module",
+  "exports": {
+    // 默认导出，使用方式: import a from 'package-a'
+    ".": "./dist/index.js",
+    // 子路径导出，使用方式: import d from 'package-a/dist'
+    "./dist": "./dist/index.js",
+    "./dist/*": "./dist/*", // 这里可以使用 `*` 导出目录下所有的文件
+    // 条件导出，区分 ESM 和 CommonJS 引入的情况
+    "./main":{
+      "import":"./main.js",
+      "require":"./main.cjs"
+    }
+  }
+}
+~~~
+其中，条件导出可以包括如下常见的属性:
+- **node**: 在 Node.js 环境下适用，可以定义为嵌套条件导出，如:
+    ~~~json
+    {
+      "exports":[
+        {
+          ".": {
+            "node": {
+              "import": "./main.js",
+              "require": "./main.cjs"
+            }
+          }
+        }
+      ]
+    }
+    ~~~
+- **import**: 用于 import 方式导入的情况，如`import("package-a")`;
+- **require**: 用于 require 方式导入的情况，如`require("package-a")`;
+- **default**，兜底方案，如果前面的条件都没命中，则使用 default 导出的路径。
+
+当然，条件导出还包含 `types`、`browser`、`development`、`production` 等属性，大家可以参考 Node.js 的[详情文档](https://nodejs.org/api/packages.html#conditional-exports)。
+
+package.json 中的 `imports` 字段表示导入，一般是这样声明的:
+~~~json
+{
+  "imports": {
+    // key 一般以 # 开头
+    // 也可以直接赋值为一个字符串: "#dep": "lodash-es"
+    "#dep": {
+      "node": "lodash-es",
+      "default": "./dep-polyfill.js"
+    }
+  },
+  "dependencies": {
+    "lodash-es": "^4.17.21"
+  }
+}
+~~~
+这样你可以在自己的包中使用下面的 import 语句:
+~~~ts
+// index.js
+import { cloneDeep } from "#dep";
+
+const obj = { a: 1 };
+
+// { a: 1 }
+console.log(cloneDeep(obj));
+~~~
+Node.js 在执行的时候会将`#dep`定位到`lodash-es`这个第三方包，当然，你也可以将其定位到某个内部文件。这样相当于实现了`路径别名`的功能，不过与构建工具中的 `alias` 功能不同的是，"imports" 中声明的别名必须全量匹配，否则 Node.js 会直接抛错。
+
+
+**Pure ESM**
+
+`Pure ESM` 的概念有两层含义，一个是让 npm 包都提供 ESM 格式的产物，另一个是仅留下 ESM 产物，抛弃 CommonJS 等其它格式产物。
+
+**1. 对 Pure ESM 的态度**
+
+社区中的很多 npm 包已经出现了 `ESM First` 的趋势，可以预见的是越来越多的包会提供 ESM 的版本，来拥抱社区 ESM 大一统的趋势，同时也有一部分的 npm 包做得更加激进，直接采取`Pure ESM`模式，如大名鼎鼎的`chalk`和`imagemin`，最新版本中只提供 ESM 产物，而不再提供 CommonJS 产物。
+
+>对于没有上层封装需求的大型框架，如 Nuxt、Umi，在保证能上 `Pure ESM`的情况下，直接上不会有什么问题；但如果是一个底层基础库，最好提供好 ESM 和 CommonJS 两种格式的产物。
+
+在 ESM 中，我们可以直接导入 CommonJS 模块，如:
+~~~ts
+// react 仅有 CommonJS 产物
+import React from 'react';
+console.log(React)
+~~~
+Node.js 执行以上的原生 ESM 代码并没有问题，但反过来，如果你想在 CommonJS 中 require 一个 ES 模块，就行不通了，原因在于 require 是同步加载的，而 ES 模块本身具有异步加载的特性，因此两者天然互斥，即我们无法 require 一个 ES 模块。
+
+但是我们可以通过 `dynamic import` 来引入:
+~~~ts
+async function init() {
+    const {default: chalk} = await import("chalk")
+    console.log(chalk.green("hello world"))
+}
+init()
+~~~
+不过为了引入一个 ES 模块，我们必须要将原来同步的执行环境改为异步的，这就带来如下的几个问题:
+- 如果执行环境不支持异步，CommonJS 将无法导入 ES 模块；
+- jest 中不支持导入 ES 模块，测试会比较困难；
+- 在 tsc 中，对于 `await import()`语法会强制编译成 `require`的语法(详情)，只能靠`eval('await import()')`绕过去。
+
+总而言之，CommonJS 中导入 ES 模块比较困难。因此，如果一个基础底层库使用 `Pure ESM`，那么潜台词相当于你依赖这个库时(可能是直接依赖，也有可能是间接依赖)，你自己的库/应用的产物最好为 `ESM` 格式。也就是说，`Pure ESM`是具有传染性的，底层的库出现了 Pure ESM 产物，那么上层的使用方也最好是 Pure ESM，否则会有上述的种种限制。
+
+但从另一个角度来看，对于大型框架(如 **Nuxt**)而言，基本没有二次封装的需求，框架本身如果能够使用 `Pure ESM` ，那么也能带动社区更多的包(比如框架插件)走向 Pure ESM，同时也没有上游调用方的限制，反而对社区 ESM 规范的推动是一件好事情。
+
+当然，上述的结论也带来了一个潜在的问题: 大型框架毕竟很有限，npm 上大部分的包还是属于基础库的范畴，那对于大部分包，我们采用导出 `ESM/CommonJS` 两种产物的方案，会不会对项目的语法产生限制呢？
+
+我们知道，在 `ESM` 中无法使用 `CommonJS` 中的 `__dirname`、`__filename`、`require.resolve` 等全局变量和方法，同样的，在 CommonJS 中我们也没办法使用 ESM 专有的 `import.meta`对象，那么如果要提供两种产物格式，这些模块规范相关的语法怎么处理呢？
+
+在传统的编译构建工具中，我们很难逃开这个问题，但新一代的基础库打包器 **tsup** 给了我们解决方案。
+
+**2. 新一代的基础库打包器**
+
+`tsup` 是一个基于 Esbuild 的基础库打包器，主打无配置(no config)打包。借助它我们可以轻易地打出 `ESM` 和 `CommonJS` 双格式的产物，并且可以任意使用与模块格式强相关的一些全局变量或者 API，比如某个库的源码如下:
+~~~ts
+export interface Options {
+  data: string;
+}
+
+export function init(options: Options) {
+  console.log(options);
+  console.log(import.meta.url);
+}
+~~~
+由于代码中使用了 `import.meta` 对象，这是仅在 ESM 下存在的变量，而经过 tsup 打包后的 CommonJS 版本却被转换成了下面这样:
+~~~ts
+var getImportMetaUrl = () =>
+  typeof document === "undefined"
+    ? new URL("file:" + __filename).href
+    : (document.currentScript && document.currentScript.src) ||
+      new URL("main.js", document.baseURI).href;
+var importMetaUrl = /* @__PURE__ */ getImportMetaUrl();
+
+// src/index.ts
+function init(options) {
+  console.log(options);
+  console.log(importMetaUrl);
+}
+~~~
+可以看到，ESM 中的 API 被转换为 CommonJS 对应的格式，反之也是同理。最后，我们可以借助之前提到的条件导出，将 ESM、CommonJS 的产物分别进行导出，如下所示:
+~~~json
+{
+  "scripts": {
+    "watch": "npm run build -- --watch src",
+    "build": "tsup ./src/index.ts --format cjs,esm --dts --clean"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      // 导出类型
+      "types": "./dist/index.d.ts"
+    }
+  }
+}
+~~~
+tsup 在解决了双格式产物问题的同时，本身利用 Esbuild 进行打包，性能非常强悍，也能生成类型文件，同时也弥补了 Esbuild 没有类型系统的缺点，还是非常推荐大家使用的。
+
+
+## 性能优化
+
+#### 一、网络优化
+
+**1. HTTP2**
+
+传统的 `HTTP 1.1` 存在**队头阻塞**的问题，同一个 TCP 管道中同一时刻只能处理一个 HTTP 请求，也就是说如果当前请求没有处理完，其它的请求都处于阻塞状态，另外浏览器对于同一域名下的并发请求数量都有限制，比如 Chrome 中只允许 `6` 个请求并发（这个数量不允许用户配置），也就是说请求数量超过 6 个时，多出来的请求只能排队、等待发送。
+
+因此，在 HTTP 1.1 协议中，**队头阻塞**和**请求排队**问题很容易成为网络层的性能瓶颈。而 HTTP 2 的诞生就是为了解决这些问题，它主要实现了如下的能力：
+- **多路复用**。将数据分为多个二进制帧，多个请求和响应的数据帧在同一个 TCP 通道进行传输，解决了之前的队头阻塞问题。而与此同时，在 HTTP2 协议下，浏览器不再有同域名的并发请求数量限制，因此请求排队问题也得到了解决。
+- **Server Push**，即服务端推送能力。可以让某些资源能够提前到达浏览器，比如对于一个 html 的请求，通过 HTTP 2 我们可以同时将相应的 js 和 css 资源推送到浏览器，省去了后续请求的开销。
+
+在 Vite 中，我们可以通过vite-plugin-mkcert在本地 Dev Server 上开启 HTTP2:
+~~~shell
+pnpm i vite-plugin-mkcert -D
+~~~
+然后在 Vite 配置中进行使用:
+~~~ts
+// vite.config.ts
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import mkcert from "vite-plugin-mkcert";
+
+export default defineConfig({
+  plugins: [react(), mkcert()],
+  server: {
+    // https 选项需要开启
+    https: true,
+  },
+});
+~~~
+插件的原理也比较简单，由于 HTTP2 依赖 TLS 握手，插件会帮你自动生成 TLS 证书，然后支持通过 HTTPS 的方式启动，而 Vite 会自动把 HTTPS 服务升级为 HTTP2。
+> 其中有一个特例，即当你使用 Vite 的 proxy 配置时，Vite 会将 HTTP2 降级为 HTTPS，不过这个问题你可以通过[vite-plugin-proxy-middleware](https://github.com/williamyorkl/vite-plugin-proxy-middleware)插件解决。
+
+
+**2. DNS 预解析**
+
+浏览器在向跨域的服务器发送请求时，首先会进行 DNS 解析，将服务器域名解析为对应的 IP 地址。我们通过 `dns-prefetch` 技术将这一过程提前，降低 DNS 解析的延迟时间，具体使用方式如下:
+~~~html
+<!-- href 为需要预解析的域名 -->
+<link rel="dns-prefetch" href="https://fonts.googleapis.com/"> 
+~~~
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
