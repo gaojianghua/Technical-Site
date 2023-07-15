@@ -5651,6 +5651,715 @@ export default defineConfig({
 <!-- href 为需要预解析的域名 -->
 <link rel="dns-prefetch" href="https://fonts.googleapis.com/"> 
 ~~~
+一般情况下 `dns-prefetch` 会与 `preconnect` 搭配使用，前者用来解析 DNS，而后者用来会建立与服务器的连接，建立 TCP 通道及进行 TLS 握手，进一步降低请求延迟。使用方式如下所示:
+~~~html
+<link rel="preconnect" href="https://fonts.gstatic.com/" crossorigin>
+<link rel="dns-prefetch" href="https://fonts.gstatic.com/">
+~~~
+>值得注意的是，对于 preconnect 的 link 标签一般需要加上 crorssorigin(跨域标识)，否则对于一些字体资源 preconnect 会失效。
+
+**3. Preload/Prefetch**
+
+对于一些比较重要的资源，我们可以通过 `Preload` 方式进行预加载，即在资源使用之前就进行加载，而不是在用到的时候才进行加载，这样可以使资源更早地到达浏览器。具体使用方式如下:
+~~~html
+<link rel="preload" href="style.css" as="style">
+<link rel="preload" href="main.js" as="script">
+~~~
+与普通 script 标签不同的是，对于原生 ESM 模块，浏览器提供了 `modulepreload` 来进行预加载:
+~~~html
+<link rel="modulepreload" href="/src/app.js" />
+~~~
+不过在 Vite 中我们可以通过配置一键开启 `modulepreload` 的 Polyfill，从而在使所有支持原生 ESM 的浏览器(占比 90% 以上)都能使用该特性，配置方式如下:
+~~~ts
+// vite.config.ts
+export default {
+  build: {
+    polyfillModulePreload: true
+  }
+}
+~~~
+除了 `Preload`，`Prefetch` 也是一个比较常用的优化方式，它相当于告诉浏览器空闲的时候去预加载其它页面的资源，比如对于 A 页面中插入了这样的 `link` 标签:
+~~~html
+<link rel="prefetch" href="https://B.com/index.js" as="script">
+~~~
+这样浏览器会在 A 页面加载完毕之后去加载B这个域名下的资源，如果用户跳转到了B页面中，浏览器会直接使用预加载好的资源，从而提升 B 页面的加载速度。而相比 Preload， Prefetch 的浏览器兼容性不太乐观。
+
+
+#### 二、资源优化
+
+**1. 产物分析报告**
+
+为了能可视化地感知到产物的体积情况，推荐大家用 `rollup-plugin-visualizer` 来进行产物分析。使用方式如下:
+~~~ts
+// 注: 首先需要安装 rollup-plugin-visualizer 依赖
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import { visualizer } from "rollup-plugin-visualizer";
+
+// https://vitejs.dev/config/
+export default defineConfig({
+  plugins: [
+    react(),
+    visualizer({
+      // 打包完成后自动打开浏览器，显示产物体积报告
+      open: true,
+    }),
+  ],
+});
+~~~
+当你执行`pnpm run build`之后，浏览器会自动打开产物分析页面。
+
+**2. 资源压缩**
+
+在生产环境中，为了极致的代码体积，我们一般会通过构建工具来对产物进行压缩。具体来说，有这样几类资源可以被压缩处理: `JavaScript 代码`、`CSS 代码`和`图片文件`。
+
+- JavaScript 压缩
+
+  在 Vite 生产环境构建的过程中，JavaScript 产物代码会自动进行压缩，相关的配置参数如下:
+  ~~~ts
+  // vite.config.ts
+  export default {
+    build: {
+      // 类型: boolean | 'esbuild' | 'terser'
+      // 默认为 `esbuild`
+      minify: 'esbuild',
+      // 产物目标环境
+      target: 'modules',
+      // 如果 minify 为 terser，可以通过下面的参数配置具体行为
+      // https://terser.org/docs/api-reference#minify-options
+      terserOptions: {}
+    }
+  }
+  ~~~
+  `target`参数是压缩产物的目标环境。Vite 默认的参数是modules，即如下的 `browserlist`:
+  ~~~ts
+  ['es2019', 'edge88', 'firefox78', 'chrome87', 'safari13.1']
+  ~~~
+  其实，对于 JS 代码压缩的理解仅仅停留在去除空行、混淆变量名的层面是不够的，为了达到极致的压缩效果，压缩器一般会根据浏览器的目标，会对代码进行语法层面的转换，比如下面这个例子:
+  ~~~ts
+  // 业务代码中
+  info == null ? undefined : info.name
+  ~~~
+  如果你将 `target` 配置为 `exnext`，也就是最新的 JS 语法，会发现压缩后的代码变成了下面这样:
+  ~~~ts
+  info?.name
+  ~~~
+  这就是压缩工具在背后所做的事情，将某些语句识别之后转换成更高级的语法，从而达到更优的代码体积。
+
+  因此，设置合适的 `target` 就显得特别重要了，一旦目标环境的设置不能覆盖所有的用户群体，那么极有可能在某些低端浏览器中出现语法不兼容问题，从而发生**线上事故**。
+
+  因此，为了线上的稳定性，推荐大家最好还是将 target 参数设置为`ECMA`语法的最低版本 `es2015/es6`。
+
+
+- CSS 压缩
+
+  对于 CSS 代码的压缩，Vite 中的相关配置如下:
+  ~~~ts
+  // vite.config.ts
+  export default {
+    build: {
+      // 设置 CSS 的目标环境
+      cssTarget: ''
+    }
+  }
+  ~~~
+  默认情况下 Vite 会使用 Esbuild 对 CSS 代码进行压缩，一般不需要我们对 `cssTarget` 进行配置。
+
+  不过在需要兼容安卓端微信的 webview 时，我们需要将 `build.cssTarget` 设置为 `chrome61`，以防止 vite 将 `rgba()` 颜色转化为 `#RGBA` 十六进制符号的形式，出现样式问题。
+
+
+- 图片压缩
+
+  图片资源是一般是产物体积的大头，如果能有效地压缩图片体积，那么对项目体积来说会得到不小的优化。而在 Vite 中我们一般使用 `vite-plugin-imagemin` 来进行图片压缩。
+
+- 产物拆包
+
+  一般来说，如果不对产物进行`代码分割`(或者`拆包`)，全部打包到一个 chunk 中，会产生如下的问题:
+  1. 首屏加载的代码体积过大，即使是当前页面不需要的代码也会进行加载。
+  2. 线上**缓存复用率**极低，改动一行代码即可导致整个 bundle 产物缓存失效。
+
+  而 Vite 中内置如下的代码拆包能力:
+  1. CSS 代码分割，即实现一个 chunk 对应一个 css 文件。
+  2. 默认有一套拆包策略，将应用的代码和第三方库的代码分别打包成两份产物，并对于动态 import 的模块单独打包成一个 chunk。
+
+  我们也可以通过`manualChunks`参数进行自定义配置：
+  ~~~ts
+  // vite.config.ts
+  {
+    build {
+      rollupOptions: {
+        output: {
+          // 1. 对象配置
+          manualChunks: {
+            // 将 React 相关库打包成单独的 chunk 中
+            'react-vendor': ['react', 'react-dom'],
+            // 将 Lodash 库的代码单独打包
+            'lodash': ['lodash-es'],
+            // 将组件库的代码打包
+            'library': ['antd'],
+          },
+          // 2. 函数配置
+          if (id.includes('antd') || id.includes('@arco-design/web-react')) {
+            return 'library';
+          }
+          if (id.includes('lodash')) {
+            return 'lodash';
+          }
+          if (id.includes('react')) {
+            return 'react';
+          }
+        },
+      }
+    },
+  }
+  ~~~
+  当然，在函数配置中，我们还需要注意**循环引用**的问题。
+
+
+- 按需加载
+
+  在一个完整的 Web 应用中，对于某些模块当前页面可能并不需要，如果浏览器在加载当前页面的同时也需要加载这些不必要的模块，那么可能会带来严重的性能问题。一个比较好的方式是对路由组件进行动态引入，比如在 React 应用中使用 `@loadable/component` 进行组件异步加载:
+  ~~~ts
+  import React from "react";
+  import ReactDOM from "react-dom";
+  import loadable from "@loadable/component";
+  import { BrowserRouter, Routes, Route } from "react-router-dom";
+
+  const Foo = loadable(() => import("./routes/Foo"));
+  const Bar = loadable(() => import("./routes/Bar"));
+
+  ReactDOM.render(
+    <React.StrictMode>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/foo" element={<Foo />} />
+          <Route path="/bar" element={<Bar />} />
+        </Routes>
+      </BrowserRouter>
+    </React.StrictMode>,
+    document.getElementById("root")
+  );
+  ~~~
+  这样在生产环境中，Vite 也会将动态引入的组件单独打包成一个 chunk。
+
+  对于组件内部的逻辑，我们也可以通过动态 import 的方式来延迟执行，进一步优化首屏的加载性能，如下代码所示:
+  ~~~tsx
+  function App() {
+    const computeFunc = async () => {
+      // 延迟加载第三方库
+      // 需要注意 Tree Shaking 问题
+      // 如果直接引入包名，无法做到 Tree-Shaking，因此尽量导入具体的子路径
+      const { default: merge } = await import("lodash-es/merge");
+      const c = merge({ a: 1 }, { b: 2 });
+      console.log(c);
+    };
+    return (
+      <div className="App">
+        <p>
+          <button type="button" onClick={computeFunc}>
+            Click me
+          </button>
+        </p>
+      </div>
+    );
+  }
+
+  export default App;
+  ~~~
+
+- 预渲染优化
+
+  预渲染是当今比较主流的优化手段，主要包括服务端渲染(SSR)和静态站点生成(SSG)这两种技术。
+
+  在 SSR 的场景下，服务端生成好**完整的 HTML 内容**，直接返回给浏览器，浏览器能够根据 HTML 渲染出完整的首屏内容，而不需要依赖 JS 的加载，从而降低浏览器的渲染压力；而另一方面，由于服务端的网络环境更优，可以更快地获取到页面所需的数据，也能节省浏览器请求数据的时间。
+
+  而 SSG 可以在构建阶段生成完整的 HTML 内容，它与 SSR 最大的不同在于 HTML 的生成在构建阶段完成，而不是在服务器的运行时。SSG 同样可以给浏览器完整的 HTML 内容，不依赖于 JS 的加载，可以有效提高页面加载性能。不过相比 SSR，SSG 的内容往往动态性不够，适合比较静态的站点，比如文档、博客等场景。
+
+
+## 配置解析
+Vite 构建环境分为`开发环境`和`生产环境`，不同环境会有不同的构建策略，但不管是哪种环境，Vite 都会首先解析用户配置。
+#### 一、流程梳理
+Vite 中的配置解析由 `resolveConfig` 函数来实现，你可以对照源码一起学习。
+
+**1. 加载配置文件**
+
+进行一些必要的变量声明后，我们进入到**解析配置**逻辑中:
+~~~ts
+// 这里的 config 是命令行指定的配置，如 vite --configFile=xxx
+let { configFile } = config
+if (configFile !== false) {
+  // 默认都会走到下面加载配置文件的逻辑，除非你手动指定 configFile 为 false
+  const loadResult = await loadConfigFromFile(
+    configEnv,
+    configFile,
+    config.root,
+    config.logLevel
+  )
+  if (loadResult) {
+    // 解析配置文件的内容后，和命令行配置合并
+    config = mergeConfig(loadResult.config, config)
+    configFile = loadResult.path
+    configFileDependencies = loadResult.dependencies
+  }
+}
+~~~
+第一步是解析配置文件的内容(这部分比较复杂，本文后续单独分析)，然后与命令行配置合并。值得注意的是，后面有一个记录`configFileDependencies`的操作。因为配置文件代码可能会有第三方库的依赖，所以当第三方库依赖的代码更改时，Vite 可以通过 HMR 处理逻辑中记录的`configFileDependencies`检测到更改，再重启 DevServer ，来保证当前生效的配置永远是最新的。
+
+**2. 解析用户插件**
+
+第二个重点环节是 解析用户插件。首先，我们通过 `apply 参数` 过滤出需要生效的用户插件。为什么这么做呢？因为有些插件只在开发阶段生效，或者说只在生产环境生效，我们可以通过 `apply: 'serve' 或 'build'` 来指定它们，同时也可以将`apply`配置为一个函数，来自定义插件生效的条件。解析代码如下:   
+~~~ts
+// resolve plugins
+const rawUserPlugins = (config.plugins || []).flat().filter((p) => {
+  if (!p) {
+    return false
+  } else if (!p.apply) {
+    return true
+  } else if (typeof p.apply === 'function') {
+     // apply 为一个函数的情况
+    return p.apply({ ...config, mode }, configEnv)
+  } else {
+    return p.apply === command
+  }
+}) as Plugin[]
+// 对用户插件进行排序
+const [prePlugins, normalPlugins, postPlugins] =
+  sortUserPlugins(rawUserPlugins)
+~~~
+接着，Vite 会拿到这些过滤且排序完成的插件，依次调用插件 config 钩子，进行配置合并:
+~~~ts
+// run config hooks
+const userPlugins = [...prePlugins, ...normalPlugins, ...postPlugins]
+for (const p of userPlugins) {
+  if (p.config) {
+    const res = await p.config(config, configEnv)
+    if (res) {
+      // mergeConfig 为具体的配置合并函数，大家有兴趣可以阅读一下实现
+      config = mergeConfig(config, res)
+    }
+  }
+}
+~~~
+然后解析项目的根目录即 `root` 参数，默认取 `process.cwd()` 的结果:
+~~~ts
+// resolve root
+const resolvedRoot = normalizePath(
+  config.root ? path.resolve(config.root) : process.cwd()
+)
+~~~
+紧接着处理 `alias` ，这里需要加上一些内置的 alias 规则，如`@vite/env`、`@vite/client`这种直接重定向到 Vite 内部的模块:
+~~~ts
+// resolve alias with internal client alias
+const resolvedAlias = mergeAlias(
+  clientAlias,
+  config.resolve?.alias || config.alias || []
+)
+
+const resolveOptions: ResolvedConfig['resolve'] = {
+  dedupe: config.dedupe,
+  ...config.resolve,
+  alias: resolvedAlias
+}
+~~~
+
+**3. 加载环境变量**
+
+现在，我们进入第三个核心环节: **加载环境变量**，它的实现代码如下:
+~~~ts
+// load .env files
+const envDir = config.envDir
+  ? normalizePath(path.resolve(resolvedRoot, config.envDir))
+  : resolvedRoot
+const userEnv =
+  inlineConfig.envFile !== false &&
+  loadEnv(mode, envDir, resolveEnvPrefix(config))
+~~~
+loadEnv 其实就是扫描 `process.env` 与 `.env` 文件，解析出 env 对象，值得注意的是，这个对象的属性最终会被挂载到 `import.meta.env` 这个全局对象上。
+
+解析 env 对象的实现思路如下:
+- 遍历 process.env 的属性，拿到**指定前缀**开头的属性（默认指定为`VITE_`），并挂载 env 对象上。
+- 遍历 .env 文件，解析文件，然后往 env 对象挂载那些以指定前缀开头的属性。遍历的文件先后顺序如下(下面的 `mode` 开发阶段为 `development`，生产环境为`production`):
+  + `.env.${mode}.local`
+  + `.env.${mode}`
+  + `.env.local`
+  + `.env`
+>特殊情况: 如果中途遇到 NODE_ENV 属性，则挂到 `process.env.VITE_USER_NODE_ENV`，Vite 会优先通过这个属性来决定是否走`生产环境`的构建。
+
+接下来是对资源公共路径即`base URL`的处理，逻辑集中在 `resolveBaseUrl` 函数当中:
+~~~ts
+// 解析 base url
+const BASE_URL = resolveBaseUrl(config.base, command === 'build', logger)
+// 解析生产环境构建配置
+const resolvedBuildOptions = resolveBuildOptions(config.build)
+~~~
+`resolveBaseUrl`里面有这些处理规则需要注意:
+- 空字符或者 `./` 在开发阶段特殊处理，全部重写为`/`
+- `.`开头的路径，自动重写为 `/`
+- 以`http(s)://`开头的路径，在开发环境下重写为对应的 pathname
+- 确保路径开头和结尾都是`/`
+
+还有对`cacheDir`的解析，这个路径相对于在 Vite 预编译时写入依赖产物的路径:
+~~~ts
+// resolve cache directory
+const pkgPath = lookupFile(resolvedRoot, [`package.json`], true /* pathOnly */)
+// 默认为 node_module/.vite
+const cacheDir = config.cacheDir
+  ? path.resolve(resolvedRoot, config.cacheDir)
+  : pkgPath && path.join(path.dirname(pkgPath), `node_modules/.vite`)
+~~~
+紧接着处理用户配置的`assetsInclude`，将其转换为一个过滤器函数:
+~~~ts
+const assetsFilter = config.assetsInclude
+  ? createFilter(config.assetsInclude)
+  : () => false
+~~~
+Vite 后面会将用户传入的 `assetsInclude` 和内置的规则合并:
+~~~ts
+assetsInclude(file: string) {
+  return DEFAULT_ASSETS_RE.test(file) || assetsFilter(file)
+}
+~~~
+这个配置决定是否让 Vite 将对应的后缀名视为`静态资源文件`（asset）来处理。
+
+**4. 路径解析器工厂**
+
+接下来，进入到第四个核心环节: **定义路径解析器工厂**。这里所说的`路径解析器`，是指调用插件容器进行`路径解析`的函数。代码结构是这个样子的:
+~~~ts
+const createResolver: ResolvedConfig['createResolver'] = (options) => {
+  let aliasContainer: PluginContainer | undefined
+  let resolverContainer: PluginContainer | undefined
+  // 返回的函数可以理解为一个解析器
+  return async (id, importer, aliasOnly, ssr) => {
+    let container: PluginContainer
+    if (aliasOnly) {
+      container =
+        aliasContainer ||
+        // 新建 aliasContainer
+    } else {
+      container =
+        resolverContainer ||
+        // 新建 resolveContainer
+    }
+    return (await container.resolveId(id, importer, undefined, ssr))?.id
+  }
+}
+~~~
+这个解析器未来会在**依赖预构建**的时候用上，具体用法如下:
+~~~ts
+const resolve = config.createResolver()
+// 调用以拿到 react 路径
+rseolve('react', undefined, undefined, false)
+~~~
+这里有`aliasContainer`和`resolverContainer`两个工具对象，它们都含有`resolveId`这个专门解析路径的方法，可以被 Vite 调用来获取解析结果。
+> 两个工具对象的本质是`PluginContainer`，后续会在「插件流水线」中详细介绍`PluginContainer` 的特点和实现。
+
+接着会顺便处理一个 public 目录，也就是 Vite 作为静态资源服务的目录:
+~~~ts
+const { publicDir } = config
+const resolvedPublicDir =
+  publicDir !== false && publicDir !== ''
+    ? path.resolve(
+        resolvedRoot,
+        typeof publicDir === 'string' ? publicDir : 'public'
+      )
+    : ''
+~~~
+至此，配置已经基本上解析完成，最后通过 resolved 对象来整理一下:
+~~~ts
+const resolved: ResolvedConfig = {
+  ...config,
+  configFile: configFile ? normalizePath(configFile) : undefined,
+  configFileDependencies,
+  inlineConfig,
+  root: resolvedRoot,
+  base: BASE_URL
+  // 其余配置不再一一列举
+}
+~~~
+
+**5. 生成插件流水线**
+
+我们进入第五个环节: 生成插件流水线。代码如下:
+~~~ts
+;(resolved.plugins as Plugin[]) = await resolvePlugins(
+  resolved,
+  prePlugins,
+  normalPlugins,
+  postPlugins
+)
+
+// call configResolved hooks
+await Promise.all(userPlugins.map((p) => p.configResolved?.(resolved)))
+~~~
+先生成完整插件列表传给`resolve.plugins`，而后调用每个插件的 `configResolved` 钩子函数。其中 `resolvePlugins` 内部细节比较多，插件数量比较庞大，我们暂时不去深究具体实现，编译流水线这一小节再来详细介绍。
+
+至此，所有核心配置都生成完毕。不过，后面 Vite 还会处理一些边界情况，在用户配置不合理的时候，给用户对应的提示。比如：用户直接使用`alias`时，Vite 会提示使用`resolve.alias`。
+
+最后，`resolveConfig` 函数会返回 resolved 对象，也就是最后的配置集合，那么配置解析服务到底也就结束了。
+
+
+#### 二、加载配置文件详解
+配置解析服务的流程梳理完，但刚开始加载配置文件(`loadConfigFromFile`)的实现我们还没有具体分析，先来回顾下代码。
+~~~ts
+const loadResult = await loadConfigFromFile(/*省略传参*/)
+~~~
+
+这里的逻辑稍微有点复杂，很难梳理清楚，所以我们不妨借助刚才梳理的配置解析流程，深入`loadConfigFromFile` 的细节中，研究下 Vite 对于配置文件加载的实现思路。
+
+首先，我们来分析下需要处理的配置文件类型，根据`文件后缀`和`模块格式`可以分为下面这几类:
+- TS + ESM 格式
+- TS + CommonJS 格式
+- JS + ESM 格式
+- JS + CommonJS 格式
+那么，Vite 是如何加载配置文件的？一共分两个步骤:
+1. 识别出配置文件的类别
+2. 根据不同的类别分别解析出配置内容
+
+**1. 识别配置文件的类别**
+
+首先 Vite 会检查项目的 package.json ，如果有`type: "module"`则打上 `isESM` 的标识:
+~~~ts
+try {
+  const pkg = lookupFile(configRoot, ['package.json'])
+  if (pkg && JSON.parse(pkg).type === 'module') {
+    isMjs = true
+  }
+} catch (e) {}
+~~~
+然后，Vite 会寻找配置文件路径，代码简化后如下:
+~~~ts
+let isTS = false
+let isESM = false
+let dependencies: string[] = []
+// 如果命令行有指定配置文件路径
+if (configFile) {
+  resolvedPath = path.resolve(configFile)
+  // 根据后缀判断是否为 ts 或者 esm，打上 flag
+  isTS = configFile.endsWith('.ts')
+  if (configFile.endsWith('.mjs')) {
+      isESM = true
+    }
+} else {
+  // 从项目根目录寻找配置文件路径，寻找顺序:
+  // - vite.config.js
+  // - vite.config.mjs
+  // - vite.config.ts
+  // - vite.config.cjs
+  const jsconfigFile = path.resolve(configRoot, 'vite.config.js')
+  if (fs.existsSync(jsconfigFile)) {
+    resolvedPath = jsconfigFile
+  }
+
+  if (!resolvedPath) {
+    const mjsconfigFile = path.resolve(configRoot, 'vite.config.mjs')
+    if (fs.existsSync(mjsconfigFile)) {
+      resolvedPath = mjsconfigFile
+      isESM = true
+    }
+  }
+
+  if (!resolvedPath) {
+    const tsconfigFile = path.resolve(configRoot, 'vite.config.ts')
+    if (fs.existsSync(tsconfigFile)) {
+      resolvedPath = tsconfigFile
+      isTS = true
+    }
+  }
+  
+  if (!resolvedPath) {
+    const cjsConfigFile = path.resolve(configRoot, 'vite.config.cjs')
+    if (fs.existsSync(cjsConfigFile)) {
+      resolvedPath = cjsConfigFile
+      isESM = false
+    }
+  }
+}
+~~~
+在寻找路径的同时， Vite 也会给当前配置文件打上isESM和isTS的标识，方便后续的解析。
+
+**2. 根据类别解析配置**
+- ESM 格式
+
+  对于 ESM 格式配置的处理代码如下：
+  ~~~ts
+  let userConfig: UserConfigExport | undefined
+
+  if (isESM) {
+    const fileUrl = require('url').pathToFileURL(resolvedPath)
+    // 首先对代码进行打包
+    const bundled = await bundleConfigFile(resolvedPath, true)
+    dependencies = bundled.dependencies
+    // TS + ESM
+    if (isTS) {
+      fs.writeFileSync(resolvedPath + '.js', bundled.code)
+      userConfig = (await dynamicImport(`${fileUrl}.js?t=${Date.now()}`)).default
+      fs.unlinkSync(resolvedPath + '.js')
+      debug(`TS + native esm config loaded in ${getTime()}`, fileUrl)
+    }
+    //  JS + ESM
+    else {
+      userConfig = (await dynamicImport(`${fileUrl}?t=${Date.now()}`)).default
+      debug(`native esm config loaded in ${getTime()}`, fileUrl)
+    }
+  }
+  ~~~
+  首先通过 Esbuild 将配置文件编译打包成 js 代码:
+  ~~~ts
+  const bundled = await bundleConfigFile(resolvedPath, true)
+  // 记录依赖
+  dependencies = bundled.dependencies
+  ~~~
+  对于 TS 配置文件来说，Vite 会将编译后的 js 代码写入`临时文件`，通过 Node 原生 ESM Import 来读取这个临时的内容，以获取到配置内容，再直接删掉临时文件:
+  ~~~ts
+  fs.writeFileSync(resolvedPath + '.js', bundled.code)
+  userConfig = (await dynamicImport(`${fileUrl}.js?t=${Date.now()}`)).default
+  fs.unlinkSync(resolvedPath + '.js')
+  ~~~
+  >以上这种先编译配置文件，再将产物写入临时目录，最后加载临时目录产物的做法，也是 AOT (Ahead Of Time)编译技术的一种具体实现。
+
+  而对于 JS 配置文件来说，Vite 会直接通过 Node 原生 ESM Import 来读取，也是使用 dynamicImport 函数的逻辑。`dynamicImport` 的实现如下:
+  ~~~ts
+  export const dynamicImport = new Function('file', 'return import(file)')
+  ~~~
+  你可能会问，为什么要用 new Function 包裹？这是为了避免打包工具处理这段代码，比如 Rollup 和 TSC，类似的手段还有 eval。
+
+  你可能还会问，为什么 import 路径结果要加上时间戳 query？这其实是为了让 dev server 重启后仍然读取最新的配置，避免缓存。
+
+
+- CommonJS 格式
+
+  对于 CommonJS 格式的配置文件，Vite 集中进行了解析:
+  ~~~ts
+  // 对于 js/ts 均生效
+  // 使用 esbuild 将配置文件编译成 commonjs 格式的 bundle 文件
+  const bundled = await bundleConfigFile(resolvedPath)
+  dependencies = bundled.dependencies
+  // 加载编译后的 bundle 代码
+  userConfig = await loadConfigFromBundledFile(resolvedPath, bundled.code)
+  ~~~
+  `bundleConfigFile` 的逻辑上文中已经说了，主要是通过 Esbuild 将配置文件打包，拿到打包后的 bundle 代码以及配置文件的依赖(dependencies)。
+
+  而接下来的事情就是考虑如何加载 bundle 代码了，这也是 `loadConfigFromBundledFile` 要做的事情。我们来看一下这个函数具体的实现:
+  ~~~ts
+  async function loadConfigFromBundledFile(
+    fileName: string,
+    bundledCode: string
+  ): Promise<UserConfig> {
+    const extension = path.extname(fileName)
+    const defaultLoader = require.extensions[extension]!
+    require.extensions[extension] = (module: NodeModule, filename: string) => {
+      if (filename === fileName) {
+        ;(module as NodeModuleWithCompile)._compile(bundledCode, filename)
+      } else {
+        defaultLoader(module, filename)
+      }
+    }
+    // 清除 require 缓存
+    delete require.cache[require.resolve(fileName)]
+    const raw = require(fileName)
+    const config = raw.__esModule ? raw.default : raw
+    require.extensions[extension] = defaultLoader
+    return config
+  }
+  ~~~
+  大体的思路是通过拦截原生 `require.extensions` 的加载函数来实现对 bundle 后配置代码的加载。代码如下:
+  ~~~ts
+  // 默认加载器
+  const defaultLoader = require.extensions[extension]!
+  // 拦截原生 require 对于`.js`或者`.ts`的加载
+  require.extensions[extension] = (module: NodeModule, filename: string) => {
+    // 针对 vite 配置文件的加载特殊处理
+    if (filename === fileName) {
+      ;(module as NodeModuleWithCompile)._compile(bundledCode, filename)
+    } else {
+      defaultLoader(module, filename)
+    }
+  }
+  ~~~
+  而原生 require 对于 js 文件的加载代码是这样的:
+  ~~~ts
+  Module._extensions['.js'] = function (module, filename) {
+    var content = fs.readFileSync(filename, 'utf8')
+    module._compile(stripBOM(content), filename)
+  }
+  ~~~
+  Node.js 内部也是先读取文件内容，然后编译该模块。当代码中调用 `module._compile` 相当于手动编译一个模块，该方法在 Node 内部的实现如下:
+  ~~~ts
+  Module.prototype._compile = function (content, filename) {
+    var self = this
+    var args = [self.exports, require, self, filename, dirname]
+    return compiledWrapper.apply(self.exports, args)
+  }
+  ~~~
+  等同于下面的形式:
+  ~~~ts
+  ;(function (exports, require, module, __filename, __dirname) {
+    // 执行 module._compile 方法中传入的代码
+    // 返回 exports 对象
+  })
+  ~~~
+  在调用完 `module._compile` 编译完配置代码后，进行一次手动的 require，即可拿到配置对象:
+  ~~~ts
+  const raw = require(fileName)
+  const config = raw.__esModule ? raw.default : raw
+  // 恢复原生的加载方法
+  require.extensions[extension] = defaultLoader
+  // 返回配置
+  return config
+  ~~~
+  > 这种运行时加载 TS 配置的方式，也叫做 `JIT`(即时编译)，这种方式和 `AOT` 最大的区别在于不会将内存中计算出来的 js 代码写入磁盘再加载，而是通过拦截 Node.js 原生 require.extension 方法实现即时加载。
+
+  至此，配置文件的内容已经读取完成，等后处理完成再返回即可:
+  ~~~ts
+  // 处理是函数的情况
+  const config = await (typeof userConfig === 'function'
+    ? userConfig(configEnv)
+    : userConfig)
+
+  if (!isObject(config)) {
+    throw new Error(`config must export or return an object.`)
+  }
+  // 接下来返回最终的配置信息
+  return {
+    path: normalizePath(resolvedPath),
+    config,
+    // esbuild 打包过程中搜集的依赖
+    dependencies
+  }
+  ~~~
+
+
+## 依赖预构建
+Vite 依赖预构建的底层实现中，大量地使用到了 Esbuild 这款构建工具，实现了比较复杂的 Esbuild 插件，同时也应用了诸多 Esbuild 使用技巧。
+
+关于预构建所有的实现代码都在optimizeDeps函数当中，也就是在仓库源码的 [packages/vite/src/node/optimizer/index.ts](https://github.com/vitejs/vite/blob/v2.7.0/packages/vite/src/node/optimizer/index.ts) 文件中，你可以对照着来学习。
+
+##### 缓存判断
+首先是预构建缓存的判断。Vite 在每次预构建之后都将一些关键信息写入到了`_metadata.json`文件中，第二次启动项目时会通过这个文件中的 hash 值来进行缓存的判断，如果命中缓存则不会进行后续的预构建流程，代码如下所示:
+~~~ts
+// _metadata.json 文件所在的路径
+const dataPath = path.join(cacheDir, "_metadata.json");
+// 根据当前的配置计算出哈希值
+const mainHash = getDepHash(root, config);
+const data: DepOptimizationMetadata = {
+  hash: mainHash,
+  browserHash: mainHash,
+  optimized: {},
+};
+// 默认走到里面的逻辑
+if (!force) {
+  let prevData: DepOptimizationMetadata | undefined;
+  try {
+    // 读取元数据
+    prevData = JSON.parse(fs.readFileSync(dataPath, "utf-8"));
+  } catch (e) {}
+  // 当前计算出的哈希值与 _metadata.json 中记录的哈希值一致，表示命中缓存，不用预构建
+  if (prevData && prevData.hash === data.hash) {
+    log("Hash is consistent. Skipping. Use --force to override.");
+    return prevData;
+  }
+}
+~~~
 
 
 
@@ -5665,11 +6374,7 @@ export default defineConfig({
 
 
 
-
-
-
-
-## 起步
+## 其他
 
 创建项目: npm init @vitejs/app
 
