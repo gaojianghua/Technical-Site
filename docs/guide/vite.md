@@ -1321,6 +1321,12 @@ Vite 意在提供开箱即用的配置，同时它的 插件 API 和 JavaScript 
     ~~~
 
 ## 双引擎架构
+- Vite 架构图
+
+  很多人对 Vite 的双引擎架构仅仅停留在**开发阶段使用 Esbuild**，**生产环境用 Rollup**的阶段，殊不知，Vite 真正的架构远没有这么简单。一图胜千言，这里放一张 Vite 架构图：
+
+  ![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/02910cd2c6894bcdb3a9e0fc9e59f4c2~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
+
 - Esbuild(性能利器)
   <br>
   <br>
@@ -1598,6 +1604,7 @@ Esbuild 是由 Figma 的 CTO 「Evan Wallace」基于 Golang 开发的一款打�
     }).catch(() => process.exit(1))
     ~~~
     使用插件后效果如下:
+
     ~~~js
     // 应用了 env 插件后，构建时将会被替换成 process.env 对象
     import { PATH } from 'env'
@@ -1636,6 +1643,7 @@ Esbuild 是由 Figma 的 CTO 「Evan Wallace」基于 Golang 开发的一款打�
        Callback，它的类型根据不同的钩子会有所不同。相比于 Options，Callback 函数入参和返回值的结构复杂得多，涉及很多属性。
        <br><br>
        在 onResolve 钩子中函数参数和返回值梳理如下:
+
        ~~~ts
        build.onResolve({ filter: /^env$/ }, (args: onResolveArgs): onResolveResult => {
          // 模块路径
@@ -1678,6 +1686,7 @@ Esbuild 是由 Figma 的 CTO 「Evan Wallace」基于 Golang 开发的一款打�
        })
        ~~~
        在 onLoad 钩子中函数参数和返回值梳理如下:
+
        ~~~ts
        build.onLoad({ filter: /.*/, namespace: 'env-ns' }, (args: OnLoadArgs): OnLoadResult => {
          // 模块路径
@@ -1807,6 +1816,7 @@ Esbuild 是由 Figma 的 CTO 「Evan Wallace」基于 Golang 开发的一款打�
   });
   ~~~
   然后我们新建build.js文件，内容如下:
+
   ~~~js
   const { build } = require("esbuild");
   const httpImport = require("./http-import-plugin");
@@ -6360,8 +6370,905 @@ if (!force) {
   }
 }
 ~~~
+值得注意的是哈希计算的策略，即决定哪些配置和文件有可能影响预构建的结果，然后根据这些信息来生成哈希值。这部分逻辑集中在`getHash`函数中，我把关键信息放到了注释中:
+~~~ts
+const lockfileFormats = ["package-lock.json", "yarn.lock", "pnpm-lock.yaml"];
+function getDepHash(root: string, config: ResolvedConfig): string {
+  // 获取 lock 文件内容
+  let content = lookupFile(root, lockfileFormats) || "";
+  // 除了 lock 文件外，还需要考虑下面的一些配置信息
+  content += JSON.stringify(
+    {
+      // 开发/生产环境
+      mode: config.mode,
+      // 项目根路径
+      root: config.root,
+      // 路径解析配置
+      resolve: config.resolve,
+      // 自定义资源类型
+      assetsInclude: config.assetsInclude,
+      // 插件
+      plugins: config.plugins.map((p) => p.name),
+      // 预构建配置
+      optimizeDeps: {
+        include: config.optimizeDeps?.include,
+        exclude: config.optimizeDeps?.exclude,
+      },
+    },
+    // 特殊处理函数和正则类型
+    (_, value) => {
+      if (typeof value === "function" || value instanceof RegExp) {
+        return value.toString();
+      }
+      return value;
+    }
+  );
+  // 最后调用 crypto 库中的 createHash 方法生成哈希
+  return createHash("sha256").update(content).digest("hex").substring(0, 8);
+}
+~~~
+
+##### 依赖扫描
+
+如果没有命中缓存，则会正式地进入依赖预构建阶段。不过 Vite 不会直接进行依赖的预构建，而是在之前探测一下项目中存在哪些依赖，收集依赖列表，也就是进行**依赖扫描**的过程。这个过程是必须的，因为 Esbuild 需要知道我们到底要打包哪些第三方依赖。关键代码如下:
+~~~ts
+({ deps, missing } = await scanImports(config));
+~~~
+在`scanImports`方法内部主要会调用 Esbuild 提供的 `build` 方法:
+~~~ts
+const deps: Record<string, string> = {};
+// 扫描用到的 Esbuild 插件
+const plugin = esbuildScanPlugin(config, container, deps, missing, entries);
+await Promise.all(
+  // 应用项目入口
+  entries.map((entry) =>
+    build({
+      absWorkingDir: process.cwd(),
+      // 注意这个参数
+      write: false,
+      entryPoints: [entry],
+      bundle: true,
+      format: "esm",
+      logLevel: "error",
+      plugins: [...plugins, plugin],
+      ...esbuildOptions,
+    })
+  )
+);
+~~~
+值得注意的是，其中传入的`write`参数被设为 false，表示产物不用写入磁盘，这就大大节省了磁盘 I/O 的时间了，也是`依赖扫描`为什么往往比`依赖打包`快很多的原因之一。
+
+接下来会输出预打包信息:
+~~~ts
+if (!asCommand) {
+  if (!newDeps) {
+    logger.info(
+      chalk.greenBright(`Pre-bundling dependencies:\n  ${depsString}`)
+    );
+    logger.info(
+      `(this will be run only when your dependencies or config have changed)`
+    );
+  }
+} else {
+  logger.info(chalk.greenBright(`Optimizing dependencies:\n  ${depsString}`));
+}
+~~~
+这时候你可以明白，为什么第一次启动时会输出预构建相关的 log 信息了，其实这些信息都是通过`依赖扫描`阶段来搜集的，而此时还并未开始真正的依赖打包过程。
+
+可能你会有疑问，为什么对项目入口打包一次就收集到所有依赖信息了呢？大家可以注意到`esbuildScanPlugin`这个函数创建 `scan 插件`的时候就接收到了`deps`对象作为入参，这个对象的作用不可小觑，在 `scan 插件`里面就是解析各种 import 语句，最终通过它来记录依赖信息。
 
 
+##### 依赖打包
+收集完依赖之后，就正式地进入到`依赖打包`的阶段了。这里也调用 Esbuild 进行打包并写入产物到磁盘中，关键代码如下:
+~~~ts
+const result = await build({
+  absWorkingDir: process.cwd(),
+  // 所有依赖的 id 数组，在插件中会转换为真实的路径
+  entryPoints: Object.keys(flatIdDeps),
+  bundle: true,
+  format: "esm",
+  target: config.build.target || undefined,
+  external: config.optimizeDeps?.exclude,
+  logLevel: "error",
+  splitting: true,
+  sourcemap: true,
+  outdir: cacheDir,
+  ignoreAnnotations: true,
+  metafile: true,
+  define,
+  plugins: [
+    ...plugins,
+    // 预构建专用的插件
+    esbuildDepPlugin(flatIdDeps, flatIdToExports, config, ssr),
+  ],
+  ...esbuildOptions,
+});
+// 打包元信息，后续会根据这份信息生成 _metadata.json
+const meta = result.metafile!;
+~~~
+##### 元信息写入磁盘
+在打包过程完成之后，Vite 会拿到 Esbuild 构建的元信息，也就是上面代码中的`meta`对象，然后将元信息保存到`_metadata.json`文件中:
+~~~ts
+const data: DepOptimizationMetadata = {
+  hash: mainHash,
+  browserHash: mainHash,
+  optimized: {},
+};
+// 省略中间的代码
+for (const id in deps) {
+  const entry = deps[id];
+  data.optimized[id] = {
+    file: normalizePath(path.resolve(cacheDir, flattenId(id) + ".js")),
+    src: entry,
+    // 判断是否需要转换成 ESM 格式，后面会介绍
+    needsInterop: needsInterop(
+      id,
+      idToExports[id],
+      meta.outputs,
+      cacheDirOutputPath
+    ),
+  };
+}
+// 元信息写磁盘
+writeFile(dataPath, JSON.stringify(data, null, 2));
+~~~
+到这里，预构建的核心流程就梳理完了，可以看到总体的流程上面并不复杂，但实际上为了方便你理解，在**依赖扫描**和**依赖打包**这两个部分中，我省略了很多的细节，每个细节代表了各种复杂的处理场景，因此，在下面的篇幅中，我们就来好好地剖析一下这两部分的应用场景和实现细节。
+
+
+##### 依赖扫描详细分析
+**1. 如何获取入口**
+
+现在让我们把目光聚焦在`scanImports`的实现上。大家可以先想一想，在进行依赖扫描之前，需要做的第一件事是什么？很显然，是找到入口文件。但入口文件可能存在于多个配置当中，比如`optimizeDeps.entries`和`build.rollupOptions.input`，同时需要考虑数组和对象的情况；也可能用户没有配置，需要自动探测入口文件。那么，在`scanImports`是如何做到的呢？
+~~~ts
+const explicitEntryPatterns = config.optimizeDeps.entries;
+const buildInput = config.build.rollupOptions?.input;
+if (explicitEntryPatterns) {
+  // 先从 optimizeDeps.entries 寻找入口，支持 glob 语法
+  entries = await globEntries(explicitEntryPatterns, config);
+} else if (buildInput) {
+  // 其次从 build.rollupOptions.input 配置中寻找，注意需要考虑数组和对象的情况
+  const resolvePath = (p: string) => path.resolve(config.root, p);
+  if (typeof buildInput === "string") {
+    entries = [resolvePath(buildInput)];
+  } else if (Array.isArray(buildInput)) {
+    entries = buildInput.map(resolvePath);
+  } else if (isObject(buildInput)) {
+    entries = Object.values(buildInput).map(resolvePath);
+  } else {
+    throw new Error("invalid rollupOptions.input value.");
+  }
+} else {
+  // 兜底逻辑，如果用户没有进行上述配置，则自动从根目录开始寻找
+  entries = await globEntries("**/*.html", config);
+}
+~~~
+其中 `globEntries` 方法即通过 `fast-glob` 库来从项目根目录扫描文件。
+
+接下来我们还需要考虑入口文件的类型，一般情况下入口需要是`js/ts`文件，但实际上像 html、vue 单文件组件这种类型我们也是需要支持的，因为在这些文件中仍然可以包含 script 标签的内容，从而让我们搜集到依赖信息。
+
+在源码当中，同时对 `html`、`vue`、`svelte`、`astro`(一种新兴的类 html 语法)四种后缀的入口文件进行了解析，当然，具体的解析过程在`依赖扫描`阶段的 Esbuild 插件中得以实现，接着就让我们在插件的实现中一探究竟。
+~~~ts
+const htmlTypesRE = /.(html|vue|svelte|astro)$/;
+function esbuildScanPlugin(/* 一些入参 */): Plugin {
+  // 初始化一些变量
+  // 返回一个 Esbuild 插件
+  return {
+    name: "vite:dep-scan",
+    setup(build) {
+      // 标记「类 HTML」文件的 namespace
+      build.onResolve({ filter: htmlTypesRE }, async ({ path, importer }) => {
+        return {
+          path: await resolve(path, importer),
+          namespace: "html",
+        };
+      });
+
+      build.onLoad(
+        { filter: htmlTypesRE, namespace: "html" },
+        async ({ path }) => {
+          // 解析「类 HTML」文件
+        }
+      );
+    },
+  };
+}
+~~~
+这里以html文件的解析为例来讲解，原理如下图所示:
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/717d75037b42482fb0a0f0b25743b058~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
+
+在插件中会扫描出所有带有 `type=module` 的 script 标签，对于含有 src 的 `script` 改写为一个 import 语句，对于含有具体内容的 script，则抽离出其中的脚本内容，最后将所有的 script 内容拼接成一段 js 代码。接下来我们来看具体的代码，其中会以上图中的`html`为示例来拆解中间过程:
+~~~ts
+const scriptModuleRE =
+  /(<script\b[^>]*type\s*=\s*(?: module |'module')[^>]*>)(.*?)</script>/gims
+export const scriptRE = /(<script\b(?:\s[^>]*>|>))(.*?)</script>/gims
+export const commentRE = /<!--(.|[\r\n])*?-->/
+const srcRE = /\bsrc\s*=\s*(?: ([^ ]+) |'([^']+)'|([^\s' >]+))/im
+const typeRE = /\btype\s*=\s*(?: ([^ ]+) |'([^']+)'|([^\s' >]+))/im
+const langRE = /\blang\s*=\s*(?: ([^ ]+) |'([^']+)'|([^\s' >]+))/im
+// scan 插件 setup 方法内部实现
+build.onLoad(
+  { filter: htmlTypesRE, namespace: 'html' },
+  async ({ path }) => {
+    let raw = fs.readFileSync(path, 'utf-8')
+    // 去掉注释内容，防止干扰解析过程
+    raw = raw.replace(commentRE, '<!---->')
+    const isHtml = path.endsWith('.html')
+    // HTML 情况下会寻找 type 为 module 的 script
+    // 正则：/(<script\b[^>]*type\s*=\s*(?: module |'module')[^>]*>)(.*?)</script>/gims
+    const regex = isHtml ? scriptModuleRE : scriptRE
+    regex.lastIndex = 0
+    let js = ''
+    let loader: Loader = 'js'
+    let match: RegExpExecArray | null
+    // 正式开始解析
+    while ((match = regex.exec(raw))) {
+      // 第一次: openTag 为 <script type= module  src= /src/main.ts >, 无 content
+      // 第二次: openTag 为 <script type= module >，有 content
+      const [, openTag, content] = match
+      const typeMatch = openTag.match(typeRE)
+      const type =
+        typeMatch && (typeMatch[1] || typeMatch[2] || typeMatch[3])
+      const langMatch = openTag.match(langRE)
+      const lang =
+        langMatch && (langMatch[1] || langMatch[2] || langMatch[3])
+      if (lang === 'ts' || lang === 'tsx' || lang === 'jsx') {
+        // 指定 esbuild 的 loader
+        loader = lang
+      }
+      const srcMatch = openTag.match(srcRE)
+      // 根据有无 src 属性来进行不同的处理
+      if (srcMatch) {
+        const src = srcMatch[1] || srcMatch[2] || srcMatch[3]
+        js += `import ${JSON.stringify(src)}\n`
+      } else if (content.trim()) {
+        js += content + '\n'
+      }
+  }
+  return {
+    loader,
+    contents: js
+  }
+)
+~~~
+这里对源码做了一定的精简，省略了 `vue/svelte` 以及 `import.meta.glob` 语法的处理，但不影响整体的实现思路，这里主要是让你了解即使是`html`或者类似这种类型的文件，也是能作为 Esbuild 的预构建入口来进行解析的。
+
+**2. 如何记录依赖？**
+
+Vite 中会把 `bare import` 的路径当做依赖路径，关于 `bare import`，你可以理解为直接引入一个包名，比如下面这样:
+~~~ts
+import React from "react";
+~~~
+而以`.`开头的相对路径或者以`/`开头的绝对路径都不能算`bare import`:
+~~~ts
+// 以下都不是 bare import
+import React from "../node_modules/react/index.js";
+import React from "/User/sanyuan/vite-project/node_modules/react/index.js";
+~~~
+对于解析 `bare import`、记录依赖的逻辑依然实现在 scan 插件当中:
+~~~ts
+build.onResolve(
+  {
+    // avoid matching windows volume
+    filter: /^[\w@][^:]/,
+  },
+  async ({ path: id, importer }) => {
+    // 如果在 optimizeDeps.exclude 列表或者已经记录过了，则将其 externalize (排除)，直接 return
+
+    // 接下来解析路径，内部调用各个插件的 resolveId 方法进行解析
+    const resolved = await resolve(id, importer);
+    if (resolved) {
+      // 判断是否应该 externalize，下个部分详细拆解
+      if (shouldExternalizeDep(resolved, id)) {
+        return externalUnlessEntry({ path: id });
+      }
+
+      if (resolved.includes("node_modules") || include?.includes(id)) {
+        // 如果 resolved 为 js 或 ts 文件
+        if (OPTIMIZABLE_ENTRY_RE.test(resolved)) {
+          // 注意了! 现在将其正式地记录在依赖表中
+          depImports[id] = resolved;
+        }
+        // 进行 externalize，因为这里只用扫描出依赖即可，不需要进行打包，具体实现后面的部分会讲到
+        return externalUnlessEntry({ path: id });
+      } else {
+        // resolved 为 「类 html」 文件，则标记上 'html' 的 namespace
+        const namespace = htmlTypesRE.test(resolved) ? "html" : undefined;
+        // linked package, keep crawling
+        return {
+          path: path.resolve(resolved),
+          namespace,
+        };
+      }
+    } else {
+      // 没有解析到路径，记录到 missing 表中，后续会检测这张表，显示相关路径未找到的报错
+      missing[id] = normalizePath(importer);
+    }
+  }
+);
+~~~
+顺便说一句，其中调用到了`resolve`，也就是路径解析的逻辑，这里面实际上会调用各个插件的 resolveId 方法来进行路径的解析，代码如下所示:
+~~~ts
+const resolve = async (id: string, importer?: string) => {
+  // 通过 seen 对象进行路径缓存
+  const key = id + (importer && path.dirname(importer));
+  if (seen.has(key)) {
+    return seen.get(key);
+  }
+  // 调用插件容器的 resolveId
+  // 关于插件容器下一节会详细介绍，这里你直接理解为调用各个插件的 resolveId 方法解析路径即可
+  const resolved = await container.resolveId(
+    id,
+    importer && normalizePath(importer)
+  );
+  const res = resolved?.id;
+  seen.set(key, res);
+  return res;
+};
+~~~
+
+**3. external 的规则如何制定？**
+
+在 `bare import` 记录依赖的过程中还有一件非常重要的事情，就是决定哪些路径应该被排除，不应该被记录或者不应该被 Esbuild 来解析。这就是 `external 规则`的概念。
+
+在这里，我们把需要 external 的路径分为两类: **资源型**和**模块型**。
+
+首先，对于资源型的路径，一般是直接排除，在插件中的处理方式如下:
+~~~ts
+// data url，直接标记 external: true，不让 esbuild 继续处理
+build.onResolve({ filter: dataUrlRE }, ({ path }) => ({
+  path,
+  external: true,
+}));
+// 加了 ?worker 或者 ?raw 这种 query 的资源路径，直接 external
+build.onResolve({ filter: SPECIAL_QUERY_RE }, ({ path }) => ({
+  path,
+  external: true,
+}));
+// css & json
+build.onResolve(
+  {
+    filter: /.(css|less|sass|scss|styl|stylus|pcss|postcss|json)$/,
+  },
+  // 非 entry 则直接标记 external
+  externalUnlessEntry
+);
+// Vite 内置的一些资源类型，比如 .png、.wasm 等等
+build.onResolve(
+  {
+    filter: new RegExp(`\.(${KNOWN_ASSET_TYPES.join("|")})$`),
+  },
+  // 非 entry 则直接标记 external
+  externalUnlessEntry
+);
+~~~
+其中`externalUnlessEntry`的实现也很简单:
+~~~ts
+const externalUnlessEntry = ({ path }: { path: string }) => ({
+  path,
+  // 非 entry 则标记 external
+  external: !entries.includes(path),
+});
+~~~
+其次，对于模块型的路径，也就是当我们通过 resolve 函数解析出了一个 JS 模块的路径，如何判断是否应该被 externalize 呢？这部分实现主要在 `shouldExternalizeDep` 函数中，之前在分析 `bare import` 埋了个伏笔，现在让我们看看具体的实现规则:
+~~~ts
+export function shouldExternalizeDep(
+  resolvedId: string,
+  rawId: string
+): boolean {
+  // 解析之后不是一个绝对路径，不在 esbuild 中进行加载
+  if (!path.isAbsolute(resolvedId)) {
+    return true;
+  }
+  // 1. import 路径本身就是一个绝对路径
+  // 2. 虚拟模块(Rollup 插件中约定虚拟模块以`\0`开头)
+  // 都不在 esbuild 中进行加载
+  if (resolvedId === rawId || resolvedId.includes("\0")) {
+    return true;
+  }
+  // 不是 JS 或者 类 HTML 文件，不在 esbuild 中进行加载
+  if (!JS_TYPES_RE.test(resolvedId) && !htmlTypesRE.test(resolvedId)) {
+    return true;
+  }
+  return false;
+}
+~~~
+
+##### 依赖打包详细分析
+**1. 如何达到扁平化的产物文件结构**
+
+一般情况下，esbuild 会输出嵌套的产物目录结构，比如对 vue 来说，其产物在`dist/vue.runtime.esm-bundler.js`中，那么经过 esbuild 正常打包之后，预构建的产物目录如下:
+~~~
+node_modules/.vite
+├── _metadata.json
+├── vue
+│   └── dist
+│       └── vue.runtime.esm-bundler.js
+~~~
+由于各个第三方包的产物目录结构不一致，这种深层次的嵌套目录对于 Vite 路径解析来说，其实是增加了不少的麻烦的，带来了一些不可控的因素。为了解决嵌套目录带来的问题，Vite 做了两件事情来达到扁平化的预构建产物输出:
+1. 嵌套路径扁平化，`/`被换成下划线，如 `react/jsx-dev-runtime`，被重写为`react_jsx-dev-runtime`；
+2. 用虚拟模块来代替真实模块，作为预打包的入口，具体的实现后面会详细介绍。
+
+回到`optimizeDeps`函数中，其中在进行完依赖扫描的步骤后，就会执行路径的扁平化操作:
+~~~ts
+const flatIdDeps: Record<string, string> = {};
+const idToExports: Record<string, ExportsData> = {};
+const flatIdToExports: Record<string, ExportsData> = {};
+// deps 即为扫描后的依赖表
+// 形如: {
+//    react :  /Users/sanyuan/vite-project/react/index.js  }
+//    react/jsx-dev-runtime :  /Users/sanyuan/vite-project/react/jsx-dev-runtime.js
+// }
+for (const id in deps) {
+  // 扁平化路径，`react/jsx-dev-runtime`，被重写为`react_jsx-dev-runtime`；
+  const flatId = flattenId(id);
+  // 填入 flatIdDeps 表，记录 flatId -> 真实路径的映射关系
+  const filePath = (flatIdDeps[flatId] = deps[id]);
+  const entryContent = fs.readFileSync(filePath, "utf-8");
+  // 后续代码省略
+}
+~~~
+对于虚拟模块的处理，大家可以把目光放到 esbuildDepPlugin 函数上面，它的逻辑大致如下:
+~~~ts
+export function esbuildDepPlugin(/* 一些传参 */) {
+  // 定义路径解析的方法
+
+  // 返回 Esbuild 插件
+  return {
+    name: 'vite:dep-pre-bundle',
+    set(build) {
+      // bare import 的路径
+      build.onResolve(
+        { filter: /^[\w@][^:]/ },
+        async ({ path: id, importer, kind }) => {
+          // 判断是否为入口模块，如果是，则标记上`dep`的 namespace，成为一个虚拟模块
+        }
+      )
+      build.onLoad({ filter: /.*/, namespace: 'dep' }, ({ path: id }) => {
+        // 加载虚拟模块
+      })
+    }
+  }
+}
+~~~
+如此一来，Esbuild 会将虚拟模块作为入口来进行打包，最后的产物目录会变成下面的扁平结构:
+~~~
+node_modules/.vite
+├── _metadata.json
+├── vue.js
+├── react.js
+├── react_jsx-dev-runtime.js
+~~~
+>注：**虚拟模块加载部分的代码**在 Vite 3.0 中已被移除，原因是 Esbuild 输出扁平化产物路径已不再需要使用虚拟模块，PR 地址: [github.com/vitejs/vite…](https://github.com/vitejs/vite/pull/10427) 如下部分的小册内容你可以进行选读。
+
+**2. 代理模块加载**
+
+虚拟模块代替了真实模块作为打包入口，因此也可以理解为`代理模块`，后面也统一称之为`代理模块`。我们首先来分析一下代理模块究竟是如何被加载出来的，换句话说，它到底了包含了哪些内容。
+
+拿`import React from "react"`来举例，Vite 会把`react`标记为 `namespace` 为 `dep` 的虚拟模块，然后控制 Esbuild 的加载流程，对于真实模块的内容进行重新导出。
+
+那么第一步就是确定真实模块的路径:
+~~~ts
+// 真实模块所在的路径，拿 react 来说，即`node_modules/react/index.js`
+const entryFile = qualified[id];
+// 确定相对路径
+let relativePath = normalizePath(path.relative(root, entryFile));
+if (
+  !relativePath.startsWith("./") &&
+  !relativePath.startsWith("../") &&
+  relativePath !== "."
+) {
+  relativePath = `./${relativePath}`;
+}
+~~~
+确定了路径之后，接下来就是对模块的内容进行重新导出。这里会分为几种情况:
+- CommonJS 模块
+- ES 模块
+
+我们可以暂时把目光转移到`optimizeDeps`中，实际上在进行真正的依赖打包之前，Vite 会读取各个依赖的入口文件，通过`es-module-lexer`这种工具来解析入口文件的内容。这里稍微解释一下`es-module-lexer`，这是一个在 Vite 被经常使用到的工具库，主要是为了解析 ES 导入导出的语法，大致用法如下:
+~~~ts
+import { init, parse } from "es-module-lexer";
+// 等待`es-module-lexer`初始化完成
+await init;
+const sourceStr = `
+  import moduleA from './a';
+  export * from 'b';
+  export const count = 1;
+  export default count;
+`;
+// 开始解析
+const exportsData = parse(sourceStr);
+// 结果为一个数组，分别保存 import 和 export 的信息
+const [imports, exports] = exportsData;
+// 返回 `import module from './a'`
+sourceStr.substring(imports[0].ss, imports[0].se);
+// 返回 ['count', 'default']
+console.log(exports);
+~~~
+值得注意的是, `export * from` 导出语法会被记录在 `import` 信息中。
+
+接下来我们来看看 `optimizeDeps` 中如何利用 `es-module-lexer` 来解析入口文件的，实现代码如下:
+~~~ts
+import { init, parse } from "es-module-lexer";
+// 省略中间的代码
+await init;
+for (const id in deps) {
+  // 省略前面的路径扁平化逻辑
+  // 读取入口内容
+  const entryContent = fs.readFileSync(filePath, "utf-8");
+  try {
+    exportsData = parse(entryContent) as ExportsData;
+  } catch {
+    // 省略对 jsx 的处理
+  }
+  for (const { ss, se } of exportsData[0]) {
+    const exp = entryContent.slice(ss, se);
+    // 标记存在 `export * from` 语法
+    if (/export\s+*\s+from/.test(exp)) {
+      exportsData.hasReExports = true;
+    }
+  }
+  // 将 import 和 export 信息记录下来
+  idToExports[id] = exportsData;
+  flatIdToExports[flatId] = exportsData;
+}
+~~~
+由于最后会有两张表记录下 ES 模块导入和导出的相关信息，而`flatIdToExports`表会作为入参传给 Esbuild 插件:
+~~~ts
+// 第二个入参
+esbuildDepPlugin(flatIdDeps, flatIdToExports, config, ssr);
+~~~
+如此，我们就能根据真实模块的路径获取到导入和导出的信息，通过这份信息来甄别 CommonJS 和 ES 两种模块规范。现在可以回到 Esbuild 打包插件中**加载代理模块**的代码:
+~~~ts
+let contents = "";
+// 下面的 exportsData 即外部传入的模块导入导出相关的信息表
+// 根据模块 id 拿到对应的导入导出信息
+const data = exportsData[id];
+const [imports, exports] = data;
+if (!imports.length && !exports.length) {
+  // 处理 CommonJS 模块
+} else {
+  // 处理 ES  模块
+}
+~~~
+如果是 CommonJS 模块，则导出语句写成这种形式:
+~~~ts
+let contents = "";
+contents += `export default require( ${relativePath} );`;
+~~~
+如果是 ES 模块，则分**默认导出**和**非默认导出**这两种情况来处理:
+~~~ts
+// 默认导出，即存在 export default 语法
+if (exports.includes("default")) {
+  contents += `import d from  ${relativePath} ;export default d;`;
+}
+// 非默认导出
+if (
+  // 1. 存在 `export * from` 语法，前文分析过
+  data.hasReExports ||
+  // 2. 多个导出内容
+  exports.length > 1 ||
+  // 3. 只有一个导出内容，但这个导出不是 export default
+  exports[0] !== "default"
+) {
+  // 凡是命中上述三种情况中的一种，则添加下面的重导出语句
+  contents += `\nexport * from  ${relativePath} `;
+}
+~~~
+现在，我们组装好了 `代理模块` 的内容，接下来就可以放心地交给 Esbuild 加载了:
+~~~ts
+let ext = path.extname(entryFile).slice(1);
+if (ext === "mjs") ext = "js";
+return {
+  loader: ext as Loader,
+  // 虚拟模块内容
+  contents,
+  resolveDir: root,
+};
+~~~
+
+**3. 代理模块为什么要和真实模块分离？**
+
+现在，相信你已经清楚了 Vite 是如何组装代理模块，以此作为 Esbuild 打包入口的，整体的思路就是先分析一遍模块真实入口文件的`import`和`export`语法，然后在代理模块中进行重导出。这里不妨回过头来思考一下: 为什么要对真实文件先做语法分析，然后重导出内容呢？
+
+注意一下代码中的这段注释:
+~~~ts
+// It is necessary to do the re-exporting to separate the virtual proxy
+// module from the actual module since the actual module may get
+// referenced via relative imports - if we don't separate the proxy and
+// the actual module, esbuild will create duplicated copies of the same
+// module!
+// 翻译后：
+// 这种重导出的做法是必要的，它可以分离虚拟模块和真实模块，因为真实模块可以通过相对地址来引入。如果不这么做，Esbuild 将会对打包输出两个一样的模块。
+~~~
+假设我不像源码中这么做，在虚拟模块中直接将**真实入口的内容**作为传给 Esbuild 可不可以呢？也就是像这样:
+~~~ts
+build.onLoad({ filter: /.*/, namespace: 'dep' }, ({ path: id }) => {
+  // 拿到查表拿到真实入口模块路径
+  const entryFile = qualified[id];
+  return {
+    loader: 'js',
+    contents: fs.readFileSync(entryFile, 'utf8')
+  }
+})
+~~~
+那么，这么实现会产生什么问题呢？我们可以先看看正常的预打包流程（以 React 为例）:
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/183bb3e05bd64883b244f0765d901629~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
+
+Vite 会使用 `dep:react`这个代理模块来作为入口内容在 Esbuild 中进行加载，与此同时，其他库的预打包也有可能会引入 React，比如`@emotion/react`这个库里面会有`require('react')`的行为。那么在 Esbuild 打包之后，`react.js`与`@emotion_react.js`的代码中会引用同一份 Chunk 的内容，这份 Chunk 也就对应 React 入口文件(`node_modules/react/index.js`)。
+
+这是理想情况下的打包结果，接下来我们来看看上述有问题的版本是如何工作的:
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/f50f64a51fcc44fc907d966790a2bd4d~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
+
+现在如果代理模块通过文件系统直接读取真实模块的内容，而不是进行重导出，因此由于此时代理模块跟真实模块并没有任何的引用关系，这就导致最后的`react.js`和`@emotion/react.js`两份产物并不会引用同一份 Chunk，Esbuild 最后打包出了内容完全相同的两个 Chunk！
+
+这也就能解释为什么 Vite 中要在代理模块中对真实模块的内容进行重导出了，主要是为了避免 Esbuild 产生重复的打包内容。此时，你是不是也恍然大悟了呢？
+
+
+## 插件流水线
+Vite 在开发阶段实现了一个按需加载的服务器，每一个文件请求进来都会经历一系列的编译流程，然后 Vite 会将编译结果响应给浏览器。在生产环境下，Vite 同样会执行一系列编译过程，将编译结果交给 Rollup 进行模块打包。这一系列的编译过程指的就是 Vite 的**插件工作流水线(Pipeline)**，而插件功能又是 Vite 构建能力的核心，因此谈到阅读 Vite 源码，我们永远绕不开插件的作用与实现原理。
+
+##### 插件容器
+
+我们知道 Vite 的插件机制是与 Rollup 兼容的，但它在开发和生产环境下的实现稍有差别，你可以回顾一下这张架构图:
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/02910cd2c6894bcdb3a9e0fc9e59f4c2~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
+
+我们可以看到:
+- 在生产环境中 Vite 直接调用 Rollup 进行打包，所以 Rollup 可以调度各种插件；
+- 在开发环境中，Vite 模拟了 Rollup 的插件机制，设计了一个 `PluginContainer` 对象来调度各个插件。
+
+`PluginContainer`(插件容器)对象非常重要，前两节我们也多次提到了它，接下来我们就把目光集中到这个对象身上，看看 Vite 的插件容器机制究竟是如何实现的。
+
+`PluginContainer` 的 [实现](https://github.com/vitejs/vite/blob/main/packages/vite/src/node/server/pluginContainer.ts) 基于借鉴于 WMR 中的`rollup-plugin-container.js`，主要分为 2 个部分:
+1. 实现 Rollup 插件钩子的调度
+2. 实现插件钩子内部的 Context 上下文对象
+
+首先，你可以通过 [container 的定义](https://github.com/vitejs/vite/blob/main/packages/vite/src/node/server/pluginContainer.ts#L463) 来看看各个 Rollup 钩子的实现方式，代码精简后如下:
+~~~ts
+const container = {
+  // 异步串行钩子
+  options: await (async () => {
+    let options = rollupOptions
+    for (const plugin of plugins) {
+      if (!plugin.options) continue
+      options =
+        (await plugin.options.call(minimalContext, options)) || options
+    }
+    return options;
+  })(),
+  // 异步并行钩子
+  async buildStart() {
+    await Promise.all(
+      plugins.map((plugin) => {
+        if (plugin.buildStart) {
+          return plugin.buildStart.call(
+            new Context(plugin) as any,
+            container.options as NormalizedInputOptions
+          )
+        }
+      })
+    )
+  },
+  // 异步优先钩子
+  async resolveId(rawId, importer) {
+    // 上下文对象，后文介绍
+    const ctx = new Context()
+
+    let id: string | null = null
+    const partial: Partial<PartialResolvedId> = {}
+    for (const plugin of plugins) {
+      const result = await plugin.resolveId.call(
+        ctx as any,
+        rawId,
+        importer,
+        { ssr }
+      )
+      if (!result) continue;
+      return result;
+    }
+  }
+  // 异步优先钩子
+  async load(id, options) {
+    const ctx = new Context()
+    for (const plugin of plugins) {
+      const result = await plugin.load.call(ctx as any, id, { ssr })
+      if (result != null) {
+        return result
+      }
+    }
+    return null
+  },
+  // 异步串行钩子
+  async transform(code, id, options) {
+    const ssr = options?.ssr
+    // 每次 transform 调度过程会有专门的上下文对象，用于合并 SourceMap，后文会介绍
+    const ctx = new TransformContext(id, code, inMap as SourceMap)
+    ctx.ssr = !!ssr
+    for (const plugin of plugins) {
+      let result: TransformResult | string | undefined
+      try {
+        result = await plugin.transform.call(ctx as any, code, id, { ssr })
+      } catch (e) {
+        ctx.error(e)
+      }
+      if (!result) continue;
+      // 省略 SourceMap 合并的逻辑 
+      code = result;
+    }
+    return {
+      code,
+      map: ctx._getCombinedSourcemap()
+    }
+  },
+  // close 钩子实现省略
+}
+~~~
+值得注意的是，在各种钩子被调用的时候，Vite 会强制将钩子函数的 `this` 绑定为一个上下文对象，如:
+~~~ts
+const ctx = new Context()
+const result = await plugin.load.call(ctx as any, id, { ssr })
+~~~
+我们知道，在 Rollup 钩子函数中，我们可以调用`this.emitFile`、`this.resolve` 等诸多的上下文方法([详情地址](https://rollupjs.org/guide/en/#plugin-context))，因此，Vite 除了要模拟各个插件的执行流程，还需要模拟插件执行的上下文对象，代码中的 `Context` 对象就是用来完成这件事情的。我们来看看 Context 对象的具体实现:
+~~~ts
+import { RollupPluginContext } from 'rollup';
+type PluginContext = Omit<
+  RollupPluginContext,
+  // not documented
+  | 'cache'
+  // deprecated
+  | 'emitAsset'
+  | 'emitChunk'
+  | 'getAssetFileName'
+  | 'getChunkFileName'
+  | 'isExternal'
+  | 'moduleIds'
+  | 'resolveId'
+  | 'load'
+>
+
+const watchFiles = new Set<string>()
+
+class Context implements PluginContext {
+  // 实现各种上下文方法
+  // 解析模块 AST(调用 acorn)
+  parse(code: string, opts: any = {}) {
+    return parser.parse(code, {
+      sourceType: 'module',
+      ecmaVersion: 'latest',
+      locations: true,
+      ...opts
+    })
+  }
+  // 解析模块路径
+  async resolve(
+    id: string,
+    importer?: string,
+    options?: { skipSelf?: boolean }
+  ) {
+    let skip: Set<Plugin> | undefined
+    if (options?.skipSelf && this._activePlugin) {
+      skip = new Set(this._resolveSkips)
+      skip.add(this._activePlugin)
+    }
+    let out = await container.resolveId(id, importer, { skip, ssr: this.ssr })
+    if (typeof out === 'string') out = { id: out }
+    return out as ResolvedId | null
+  }
+
+  // 以下两个方法均从 Vite 的模块依赖图中获取相关的信息
+  // 我们将在下一节详细介绍模块依赖图，本节不做展开
+  getModuleInfo(id: string) {
+    return getModuleInfo(id)
+  }
+
+  getModuleIds() {
+    return moduleGraph
+      ? moduleGraph.idToModuleMap.keys()
+      : Array.prototype[Symbol.iterator]()
+  }
+  
+  // 记录开发阶段 watch 的文件
+  addWatchFile(id: string) {
+    watchFiles.add(id)
+    ;(this._addedImports || (this._addedImports = new Set())).add(id)
+    if (watcher) ensureWatchedFile(watcher, id, root)
+  }
+
+  getWatchFiles() {
+    return [...watchFiles]
+  }
+  
+  warn() {
+    // 打印 warning 信息
+  }
+  
+  error() {
+    // 打印 error 信息
+  }
+  
+  // 其它方法只是声明，并没有具体实现，这里就省略了
+}
+~~~
+很显然，Vite 将 Rollup 的`PluginContext`对象重新实现了一遍，因为只是开发阶段用到，所以去除了一些打包相关的方法实现。同时，上下文对象与 Vite 开发阶段的 ModuleGraph 即模块依赖图相结合，是为了实现开发时的 **热更新(HMR)**。
+
+另外，transform 钩子也会绑定一个插件上下文对象，不过这个对象和其它钩子不同，实现代码精简如下:
+~~~ts
+class TransformContext extends Context {
+  constructor(filename: string, code: string, inMap?: SourceMap | string) {
+    super()
+    this.filename = filename
+    this.originalCode = code
+    if (inMap) {
+      this.sourcemapChain.push(inMap)
+    }
+  }
+
+  _getCombinedSourcemap(createIfNull = false) {
+    return this.combinedMap
+  }
+
+  getCombinedSourcemap() {
+    return this._getCombinedSourcemap(true) as SourceMap
+  }
+}
+~~~
+可以看到，`TransformContext`继承自之前所说的`Context`对象，也就是说 transform 钩子的上下文对象相比其它钩子只是做了一些扩展，增加了 sourcemap 合并的功能，将不同插件的 transform 钩子执行后返回的 sourcemap 进行合并，以保证 sourcemap 的准确性和完整性。
+
+##### 插件工作流概览
+让我们把目光集中在`resolvePlugins`的[实现](https://github.com/vitejs/vite/blob/main/packages/vite/src/node/plugins/index.ts#L22)上，Vite 所有的插件就是在这里被收集起来的。具体实现如下:
+~~~ts
+export async function resolvePlugins(
+  config: ResolvedConfig,
+  prePlugins: Plugin[],
+  normalPlugins: Plugin[],
+  postPlugins: Plugin[]
+): Promise<Plugin[]> {
+  const isBuild = config.command === 'build'
+  // 收集生产环境构建的插件，后文会介绍
+  const buildPlugins = isBuild
+    ? (await import('../build')).resolveBuildPlugins(config)
+    : { pre: [], post: [] }
+
+  return [
+    // 1. 别名插件
+    isBuild ? null : preAliasPlugin(),
+    aliasPlugin({ entries: config.resolve.alias }),
+    // 2. 用户自定义 pre 插件(带有`enforce: "pre"`属性)
+    ...prePlugins,
+    // 3. Vite 核心构建插件
+    // 数量比较多，暂时省略代码
+    // 4. 用户插件（不带有 `enforce` 属性）
+    ...normalPlugins,
+    // 5. Vite 生产环境插件 & 用户插件(带有 `enforce: "post"`属性)
+    definePlugin(config),
+    cssPostPlugin(config),
+    ...buildPlugins.pre,
+    ...postPlugins,
+    ...buildPlugins.post,
+    // 6. 一些开发阶段特有的插件
+    ...(isBuild
+      ? []
+      : [clientInjectionsPlugin(config), importAnalysisPlugin(config)])
+  ].filter(Boolean) as Plugin[]
+}
+~~~
+从上述代码中我们可以总结出 Vite 插件的具体执行顺序。
+1. **别名插件**包括 `vite:pre-alias`和`@rollup/plugin-alias`，用于路径别名替换。
+2. 用户自定义 pre 插件，也就是带有`enforce: "pre"`属性的自定义插件。
+3. Vite 核心构建插件，这部分插件为 Vite 的核心编译插件，数量比较多，我们在下部分一一拆解。
+4. 用户自定义的普通插件，即不带有 `enforce` 属性的自定义插件。
+5. `Vite 生产环境插件`和用户插件中带有`enforce: "post"`属性的插件。
+6. 一些开发阶段特有的插件，包括环境变量注入插件`clientInjectionsPlugin`和 import 语句分析及重写插件`importAnalysisPlugin`。
+
+##### 插件功能梳理
+除用户自定义插件之外，我们需要梳理的 Vite 内置插件有下面这几类:
+- 别名插件
+- 核心构建插件
+- 生产环境特有插件
+- 开发环境特有插件
 
 
 
