@@ -7270,6 +7270,56 @@ export async function resolvePlugins(
 - 生产环境特有插件
 - 开发环境特有插件
 
+**1. 别名插件**
+
+别名插件有两个，分别是 [vite:pre-alias](https://github.com/vitejs/vite/blob/72cb33e947e7aa72d27ed0c5eacb2457d523dfbf/packages/vite/src/node/plugins/preAlias.ts) 和 [@rollup/plugin-alias](https://github.com/vitejs/vite/blob/72cb33e947e7aa72d27ed0c5eacb2457d523dfbf/packages/vite/src/node/plugins/index.ts#L3)。 前者主要是为了将 bare import 路径重定向到预构建依赖的路径，如:
+~~~ts
+// 假设 React 已经过 Vite 预构建
+import React from 'react';
+// 会被重定向到预构建产物的路径
+import React from '/node_modules/.vite/react.js'
+~~~
+后者则是实现了比较通用的路径别名(即`resolve.alias`配置)的功能，使用的是 [Rollup 官方 Alias 插件](https://github.com/rollup/plugins/tree/master/packages/alias#rollupplugin-alias)。
+
+**2. 核心构建插件**
+
+**2.1 module preload 特性的 Polyfill**
+
+当你在 Vite 配置文件中开启下面这个配置时:
+~~~ts
+{
+  build: {
+    polyfillModulePreload: true
+  }
+}
+~~~
+Vite 会自动应用 `modulePreloadPolyfillPlugin` 插件，在产物中注入 module preload 的 Polyfill 代码，[具体实现](https://github.com/vitejs/vite/blob/2b7e836f84b56b5f3dc81e0f5f161a9b5f9154c0/packages/vite/src/node/plugins/modulePreloadPolyfill.ts#L7) 摘自之前我们提到过的 `es-module-shims` 这个库，实现原理如下:
+1. 扫描出当前所有的 modulepreload 标签，拿到 link 标签对应的地址，通过执行 fetch 实现预加载；
+2. 同时通过 MutationObserver 监听 DOM 的变化，一旦发现包含 modulepreload 属性的 link 标签，则同样通过 fetch 请求实现预加载。
+>由于部分支持原生 ESM 的浏览器并不支持 module preload，因此某些情况下需要注入相应的 polyfill 进行降级。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
