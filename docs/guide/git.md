@@ -194,3 +194,13 @@
   ~~~shell
   git diff <commitId> <commitId>
   ~~~
+- 设置代理
+  ~~~shell
+  git config --global http.proxy "代理地址"
+  git config --global https.proxy "代理地址"
+  ~~~
+- 取消代理
+  ~~~shell
+  git config --global --unset http.proxy
+  git config --global --unset https.proxy
+  ~~~
