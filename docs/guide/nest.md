@@ -4354,4 +4354,441 @@ docker-compose up
 ~~~
 **其实不指定 networks 也可以，docker-compose 会创建个默认的。** 可以尝试将 networks 属性都注释掉，然后删掉容器和镜像，再重新启动试试。
 
+## Nest 中使用 Swagger
+安装 swagger 的包：
+~~~shell
+npm install --save @nestjs/swagger
+~~~
+在 main.ts 中添加：
+~~~ts
+async function bootstrap() {
+  //...
+  const config = new DocumentBuilder()  // 创建 config 配置
+          .setTitle('Test example')
+          .setDescription('The API description')
+          .setVersion('1.0')
+          .addTag('test')
+          .build();
+  const document = SwaggerModule.createDocument(app, config);   // 基于 config 配置创建文档
+  SwaggerModule.setup('doc', app, document);    // 启动并指定文档访问路径
+  //...
+}
+~~~
+给接口添加 parameters 的描述和 responses 的描述:
+~~~ts
+@ApiOperation({ summary: '测试 aaa',description: 'aaa 描述' })  // 接口的描述
+@ApiResponse({      // 响应内容的描述
+    status: HttpStatus.OK,
+    description: 'aaa 成功',
+    type: String
+})
+@ApiQuery({     // 接口参数的描述
+  name: 'page',   // 参数名
+  type: String,     // 参数类型
+  description: 'a1 param',  // 参数描述
+  required: false,  // 是否必传
+  example: '1111',  // 示例
+})
+@ApiQuery({
+  name: 'limit',
+  type: Number,
+  description: 'a2 param',
+  required: true,
+  example: 2222,
+})
+@Get('list')
+aaa(@Query('page') page, @Query('limit') limit) {
+    console.log(page, limit);
+    return 'select list success';
+}
+~~~
+`@ApiQuery` 用于定义查询参数，而 `@ApiParam` 用于定义路径参数和请求体参数。示例如下：
+~~~ts
+@Get(':id')
+@ApiOperation({ summary: 'Get user by ID' })
+@ApiResponse({
+  status: HttpStatus.OK,
+  description: 'bbb 成功',
+  type: String
+})
+@ApiResponse({  // id 不合法返回 401
+  status: HttpStatus.UNAUTHORIZED,
+  description: 'id 不合法'
+})
+@ApiParam({ 
+  name: 'id', 
+  description: 'User ID',
+  required: true,
+  example: 1,
+})
+getUserById(@Param('id') id: string) {
+  console.log(id);
+  if(id != 111) {  // id 不合法返回 401
+    throw new UnauthorizedException();
+  }
+  return 'select id info success';
+}
+~~~
+使用 dto 与 vo 来描述参数和返回值：
+~~~ts
+export class CccDto {
+  @ApiProperty({ 
+    name: 'aaa', // 参数名
+    enum: ['a', 'b', 'c'],  // 枚举类型
+    maxLength: 30,  // 最大长度
+    minLength: 2,   // 最小长度
+    required: true  // 是否必传
+  }) 
+  aaa: string;
+
+  // 表示可选，与 @ApiProperty({ required: false }) 等价
+  @ApiPropertyOptional({ 
+    name: 'bbb',
+    maximum: 60,    // 最大值
+    minimum: 40,    // 最小值
+    default: 50,    // 默认值
+    example: 55     // 示例
+  })     
+  bbb: number;
+  
+  @ApiProperty({ name: 'aaa' })
+  ccc: Array<string>;
+}
+~~~
+~~~ts
+export class CccVo {
+  @ApiProperty({ name: 'aaa' })
+  aaa: number;
+  
+  @ApiProperty({ name: 'bbb' })
+  bbb: number;
+}
+~~~
+~~~ts
+@ApiOperation({summary:'测试 ccc'})
+@ApiResponse({
+  status: HttpStatus.OK,
+  description: 'ccc 成功',
+  type: CccVo
+})
+@ApiBody({      // body 参数的描述
+  type: CccDto
+})
+@Post('ccc')
+ccc(@Body('ccc') ccc: CccDto) {
+  console.log(ccc);
+
+  const vo = new CccVo();
+  vo.aaa = 111;
+  vo.bbb = 222;
+  return vo;
+}
+~~~
+通过 @ApiTags 来给接口分组：
+~~~ts
+@ApiTags('user')
+@Controller('user')
+export class UserController{}
+// 或者
+@ApiTags('user')
+@Get('user/:id')
+getUser(@Param('id') id:string) {}
+
+@ApiTags('user')
+@Post('user/create')
+createUser(@Body('userInfo') userInfo:UserInfoDto) {}
+~~~
+添加认证方式，在需要认证的接口方法(handle)前加上对应的认证方式：
+~~~ts
+// 账号密码认证
+@ApiBasicAuth('basic')
+
+// JWT认证
+@ApiBearerAuth('bearer')
+
+// Cookie认证
+@ApiBasicAuth('cookie')
+~~~
+~~~ts
+// main.ts
+const config = new DocumentBuilder()
+  .setTitle('Test example')
+  .setDescription('The API description')
+  .setVersion('1.0')
+  .addTag('test')
+  .addBasicAuth({
+    type: 'http',
+    name: 'basic',
+    description: '用户名 + 密码'
+  })
+  .addCookieAuth('sid', {
+    type: 'apiKey',
+    name: 'cookie',
+    description: '基于 cookie 的认证'
+  })
+  .addBearerAuth({
+    type: 'http',
+    description: '基于 jwt 的认证',
+    name: 'bearer'
+  })
+  .build();
+~~~
+
 ## Nest 中使用邮件
+安装 nodemailer 包:
+~~~shell
+npm install --save nodemailer
+npm install --save-dev @types/nodemailer
+~~~
+添加 email 模块:
+~~~shell
+nest g resource email
+~~~
+EmailService 中编写发生邮件：
+~~~ts
+import { Injectable } from '@nestjs/common';
+import { createTransport, Transporter} from 'nodemailer';
+
+@Injectable()
+export class EmailService {
+
+    transporter: Transporter
+    
+    constructor() {
+        this.transporter = createTransport({
+            host: "smtp.qq.com",
+            port: 587,
+            secure: false,
+            auth: {
+                user: '你的邮箱',  // 发件人邮箱
+                pass: '你的授权码'    // 发件人邮箱授权码
+            },
+        });
+    }
+
+    async sendMail({ to, subject, html }) {
+      await this.transporter.sendMail({
+        from: {
+          name: '系统邮件',
+          address: '你的邮箱'
+        },
+        to,
+        subject,
+        html
+      });
+    }
+}
+~~~
+EmailController 中添加：
+~~~ts
+import { Controller, Get, Query } from '@nestjs/common';
+import { EmailService } from './email.service';
+
+@Controller('email')
+export class EmailController {
+  constructor(private readonly emailService: EmailService) {}
+
+  @Get('code')
+  async sendEmailCode(@Query("address") address) {
+    // 生成随机验证码
+    const code = Math.random().toString().slice(2,8);
+    await this.emailService.sendMail({
+      to: address,
+      subject: '登录验证码',
+      html: `<p>你的登录验证码是 ${code}</p>`
+    });
+    return '发送成功';
+  }
+}
+~~~
+使用配置模块将参数放入系统配置中，安装配置模块：
+~~~shell
+npm install --save @nestjs/config
+~~~
+在 AppModule 中加入：
+~~~ts
+@Module({
+  imports:[
+    //...
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: 'src/.env'
+    })
+    //...      
+  ]
+})
+~~~
+在 src/.env 中添加：
+~~~
+email_user=598670138@163.com
+email_password=123456
+~~~
+修改 EmailService ：
+~~~ts
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { createTransport, Transporter} from 'nodemailer';
+
+@Injectable()
+export class EmailService {
+
+    transporter: Transporter
+    
+    constructor(private configService: ConfigService) {
+      this.transporter = createTransport({
+          host: "smtp.qq.com",
+          port: 587,
+          secure: false,
+          auth: {
+              user: this.configService.get('email_user'),
+              pass: this.configService.get('email_password')
+          },
+      });
+    }
+
+    async sendMail({ to, subject, html }) {
+      await this.transporter.sendMail({
+        from: {
+          name: '系统邮件',
+          address: this.configService.get('email_user')
+        },
+        to,
+        subject,
+        html
+      });
+    }
+}
+~~~
+打包时我们需要将 .env 复制过去，修改nest-cli.json:
+~~~json
+{
+  "compilerOptions": {
+    "watchAssets": true,  // 是否监听同步 assets 指定文件的更新
+    "assets": ["*.env"]   // assets 只支持 src 下的文件复制
+  }
+}
+~~~
+使用 Redis 存储验证码，以用户邮箱地址为 key。创建个 redis 模块：
+~~~shell
+nest g resource redis  --no-spec
+~~~
+安装 redis 的包：
+~~~shell
+npm install redis --save
+~~~
+把 RedisModule 声明为全局模块，并导出 RedisService。然后添加一个 provider：
+~~~ts
+import { Global, Module } from '@nestjs/common';
+import { RedisService } from './redis.service';
+import { RedisController } from './redis.controller';
+import { createClient } from 'redis';
+
+@Global()
+@Module({
+  controllers: [RedisController],
+  providers: [RedisService, {
+    provide: 'REDIS_CLIENT',
+    async useFactory() {
+      const client = createClient({
+          socket: {
+              host: 'localhost',
+              port: 6379
+          }
+      });
+      await client.connect();
+      return client;
+    }
+  }],
+  exports: [RedisService]
+})
+export class RedisModule {}
+~~~
+在 RedisService 里封装 redis 的 get、set 方法：
+~~~ts
+import { Inject, Injectable } from '@nestjs/common';
+import { RedisClientType } from 'redis';
+
+@Injectable()
+export class RedisService {
+
+    @Inject('REDIS_CLIENT') 
+    private redisClient: RedisClientType;
+
+    async get(key: string) {
+        return await this.redisClient.get(key);
+    }
+
+    async set(key: string, value: string | number, ttl?: number) {
+        await this.redisClient.set(key, value);
+
+        if(ttl) {
+            await this.redisClient.expire(key, ttl);
+        }
+    }
+}
+~~~
+修改 EmailController：
+~~~ts
+import { Controller, Get, Inject, Query } from '@nestjs/common';
+import { RedisService } from 'src/redis/redis.service';
+import { EmailService } from './email.service';
+
+@Controller('email')
+export class EmailController {
+  constructor(private readonly emailService: EmailService) {}
+
+  @Inject()
+  private redisService: RedisService;
+
+  @Get('code')
+  async sendEmailCode(@Query("address") address) {
+    const code = Math.random().toString().slice(2,8);
+
+    await this.redisService.set(`captcha_${address}`, code, 5 * 60);
+
+    await this.emailService.sendMail({
+      to: address,
+      subject: '登录验证码',
+      html: `<p>你的登录验证码是 ${code}</p>`
+    });
+    return '发送成功';
+  }
+}
+~~~
+示例登录接口中进行验证：
+~~~ts
+@Inject(RedisService)
+private redisService: RedisService;
+
+@Post('login')
+async login(@Body() loginUserDto: LoginUserDto) {
+
+    const { email, code } = loginUserDto;
+
+    const codeInRedis = await this.redisService.get(`captcha_${email}`);
+
+    if(!codeInRedis) {
+      throw new UnauthorizedException('验证码已失效');
+    }
+    if(code !== codeInRedis) {
+      throw new UnauthorizedException('验证码不正确');
+    }
+
+    const user = await this.userService.findUserByEmail(email);
+
+    console.log(user);
+
+    return 'success';
+}
+~~~
+在 UserService 里实现下这个方法：
+~~~ts
+@InjectEntityManager()
+private entityManager: EntityManager;
+
+async findUserByEmail(email: string) {
+    return await this.entityManager.findOneBy(User, {
+      email
+    });
+}
+~~~
