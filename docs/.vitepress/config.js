@@ -142,6 +142,7 @@ function sidebarGuide() {
                 { text: 'Nvm', link: '/guide/nvm' },
                 { text: 'PM2', link: '/guide/pm2' },
                 { text: 'Git', link: '/guide/git' },
+                { text: 'PS', link: '/guide/ps' },
             ],
         },
     ];
