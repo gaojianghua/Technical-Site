@@ -2346,7 +2346,7 @@ session 里有个 count 的变量，每次访问加一，然后返回这个 coun
 ~~~shell
 nest start --watch
 ~~~
-可以使用postmain进行测试，每次请求返回的数据都不同，而且返回了一个 cookie 是 connect.sid，这个就是对应 session 的 id。因为 cookie 在请求的时候会自动带上，就可以实现请求的标识，给 http 请求加上状态。
+可以使用postman进行测试，每次请求返回的数据都不同，而且返回了一个 cookie 是 connect.sid，这个就是对应 session 的 id。因为 cookie 在请求的时候会自动带上，就可以实现请求的标识，给 http 请求加上状态。
 
 使用 JWT 需要引入 @nestjs/jwt 这个包
 ~~~shell
@@ -2418,7 +2418,7 @@ export class AppController {
 ~~~
 > 注入 response 对象之后，默认不会把返回值作为 body 了，需要设置 passthrough 为 true 才可以。
 
-使用 postmain 测试后可以看到，返回的响应确实带上了这个 header。下面让后面的请求需要带上这个 token，在服务端取出来，然后 +1 之后再放回去：
+使用 postman 测试后可以看到，返回的响应确实带上了这个 header。下面让后面的请求需要带上这个 token，在服务端取出来，然后 +1 之后再放回去：
 ~~~ts
 @Controller()
 export class AppController {
@@ -2458,6 +2458,14 @@ export class AppController {
   }
 }
 ~~~
+
+## Nest 中使用双 Token
+
+
+
+
+
+
 
 
 ## 实现 ACL 权限控制
