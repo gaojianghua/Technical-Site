@@ -2460,13 +2460,296 @@ export class AppController {
 ~~~
 
 ## Nest 中使用双 Token
+通常为了安全考虑会设置 `token` 有效期为 30 分钟，考虑到 `token` 失效后用户需要重新登录。这样频繁登录对用户体验不好，为了解决这个问题，我们一般会设置双 token：`access_token` 和 `refresh_token`。
+- **access_token** ：用于认证用户身份
+- **refresh_token** ：用来刷新token
 
+一般会设置 `refresh_token` 过期时间为7天，如果 `access_token` 过期，那就用 `refresh_token` 刷新下拿到新 `token`。
 
+创建个 nest 项目：
+~~~shell
+nest new access_token_and_refresh_token -p npm
+~~~
+添加 user 模块：
+~~~shell
+nest g resource user --no-spec
+~~~
+安装 typeorm 的依赖：
+~~~shell
+npm install --save @nestjs/typeorm typeorm mysql2
+~~~
+安装 JWT 包：
+~~~shell
+npm install --save @nestjs/jwt
+~~~
+AppModule 中引入 TypeOrmModule：
+~~~ts
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+import { JwtModule } from '@nestjs/jwt';
+import { User } from './user/entity/user.entity'
+import { UserModule } from './user/user.module'
 
+@Module({
+  imports: [
+    UserModule,
+    JwtModule.register({
+      global: true,
+      signOptions: {
+        expiresIn: '30m'
+      },
+      secret: 'gao'
+    }),
+    TypeOrmModule.forRoot({
+      type: "mysql",
+      host: "localhost",
+      port: 3306,
+      username: "root",
+      password: "guang",
+      database: "refresh_token_test",   // 需要手动新建此数据库
+      synchronize: true,
+      logging: true,
+      entities: [User],
+      poolSize: 10,
+      connectorPackage: 'mysql2',
+      extra: {
+          authPlugin: 'sha256_password',
+      }
+    }),
+  ],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}
+~~~
+新建 User 的 entity：
+~~~ts
+import { Column, Entity, PrimaryGeneratedColumn } from "typeorm";
 
+@Entity()
+export class User {
+    @PrimaryGeneratedColumn()
+    id: number;
 
+    @Column({
+        length: 50
+    })
+    username: string;
 
+    @Column({
+        length: 50
+    })
+    password: string;
+}
+~~~
+UserController 中添加 login 的 post 接口：
+~~~ts
+@Controller()
+export class UserController {
+    @Inject(JwtService)
+    private jwtService: JwtService;
 
+    @Post('login')
+    async login(@Body() loginUser: LoginUserDto) {
+        const user = await this.userService.login(loginUser);
+
+        const access_token = this.jwtService.sign({
+            userId: user.id,
+            username: user.username,
+        }, {
+            expiresIn: '30m'
+        });
+
+        const refresh_token = this.jwtService.sign({
+            userId: user.id
+        }, {
+            expiresIn: '7d'
+        });
+
+        return {
+            access_token,
+            refresh_token
+        }
+    }
+}
+~~~
+创建 src/user/dto/login-user.dto.ts：
+~~~ts
+export class LoginUserDto {
+    username: string;
+    password: string;
+}
+~~~
+UserService 中里添加 login 方法：
+~~~ts
+import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { InjectEntityManager } from '@nestjs/typeorm';
+import { EntityManager } from 'typeorm';
+import { LoginUserDto } from './dto/login-user.dto';
+import { User } from './entity/user.entity';
+
+@Injectable()
+export class UserService {
+
+    @InjectEntityManager()
+    private entityManager: EntityManager;
+
+    async login(loginUserDto: LoginUserDto) {
+        const user = await this.entityManager.findOne(User, {
+            where: {
+                username: loginUserDto.username
+            }
+        });
+
+        if(!user) {
+            throw new HttpException('用户不存在', HttpStatus.OK);
+        }
+
+        if(user.password !== loginUserDto.password) {
+            throw new HttpException('密码错误', HttpStatus.OK);
+        }
+
+        return user;
+    }
+}
+~~~
+实现 LoginGuard 来做登录鉴权：
+~~~shell
+nest g guard login --flat --no-spec
+~~~
+~~~ts
+import { JwtService } from '@nestjs/jwt';
+import { CanActivate, ExecutionContext, Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { Request } from 'express';
+import { Observable } from 'rxjs';
+
+@Injectable()
+export class LoginGuard implements CanActivate {
+
+  @Inject(JwtService)
+  private jwtService: JwtService;
+
+  canActivate(
+    context: ExecutionContext,
+  ): boolean | Promise<boolean> | Observable<boolean> {
+
+    const request: Request = context.switchToHttp().getRequest();
+
+    const authorization = request.headers.authorization;
+
+    if(!authorization) {
+      throw new UnauthorizedException('用户未登录');
+    }
+
+    try{
+      const token = authorization.split(' ')[1];
+      const data = this.jwtService.verify(token);
+
+      return true;
+    } catch(e) {
+      throw new UnauthorizedException('token 失效，请重新登录');
+    }
+  }
+}
+~~~
+新建刷新token的接口：
+~~~ts
+@Get('refresh')
+async refresh(@Query('refresh_token') refreshToken: string)
+{
+    try {
+        const data = this.jwtService.verify(refreshToken);
+
+        const user = await this.userService.findUserById(data.userId);
+
+        const access_token = this.jwtService.sign({
+            userId: user.id,
+            username: user.username,
+        }, {
+            expiresIn: '30m'
+        });
+
+        const refresh_token = this.jwtService.sign({
+            userId: user.id
+        }, {
+            expiresIn: '7d'
+        });
+
+        return {
+            access_token,
+            refresh_token
+        }
+    } catch (e) {
+        throw new UnauthorizedException('token 已失效，请重新登录');
+    }
+}
+~~~
+UserService 中实现 findUserById 的方法：
+~~~ts
+async findUserById(userId: number) {
+    return await this.entityManager.findOne(User, {
+        where: {
+            id: userId
+        }
+    });
+}
+~~~
+UserController 中新增需要登录后才能访问的接口：
+~~~ts
+// 以此接口测试登录功能
+@Get('userInfo')
+@UseGuards(LoginGuard)
+getUserInfo() {
+    return 'gaojianghua';
+}
+~~~
+前端刷新 token 可以放在 `axios` 中， 示例：
+~~~ts
+async function refreshToken() {
+  const res = await axios.get('http://localhost:3000/user/refresh', {
+      params: {
+        refresh_token: localStorage.getItem('refresh_token')
+      }
+  });
+  localStorage.setItem('access_token', res.data.access_token);
+  localStorage.setItem('refresh_token', res.data.refresh_token);
+  return res;
+}
+
+axios.interceptors.request.use(function (config) {
+  const accessToken = localStorage.getItem('access_token');
+
+  if(accessToken) {
+    config.headers.authorization = 'Bearer ' + accessToken;
+  }
+  return config;
+})
+
+axios.interceptors.response.use(
+  (response) => {
+    return response;
+  },
+  async (error) => {
+    let { data, config } = error.response;
+
+    if (data.statusCode === 401 && !config.url.includes('/user/refresh')) {
+        
+      const res = await refreshToken();
+
+      if(res.status === 200) {
+        return axios(config);
+      } else {
+        throw res.data
+      }
+        
+    } else {
+      return error.response;
+    }
+  }
+)
+~~~
 
 ## 实现 ACL 权限控制
 
