@@ -2751,6 +2751,187 @@ axios.interceptors.response.use(
 )
 ~~~
 
+## 基于 Redis 实现分布式 Session
+session 是在服务端保存用户数据，然后通过 cookie 返回 sessionId。cookie 在每次请求的时候会自动带上，服务端就能根据 sessionId 找到对应的 session，拿到用户的数据。
+
+jwt 是把用户数据保存在加密后的 token 里返回，客户端只要在 authorization 的 header 里带上 token，服务端就能从中解析出用户数据。
+
+jwt 天然支持分布式的，任何一个服务器都能从 token 出解析出用户数据，但是 session 的方式不行，它的数据是存在单台服务器的内存的，如果再请求另一台服务器就找不到对应的 session 了。
+
+分布式 session 就是在多台服务器都可以访问到同一个 session。 我们可以在 redis 里存储它，接下我们实现一下。
+
+新建项目：
+~~~shell
+nest new redis-session-test -p npm
+~~~
+安装 redis 的包：
+~~~shell
+npm install --save redis
+~~~
+创建 redis 模块：
+~~~shell
+nest g module redis
+nest g service redis
+~~~
+RedisModule 中创建连接 redis 的 provider，导出 RedisService，并把这个模块标记为 @Global 模块：
+~~~ts
+import { Global, Module } from '@nestjs/common';
+import { createClient } from 'redis';
+import { RedisService } from './redis.service';
+
+@Global()
+@Module({
+  providers: [
+    RedisService,
+    {
+      provide: 'REDIS_CLIENT',
+      async useFactory() {
+        const client = createClient({
+            socket: {
+                host: 'localhost',
+                port: 6379
+            }
+        });
+        await client.connect();
+        return client;
+      }
+    }
+  ],
+  exports: [RedisService]
+})
+export class RedisModule {}
+~~~
+RedisService 中注入 REDIS_CLIENT，并封装一些方法：
+~~~ts
+import { Inject, Injectable } from '@nestjs/common';
+import { RedisClientType } from 'redis';
+
+@Injectable()
+export class RedisService {
+
+    @Inject('REDIS_CLIENT') 
+    private redisClient: RedisClientType;
+
+    async hashGet(key: string) {
+        return await this.redisClient.hGetAll(key);
+    }
+    // Record<string, any> 是对象类型的意思
+    async hashSet(key: string, obj: Record<string, any>, ttl?: number) {
+        for(let name in obj) {
+            await this.redisClient.hSet(key, name, obj[name]);
+        }
+
+        if(ttl) {
+            await this.redisClient.expire(key, ttl);
+        }
+    }
+}
+~~~
+因为我们要操作的是对象结构，比较适合使用 hash。redis 的 hash 有这些方法：
+- `HSET key field value`： 设置指定哈希表 key 中字段 field 的值为 value。
+- `HGET key field`：获取指定哈希表 key 中字段 field 的值。
+- `HMSET key field1 value1 field2 value2 ...`：同时设置多个字段的值到哈希表 key 中。
+- `HMGET key field1 field2 ...`：同时获取多个字段的值从哈希表 key 中。
+- `HGETALL key`：获取哈希表 key 中所有字段和值。
+- `HDEL key field1 field2 ...`：删除哈希表 key 中一个或多个字段。
+- `HEXISTS key field`：检查哈希表 key 中是否存在字段 field。
+- `HKEYS key`：获取哈希表 key 中的所有字段。
+- `HVALUES key`：获取哈希表 key 中所有的值。 
+- `HLEN key`：获取哈希表 key 中字段的数量。
+- `HINCRBY key field increment`：将哈希表 key 中字段 field 的值增加 increment。
+- `HSETNX key field value`：只在字段 field 不存在时，设置其值为 value。
+
+创建 session 模块：
+~~~shell
+nest g module session
+nest g service session --no-spec
+~~~
+导出 SessionService，并且设置 SessionModule 为 Global：
+~~~ts
+import { Global, Module } from '@nestjs/common';
+import { SessionService } from './session.service';
+
+@Global()
+@Module({
+  providers: [SessionService],
+  exports: [SessionService]
+})
+export class SessionModule {}
+~~~
+实现 SessionService：
+~~~ts
+import { Inject, Injectable } from '@nestjs/common';
+import { RedisService } from 'src/redis/redis.service';
+
+@Injectable()
+export class SessionService {
+
+    @Inject(RedisService)
+    private redisService: RedisService;
+    // 使用 sid_xx 的 key 在 redis 里创建 string 的数据结构
+    async setSession(sid: string, value: Record<string, any>, ttl: number = 30 * 60) {
+        if(!sid) {
+            // 没有传 sid 则随机生成一个
+            sid = this.generateSid();
+        }
+        await this.redisService.hashSet(`sid_${sid}`, value, ttl);
+        return sid;
+    }
+    // 使用 sid_xx 从 redis 中取值
+    async getSession<SessionType extends Record<string,any>>(sid: string): Promise<SessionType>;
+    async getSession(sid: string) {
+        return await this.redisService.hashGet(`sid_${sid}`);
+    }
+    // 生成随机的 sessionId
+    generateSid() {
+        return Math.random().toString().slice(2,12);
+    }
+}
+~~~
+AppController 中添加方法测试下：
+~~~ts
+@Inject(SessionService)
+private sessionService: SessionService;
+
+@Get('count')
+async count(@Req() req: Request, @Res() res: Response) {
+    const sid = req.cookies?.sid;
+    // 因为 redis 虽然可以存整数、浮点数，但是它会转为 string 来存，所以取到的是 string，需要自己转换一下。
+    const session = await this.sessionService.getSession<{count:string}>(sid);
+}
+~~~
+安装 cookie-parser 的包：
+~~~shell
+npm install --save cookie-parser
+~~~
+main.ts 里启用：
+~~~ts
+import * as cookieParser from 'cookie-parser'
+
+app.use(cookieParser())
+~~~
+SessionController 中实现计数逻辑进行测试：
+~~~ts
+@Inject(SessionService)
+private sessionService: SessionService;
+
+@Get('count')
+async count(@Req() req: Request, @Res({ passthrough: true}) res: Response) {
+    const sid = req.cookies?.sid;
+
+    const session = await this.sessionService.getSession<{count: string}>(sid);
+
+    const curCount = session.count ? parseInt(session.count) + 1 : 1;
+    const curSid = await this.sessionService.setSession(sid, {
+      count: curCount
+    });
+
+    res.cookie('sid', curSid, { maxAge: 1800000 });
+    return curCount;
+}
+~~~
+现在基于 redis 存储的 session，不管请求到了哪台服务器，都能从 redis 中取出对应的 session 从而拿到登录状态、用户数据。
+
 ## 实现 ACL 权限控制
 
 新建数据库：
