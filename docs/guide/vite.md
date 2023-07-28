@@ -7835,6 +7835,511 @@ async updateModuleInfo(
 至此，模块间的依赖关系就成功进行绑定了。随着越来越多的模块经过 `vite:import-analysis` 的 transform 钩子处理，所有模块之间的依赖关系会被记录下来，整个依赖图的信息也就被补充完整了。
 
 #### 服务端收集更新模块
+刚才我们分析了模块依赖图的实现，接下来再看看 Vite 服务端如何根据这个图结构收集更新模块。
+
+首先， Vite 在服务启动时会通过 `chokidar` 新建文件监听器:
+~~~ts
+// packages/vite/src/node/server/index.ts
+import chokidar from 'chokidar'
+
+// 监听根目录下的文件
+const watcher = chokidar.watch(path.resolve(root));
+// 修改文件
+watcher.on('change', async (file) => {
+  file = normalizePath(file)
+  moduleGraph.onFileChange(file)
+  await handleHMRUpdate(file, server)
+})
+// 新增文件
+watcher.on('add', (file) => {
+  handleFileAddUnlink(normalizePath(file), server)
+})
+// 删除文件
+watcher.on('unlink', (file) => {
+  handleFileAddUnlink(normalizePath(file), server, true)
+})
+~~~
+然后，我们分别以修改文件、新增文件和删除文件这几个方面来介绍 HMR 在服务端的逻辑。
+
+**1. 修改文件**
+
+当业务代码中某个文件被修改时，Vite 首先会调用`moduleGraph`的`onFileChange`对模块图中的对应节点进行`清除缓存`的操作:
+~~~ts
+class ModuleGraph {
+  onFileChange(file: string): void {
+    const mods = this.getModulesByFile(file)
+    if (mods) {
+      const seen = new Set<ModuleNode>()
+      // 将模块的缓存信息去除
+      mods.forEach((mod) => {
+        this.invalidateModule(mod, seen)
+      })
+    }
+  }
+
+  invalidateModule(mod: ModuleNode, seen: Set<ModuleNode> = new Set()): void {
+    mod.info = undefined
+    mod.transformResult = null
+    mod.ssrTransformResult = null
+  }
+}
+~~~
+然后正式进入 HMR 收集更新的阶段，主要逻辑在`handleHMRUpdate`函数中，代码简化后如下:
+~~~ts
+// packages/vite/src/node/server/hmr.ts
+export async function handleHMRUpdate(
+  file: string,
+  server: ViteDevServer
+): Promise<any> {
+  const { ws, config, moduleGraph } = server
+  const shortFile = getShortName(file, config.root)
+
+  // 1. 配置文件/环境变量声明文件变化，直接重启服务
+  // 代码省略
+
+  // 2. 客户端注入的文件(vite/dist/client/client.mjs)更改
+  // 给客户端发送 full-reload 信号，使之刷新页面
+  if (file.startsWith(normalizedClientDir)) {
+    ws.send({
+      type: 'full-reload',
+      path: '*'
+    })
+    return
+  }
+  // 3. 普通文件变动
+  // 获取需要更新的模块
+  const mods = moduleGraph.getModulesByFile(file)
+  const timestamp = Date.now()
+  // 初始化 HMR 上下文对象
+  const hmrContext: HmrContext = {
+    file,
+    timestamp,
+    modules: mods ? [...mods] : [],
+    read: () => readModifiedFile(file),
+    server
+  }
+  // 依次执行插件的 handleHotUpdate 钩子，拿到插件处理后的 HMR 模块
+  for (const plugin of config.plugins) {
+    if (plugin.handleHotUpdate) {
+      const filteredModules = await plugin.handleHotUpdate(hmrContext)
+      if (filteredModules) {
+        hmrContext.modules = filteredModules
+      }
+    }
+  }
+  // updateModules——核心处理逻辑
+  updateModules(shortFile, hmrContext.modules, timestamp, server)
+}
+~~~
+从中可以看到，Vite 对于不同类型的文件，热更新的策略有所不同：
+- 对于配置文件和环境变量声明文件的改动，Vite 会直接重启服务器。
+- 对于客户端注入的文件(vite/dist/client/client.mjs)的改动，Vite 会给客户端发送`full-reload`信号，让客户端刷新页面。
+- 对于普通文件改动，Vite 首先会获取需要热更新的模块，然后对这些模块依次查找热更新边界，然后将模块更新的信息传给客户端。
+
+其中，对于普通文件的热更新边界查找的逻辑，主要集中在`updateModules`函数中，让我们来看看具体的实现:
+~~~ts
+function updateModules(
+  file: string,
+  modules: ModuleNode[],
+  timestamp: number,
+  { config, ws }: ViteDevServer
+) {
+  const updates: Update[] = []
+  const invalidatedModules = new Set<ModuleNode>()
+  let needFullReload = false
+  // 遍历需要热更新的模块
+  for (const mod of modules) {
+    invalidate(mod, timestamp, invalidatedModules)
+    if (needFullReload) {
+      continue
+    }
+    // 初始化热更新边界集合
+    const boundaries = new Set<{
+      boundary: ModuleNode
+      acceptedVia: ModuleNode
+    }>()
+    // 调用 propagateUpdate 函数，收集热更新边界
+    const hasDeadEnd = propagateUpdate(mod, boundaries)
+    // 返回值为 true 表示需要刷新页面，否则局部热更新即可
+    if (hasDeadEnd) {
+      needFullReload = true
+      continue
+    }
+    // 记录热更新边界信息
+    updates.push(
+      ...[...boundaries].map(({ boundary, acceptedVia }) => ({
+        type: `${boundary.type}-update` as Update['type'],
+        timestamp,
+        path: boundary.url,
+        acceptedPath: acceptedVia.url
+      }))
+    )
+  }
+  // 如果被打上 full-reload 标识，则让客户端强制刷新页面
+  if (needFullReload) {
+    ws.send({
+      type: 'full-reload'
+    })
+  } else {
+    config.logger.info(
+      updates
+        .map(({ path }) => chalk.green(`hmr update `) + chalk.dim(path))
+        .join('\n'),
+      { clear: true, timestamp: true }
+    )
+    ws.send({
+      type: 'update',
+      updates
+    })
+  }
+}
+
+// 热更新边界收集
+function propagateUpdate(
+  node: ModuleNode,
+  boundaries: Set<{
+    boundary: ModuleNode
+    acceptedVia: ModuleNode
+  }>,
+  currentChain: ModuleNode[] = [node]
+): boolean {
+   // 接受自身模块更新
+   if (node.isSelfAccepting) {
+    boundaries.add({
+      boundary: node,
+      acceptedVia: node
+    })
+    return false
+  }
+  // 入口模块
+  if (!node.importers.size) {
+    return true
+  }
+  // 遍历引用方
+  for (const importer of node.importers) {
+    const subChain = currentChain.concat(importer)
+    // 如果某个引用方模块接受了当前模块的更新
+    // 那么将这个引用方模块作为热更新的边界
+    if (importer.acceptedHmrDeps.has(node)) {
+      boundaries.add({
+        boundary: importer,
+        acceptedVia: node
+      })
+      continue
+    }
+
+    if (currentChain.includes(importer)) {
+      // 出现循环依赖，需要强制刷新页面
+      return true
+    }
+    // 递归向更上层的引用方寻找热更新边界
+    if (propagateUpdate(importer, boundaries, subChain)) {
+      return true
+    }
+  }
+  return false
+}
+~~~
+可以看到，当热更新边界的信息收集完成后，服务端会将这些信息推送给客户端，从而完成局部的模块更新。
+
+**2. 新增和删除文件**
+
+对于新增和删除文件，Vite 也通过`chokidar`监听了相应的事件:
+~~~ts
+watcher.on('add', (file) => {
+  handleFileAddUnlink(normalizePath(file), server)
+})
+
+watcher.on('unlink', (file) => {
+  handleFileAddUnlink(normalizePath(file), server, true)
+})
+~~~
+接下来，我们就来浏览一下`handleFileAddUnlink`的逻辑，代码简化后如下:
+~~~ts
+export async function handleFileAddUnlink(
+  file: string,
+  server: ViteDevServer,
+  isUnlink = false
+): Promise<void> {
+    const modules = [...(server.moduleGraph.getModulesByFile(file) ?? [])]
+
+    if (modules.length > 0) {
+        updateModules(
+            getShortName(file, server.config.root),
+            modules,
+            Date.now(),
+            server
+        )
+    }
+}
+~~~
+不难发现，这个函数同样是调用`updateModules`完成模块热更新边界的查找和更新信息的推送，而`updateModules`在上文中已经分析过，这里就不再赘述了
+
+#### 客户端派发更新
+从前面的内容中，我们知道，服务端会监听文件的改动，然后计算出对应的热更新信息，通过 WebSocket 将更新信息传递给客户端，具体来说，会给客户端发送如下的数据:
+~~~ts
+{
+  type: "update",
+  update: [
+    {
+      // 更新类型，也可能是 `css-update`
+      type: "js-update",
+      // 更新时间戳
+      timestamp: 1650702020986,
+      // 热更模块路径
+      path: "/src/main.ts",
+      // 接受的子模块路径
+      acceptedPath: "/src/render.ts"
+    }
+  ]
+}
+// 或者 full-reload 信号
+{
+    type: "full-reload"
+}
+~~~
+那么客户端是如何接受这些信息并进行模块更新的呢？
+
+从上一节我们知道，Vite 在开发阶段会默认在 HTML 中注入一段客户端的脚本，即:
+~~~html
+<script type="module" src="/@vite/client"></script>
+~~~
+在启动任意一个 Vite 项目后，我们可以在浏览器查看具体的脚本内容，从中你可以发现，客户端的脚本中创建了 WebSocket 客户端，并与 Vite Dev Server 中的 WebSocket 服务端([点击查看实现](https://github.com/vitejs/vite/blob/v2.7.0/packages/vite/src/node/server/ws.ts#L21))建立双向连接:
+~~~ts
+const socketProtocol = null || (location.protocol === 'https:' ? 'wss' : 'ws');
+const socketHost = `${null || location.hostname}:${"3000"}`;
+const socket = new WebSocket(`${socketProtocol}://${socketHost}`, 'vite-hmr');
+~~~
+随后会监听 socket 实例的`message`事件，接收到服务端传来的更新信息:
+~~~ts
+socket.addEventListener('message', async ({ data }) => {
+  handleMessage(JSON.parse(data));
+});
+~~~
+接下来分析 handleMessage 函数:
+~~~ts
+async function handleMessage(payload: HMRPayload) {
+  switch (payload.type) {
+    case 'connected':
+      console.log(`[vite] connected.`)
+      // 心跳检测
+      setInterval(() => socket.send('ping'), __HMR_TIMEOUT__)
+      break
+    case 'update':
+      payload.updates.forEach((update) => {
+        if (update.type === 'js-update') {
+          queueUpdate(fetchUpdate(update))
+        } else {
+          // css-update
+          // 省略实现
+          console.log(`[vite] css hot updated: ${path}`)
+        }
+      })
+      break
+    case 'full-reload':
+      // 刷新页面
+      location.reload()
+    // 省略其它消息类型
+  }
+}
+~~~
+我们重点关注 js 的更新逻辑，即下面这行代码:
+~~~ts
+queueUpdate(fetchUpdate(update))
+~~~
+先来看看queueUpdate和fetchUpdate这两个函数的实现:
+~~~ts
+let pending = false
+let queued: Promise<(() => void) | undefined>[] = []
+
+// 批量任务处理，不与具体的热更新行为挂钩，主要起任务调度作用
+async function queueUpdate(p: Promise<(() => void) | undefined>) {
+  queued.push(p)
+  if (!pending) {
+    pending = true
+    await Promise.resolve()
+    pending = false
+    const loading = [...queued]
+    queued = []
+    ;(await Promise.all(loading)).forEach((fn) => fn && fn())
+  }
+}
+
+// 派发热更新的主要逻辑
+async function fetchUpdate({ path, acceptedPath, timestamp }: Update) {
+  // 后文会介绍 hotModuleMap 的作用，你暂且不用纠结实现，可以理解为 HMR 边界模块相关的信息
+  const mod = hotModulesMap.get(path)
+  const moduleMap = new Map()
+  const isSelfUpdate = path === acceptedPath
+
+  // 1. 整理需要更新的模块集合
+  const modulesToUpdate = new Set<string>()
+  if (isSelfUpdate) {
+    // 接受自身更新
+    modulesToUpdate.add(path)
+  } else {
+    // 接受子模块更新
+    for (const { deps } of mod.callbacks) {
+      deps.forEach((dep) => {
+        if (acceptedPath === dep) {
+          modulesToUpdate.add(dep)
+        }
+      })
+    }
+  }
+  // 2. 整理需要执行的更新回调函数
+  // 注： mod.callbacks 为 import.meta.hot.accept 中绑定的更新回调函数，后文会介绍
+  const qualifiedCallbacks = mod.callbacks.filter(({ deps }) => {
+    return deps.some((dep) => modulesToUpdate.has(dep))
+  })
+  // 3. 对将要更新的模块进行失活操作，并通过动态 import 拉取最新的模块信息
+  await Promise.all(
+    Array.from(modulesToUpdate).map(async (dep) => {
+      const disposer = disposeMap.get(dep)
+      if (disposer) await disposer(dataMap.get(dep))
+      const [path, query] = dep.split(`?`)
+      try {
+        const newMod = await import(
+          /* @vite-ignore */
+          base +
+            path.slice(1) +
+            `?import&t=${timestamp}${query ? `&${query}` : ''}`
+        )
+        moduleMap.set(dep, newMod)
+      } catch (e) {
+        warnFailedFetch(e, dep)
+      }
+    })
+  )
+  // 4. 返回一个函数，用来执行所有的更新回调
+  return () => {
+    for (const { deps, fn } of qualifiedCallbacks) {
+      fn(deps.map((dep) => moduleMap.get(dep)))
+    }
+    const loggedPath = isSelfUpdate ? path : `${acceptedPath} via ${path}`
+    console.log(`[vite] hot updated: ${loggedPath}`)
+  }
+}
+~~~
+对热更新的边界模块来讲，我们需要在客户端获取这些信息:
+- 边界模块所接受(accept)的模块
+- accept 的模块触发更新后的回调
+
+在 `vite:import-analysis` 插件中，会给包含热更新逻辑的模块注入一些工具代码，`createHotContext` 同样是客户端脚本中的一个工具函数，我们来看看它主要的实现:
+~~~ts
+const hotModulesMap = new Map<string, HotModule>()
+
+export const createHotContext = (ownerPath: string) => {
+  // 将当前模块的接收模块信息和更新回调注册到 hotModulesMap
+  function acceptDeps(deps: string[], callback: HotCallback['fn'] = () => {}) {
+    const mod: HotModule = hotModulesMap.get(ownerPath) || {
+      id: ownerPath,
+      callbacks: []
+    }
+    mod.callbacks.push({
+      deps,
+      fn: callback
+    })
+    hotModulesMap.set(ownerPath, mod)
+  }
+  return {
+    // import.meta.hot.accept
+    accept(deps: any, callback?: any) {
+      if (typeof deps === 'function' || !deps) {
+        acceptDeps([ownerPath], ([mod]) => deps && deps(mod))
+      } else if (typeof deps === 'string') {
+        acceptDeps([deps], ([mod]) => callback && callback(mod))
+      } else if (Array.isArray(deps)) {
+        acceptDeps(deps, callback)
+      } else {
+        throw new Error(`invalid hot.accept() usage.`)
+      }
+    },
+    // import.meta.hot.dispose
+    // import.meta.hot.invalidate
+    // 省略更多方法的实现
+  }
+}
+~~~
+因此，Vite 给每个热更新边界模块注入的工具代码主要有两个作用:
+- 注入 import.meta.hot 对象的实现
+- 将当前模块 accept 过的模块和更新回调函数记录到 hotModulesMap 表中
+
+而前面所说的 `fetchUpdate` 函数则是通过 `hotModuleMap` 来获取边界模块的相关信息，在 accept 的模块发生变动后，通过动态 import 拉取最新的模块内容，然后返回更新回调，让`queueUpdate`这个调度函数执行更新回调，从而完成派发更新的过程。至此，HMR 的过程就结束了。
+
+
+## 手写 Vite
+在开始代码实战之前，先给大家梳理一下需要完成的模块和功能，让大家有一个整体的认知:
+1. 首先，我们会进行开发环境的搭建，安装必要的依赖，并搭建项目的构建脚本，同时完成 cli 工具的初始化代码。
+
+2. 然后我们正式开始实现`依赖预构建`的功能，通过 Esbuild 实现依赖扫描和依赖构建的功能。
+
+3. 接着开始搭建 Vite 的插件机制，也就是开发 `PluginContainer` 和 `PluginContext` 两个主要的对象。
+
+4. 搭建完插件机制之后，我们将会开发一系列的插件来实现 no-bundle 服务的编译构建能力，包括入口 HTML 处理、 TS/TSX/JS/TSX 编译、CSS 编译和静态资源处理。
+
+5. 最后，我们会实现一套系统化的模块热更新的能力，从搭建模块依赖图开始，逐步实现 HMR 服务端和客户端的开发。
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/97c40a3172e54cc493db001f1879e025~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
+
+#### 搭建开发环境
+首先，你可以执行pnpm init -y来初始化项目，然后安装一些必要的依赖，执行命令如下:
+~~~shell
+# 运行时依赖
+pnpm i cac chokidar connect debug es-module-lexer esbuild fs-extra magic-string picocolors resolve rollup sirv ws -S
+
+# 开发环境依赖
+pnpm i @types/connect @types/debug @types/fs-extra @types/resolve @types/ws tsup
+~~~
+Vite 本身使用的是 Rollup 进行自身的打包，但之前给大家介绍的 tsup 也能够实现库打包的功能，并且内置 esbuild 进行提速，性能上更加强悍，因此在这里我们使用 tsup 进行项目的构建。
+
+为了接入 tsup 打包功能，你需要在 package.json 中加入这些命令:
+~~~json
+{
+  "scripts": {
+    "start": "tsup --watch",
+    "build": "tsup --minify"
+  }
+}
+~~~
+同时，你需要在项目根目录新建`tsconfig.json`和`tsup.config.ts`这两份配置文件，内容分别如下:
+~~~json
+// tsconfig.json
+{
+  "compilerOptions": {
+    // 支持 commonjs 模块的 default import，如 import path from 'path'
+    // 否则只能通过 import * as path from 'path' 进行导入
+    "esModuleInterop": true,
+    "target": "ES2020",
+    "moduleResolution": "node",
+    "module": "ES2020",
+    "strict": true
+  }
+}
+~~~
+~~~json
+// tsup.config.ts
+import { defineConfig } from "tsup";
+
+export default defineConfig({
+  // 后续会增加 entry
+  entry: {
+    index: "src/node/cli.ts",
+  },
+  // 产物格式，包含 esm 和 cjs 格式
+  format: ["esm", "cjs"],
+  // 目标语法
+  target: "es2020",
+  // 生成 sourcemap
+  sourcemap: true,
+  // 没有拆包的需求，关闭拆包能力
+  splitting: false,
+});
+~~~
+
+
+
+
 
 
 
