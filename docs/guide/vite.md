@@ -10335,14 +10335,1915 @@ import.meta.hot.prune(() => removeStyle(id));`.trim();
 ~~~shell
 pnpm i vitest -D
 ~~~
+新建 `src/__test__` 目录，之后所有的测试代码都会放到这个目录中。我们不妨先尝试编写一个测试文件:
+~~~ts
+// src/__test__/example.test.ts
+import { describe, test, expect } from "vitest";
 
+describe("example test", () => {
+  test("should return correct result", () => {
+    expect(2 + 2).toBe(4);
+  });
+});
+~~~
+然后在`package.json`中增加如下的 `scripts`:
+~~~json
+"test": "vitest"
+~~~
+接着在命令行执行 `pnpm test`，如果你可以看到如下的终端界面，说明测试环境已经搭建成功:
 
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/b77385f8d8da4e5689a97471d4a1b0b2~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
 
+### 词法分析器开发
+接下来，我们正式进入 AST 解析器的开发，主要分为两个部分来进行: **词法分析器**和**语法分析器**。
 
+首先是**词法分析器**，也叫分词器(Tokenizer)，它的作用是将代码划分为一个个词法单元，便于进行后续的语法分析。比如下面的这段代码:
+~~~ts
+let foo = function() {}
+~~~
+在经过分词之后，代码会被切分为如下的 token 数组:
+~~~ts
+['let', 'foo', '=', 'function', '(', ')', '{', '}']
+~~~
+从中你可以看到，原本一行普通的代码字符串被拆分成了拥有语法属性的 token 列表，不同的 token 之间也存在千丝万缕的联系，而后面所要介绍的**语法分析器**，就是来梳理各个 token 之间的联系，整理出 AST 数据结构。
 
+当下我们所要实现的词法分析器，本质上是**对代码字符串进行逐个字符的扫描，然后根据一定的语法规则进行分组**。其中，涉及到几个关键的步骤:
+- 确定语法规则，包括语言内置的关键词、单字符、分隔符等
+- 逐个代码字符扫描，根据语法规则进行 token 分组
 
+接下来我们以一个简单的语法为例，来初步实现如上的关键流程。需要解析的示例代码如下:
+~~~ts
+let foo = function() {}
+~~~
+#### 1. 确定语法规则
+新建`src/Tokenizer.ts`，首先声明一些必要的类型:
+~~~ts
+export enum TokenType {
+  // let
+  Let = "Let",
+  // =
+  Assign = "Assign",
+  // function
+  Function = "Function",
+  // 变量名
+  Identifier = "Identifier",
+  // (
+  LeftParen = "LeftParen",
+  // )
+  RightParen = "RightParen",
+  // {
+  LeftCurly = "LeftCurly",
+  // }
+  RightCurly = "RightCurly",
+}
 
+export type Token = {
+  type: TokenType;
+  value?: string;
+  start: number;
+  end: number;
+  raw?: string;
+};
+~~~
+然后定义 Token 的生成器对象:
+~~~ts
+const TOKENS_GENERATOR: Record<string, (...args: any[]) => Token> = {
+  let(start: number) {
+    return { type: TokenType.Let, value: "let", start, end: start + 3 };
+  },
+  assign(start: number) {
+    return { type: TokenType.Assign, value: "=", start, end: start + 1 };
+  },
+  function(start: number) {
+    return {
+      type: TokenType.Function,
+      value: "function",
+      start,
+      end: start + 8,
+    };
+  },
+  leftParen(start: number) {
+    return { type: TokenType.LeftParen, value: "(", start, end: start + 1 };
+  },
+  rightParen(start: number) {
+    return { type: TokenType.RightParen, value: ")", start, end: start + 1 };
+  },
+  leftCurly(start: number) {
+    return { type: TokenType.LeftCurly, value: "{", start, end: start + 1 };
+  },
+  rightCurly(start: number) {
+    return { type: TokenType.RightCurly, value: "}", start, end: start + 1 };
+  },
+  identifier(start: number, value: string) {
+    return {
+      type: TokenType.Identifier,
+      value,
+      start,
+      end: start + value.length,
+    };
+  },
+}
 
+type SingleCharTokens = "(" | ")" | "{" | "}" | "=";
+
+// 单字符到 Token 生成器的映射
+const KNOWN_SINGLE_CHAR_TOKENS = new Map<
+  SingleCharTokens,
+  typeof TOKENS_GENERATOR[keyof typeof TOKENS_GENERATOR]
+>([
+  ["(", TOKENS_GENERATOR.leftParen],
+  [")", TOKENS_GENERATOR.rightParen],
+  ["{", TOKENS_GENERATOR.leftCurly],
+  ["}", TOKENS_GENERATOR.rightCurly],
+  ["=", TOKENS_GENERATOR.assign],
+]);
+~~~
+#### 2. 代码字符扫描、分组
+现在我们开始实现 Tokenizer 对象:
+~~~ts
+export class Tokenizer {
+  private _tokens: Token[] = [];
+  private _currentIndex: number = 0;
+  private _source: string;
+  constructor(input: string) {
+    this._source = input;
+  }
+  tokenize(): Token[] {
+    while (this._currentIndex < this._source.length) {
+      let currentChar = this._source[this._currentIndex];
+      const startIndex = this._currentIndex;
+      
+      // 根据语法规则进行 token 分组
+    }
+    return this._tokens;
+  }
+}
+~~~
+在扫描字符的过程，我们需要对不同的字符各自进行不同的处理，具体的策略如下：
+- 当前字符为分隔符，如空格，直接跳过，不处理；
+- 当前字符为字母，需要继续扫描，获取完整的单词:
+  - 如果单词为语法关键字，则新建相应关键字的 Token
+  - 否则视为普通的变量名
+- 当前字符为单字符，如{、}、(、)，则新建单字符对应的 Token
+
+接着我们在代码中实现:
+~~~ts
+// while 循环内部
+let currentChar = this._source[this._currentIndex];
+const startIndex = this._currentIndex;
+
+const isAlpha = (char: string): boolean => {
+  return (char >= "a" && char <= "z") || (char >= "A" && char <= "Z");
+}
+
+// 1. 处理空格
+if (currentChar === ' ') {
+  this._currentIndex++;
+  continue;
+}
+// 2. 处理字母
+else if (isAlpha(currentChar)) {
+  let identifier = '';
+  while(isAlpha(currentChar)) {
+    identifier += currentChar;
+    this._currentIndex ++;
+    currentChar = this._source[this._currentIndex];
+  }
+  let token: Token;
+  if (identifier in TOKENS_GENERATOR) {
+    // 如果是关键字
+    token =
+        TOKENS_GENERATOR[identifier as keyof typeof TOKENS_GENERATOR](
+          startIndex
+        );
+  } else {
+    // 如果是普通标识符
+    token = TOKENS_GENERATOR["identifier"](startIndex, identifier);
+  }
+  this._tokens.push(token);
+  continue;
+}
+// 3. 处理单字符
+else if(KNOWN_SINGLE_CHAR_TOKENS.has(currentChar as SingleCharTokens)) {
+  const token = KNOWN_SINGLE_CHAR_TOKENS.get(
+    currentChar as SingleCharTokens
+  )!(startIndex);
+  this._tokens.push(token);
+  this._currentIndex++;
+  continue;
+}
+~~~
+接下来我们来增加测试用例，新建`src/__test__/tokenizer.test.ts`，内容如下:
+~~~ts
+describe("testTokenizerFunction", () => {
+  test("test example", () => {
+    const result = [
+      { type: "Let", value: "let", start: 0, end: 3 },
+      { type: "Identifier", value: "a", start: 4, end: 5 },
+      { type: "Assign", value: "=", start: 6, end: 7 },
+      { type: "Function", value: "function", start: 8, end: 16 },
+      { type: "LeftParen", value: "(", start: 16, end: 17 },
+      { type: "RightParen", value: ")", start: 17, end: 18 },
+      { type: "LeftCurly", value: "{", start: 19, end: 20 },
+      { type: "RightCurly", value: "}", start: 20, end: 21 },
+    ];
+    const tokenizer = new Tokenizer("let a = function() {}");
+    expect(tokenizer.tokenize()).toEqual(result);
+  });
+});
+~~~
+然后在终端执行`pnpm test`，可以发现如下的测试结果:
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/d0ca23fabb94409da8364d2dfd69e761~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
+
+说明此时一个简易版本的分词器已经被我们开发出来了，不过目前的分词器还比较简陋，仅仅支持有限的语法，不过在明确了核心的开发步骤之后，后面继续完善的过程就比较简单了。
+
+### 语法分析器开发
+在解析出词法 token 之后，我们就可以进入语法分析阶段了。在这个阶段，我们会依次遍历 token，对代码进行语法结构层面的分析，最后的目标是生成 AST 数据结构。至于代码的 AST 结构到底是什么样子，可以去 [AST Explorer](https://astexplorer.net/) 网站进行在线预览:
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/fb95f9badf324b77b70b2e62015cb171~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
+
+接下来，我们要做的就是将 token 数组转换为上图所示的 AST 数据。
+
+首先新建`src/Parser.ts`，添加如下的类型声明代码及 `Parser` 类的初始化代码:
+~~~ts
+export enum NodeType {
+  Program = "Program",
+  VariableDeclaration = "VariableDeclaration",
+  VariableDeclarator = "VariableDeclarator",
+  Identifier = "Identifier",
+  FunctionExpression = "FunctionExpression",
+  BlockStatement = "BlockStatement",
+}
+
+export interface Node { 
+  type: string;
+  start: number;
+  end: number;
+}
+
+export interface Identifier extends Node {
+  type: NodeType.Identifier;
+  name: string;
+}
+
+interface Expression extends Node {}
+
+interface Statement extends Node {}
+
+export interface Program extends Node {
+  type: NodeType.Program;
+  body: Statement[];
+}
+
+export interface VariableDeclarator extends Node {
+  type: NodeType.VariableDeclarator;
+  id: Identifier;
+  init: Expression;
+}
+
+export interface VariableDeclaration extends Node {
+  type: NodeType.VariableDeclaration;
+  kind: "var" | "let" | "const";
+  declarations: VariableDeclarator[];
+}
+
+export interface FunctionExpression extends Node {
+  type: NodeType.FunctionExpression;
+  id: Identifier | null;
+  params: Expression[] | Identifier[];
+  body: BlockStatement;
+}
+
+export interface BlockStatement extends Node {
+  type: NodeType.BlockStatement;
+  body: Statement[];
+}
+
+export type VariableKind = "let";
+
+export class Parser {
+  private _tokens: Token[] = [];
+  private _currentIndex = 0;
+  constructor(token: Token[]) {
+    this._tokens = [...token];
+  }
+  
+  parse(): Program {
+    const program = this._parseProgram();
+    return program;
+  }
+  
+  private _parseProgram(): Program {
+    const program: Program = {
+      type: NodeType.Program,
+      body: [],
+      start: 0,
+      end: Infinity,
+    };
+    // 解析 token 数组
+    return program;
+  }
+}
+~~~
+从中你可以看出，解析 AST 的核心逻辑就集中在 `_parseProgram` 方法中，接下来让我们一步步完善一个方法:
+~~~ts
+export class Parser {
+  private _parseProgram {
+    // 省略已有代码
+    while (!this._isEnd()) {
+      const node = this._parseStatement();
+      program.body.push(node);
+      if (this._isEnd()) {
+        program.end = node.end;
+      }
+    }
+    return program;
+  }
+  // token 是否已经扫描完
+  private _isEnd(): boolean {
+    return this._currentIndex >= this._tokens.length;
+  }
+  // 工具方法，表示消费当前 Token，扫描位置移动到下一个 token
+  private _goNext(type: TokenType | TokenType[]): Token {
+    const currentToken = this._tokens[this._currentIndex];
+    // 断言当前 Token 的类型，如果不能匹配，则抛出错误
+    if (Array.isArray(type)) {
+      if (!type.includes(currentToken.type)) {
+        throw new Error(
+          `Expect ${type.join(",")}, but got ${currentToken.type}`
+        );
+      }
+    } else {
+      if (currentToken.type !== type) {
+        throw new Error(`Expect ${type}, but got ${currentToken.type}`);
+      }
+    }
+    this._currentIndex++;
+    return currentToken;
+  }
+  
+  private _checkCurrentTokenType(type: TokenType | TokenType[]): boolean {
+    if (this._isEnd()) {
+      return false;
+    }
+    const currentToken = this._tokens[this._currentIndex];
+    if (Array.isArray(type)) {
+      return type.includes(currentToken.type);
+    } else {
+      return currentToken.type === type;
+    }
+  }
+
+  private _getCurrentToken(): Token {
+    return this._tokens[this._currentIndex];
+  }
+  
+  private _getPreviousToken(): Token {
+    return this._tokens[this._currentIndex - 1];
+  }
+}
+~~~
+一个程序(Program)实际上由各个语句(Statement)来构成，因此在`_parseProgram`逻辑中，我们主要做的就是扫描一个个语句，然后放到 Program 对象的 body 中。那么，接下来，我们将关注点放到语句的扫描逻辑上面。
+
+从之前的示例代码:
+~~~ts
+let a = function() {}
+~~~
+我们可以知道这是一个变量声明语句，那么现在我们就在 `_parseStatement` 中实现这类语句的解析:
+~~~ts
+export enum NodeType {
+  Program = "Program",
+  VariableDeclarator = "VariableDeclarator",
+}
+
+export class Parser {
+  private _parseStatement(): Statement {
+    // TokenType 来自 Tokenizer 的实现中
+    if (this._checkCurrentTokenType(TokenType.Let)) {
+      return this._parseVariableDeclaration();
+    }
+    throw new Error("Unexpected token");
+  }
+  
+  private _parseVariableDeclaration(): VariableDeclaration {
+    // 获取语句开始位置
+    const { start } = this._getCurrentToken();
+    // 拿到 let
+    const kind = this._getCurrentToken().value;
+    this._goNext(TokenType.Let);
+    // 解析变量名 foo
+    const id = this._parseIdentifier();
+    // 解析 = 
+    this._goNext(TokenType.Assign);
+    // 解析函数表达式
+    const init = this._parseFunctionExpression();
+    const declarator: VariableDeclarator = {
+      type: NodeType.VariableDeclarator,
+      id,
+      init,
+      start: id.start,
+      end: init ? init.end : id.end,
+    };
+    // 构造 Declaration 节点
+    const node: VariableDeclaration = {
+      type: NodeType.VariableDeclaration,
+      kind: kind as VariableKind,
+      declarations: [declarator],
+      start,
+      end: this._getPreviousToken().end,
+    };
+    return node;
+  }
+}
+~~~
+接下来主要的代码解析逻辑可以梳理如下:
+- 发现 `let` 关键词对应的 token，进入 `_parseVariableDeclaration`
+- 解析变量名，如示例代码中的 `foo`
+- 解析函数表达式，如示例代码中的 `function() {}`
+
+其中，解析变量名的过程我们通过 `_parseIdentifier` 方法实现，解析函数表达式的过程由 `_parseFunctionExpression` 来实现，代码如下:
+~~~ts
+// 1. 解析变量名
+private _parseIdentifier(): Identifier {
+  const token = this._getCurrentToken();
+  const identifier: Identifier = {
+    type: NodeType.Identifier,
+    name: token.value!,
+    start: token.start,
+    end: token.end,
+  };
+  this._goNext(TokenType.Identifier);
+  return identifier;
+}
+
+// 2. 解析函数表达式
+private _parseFunctionExpression(): FunctionExpression {
+  const { start } = this._getCurrentToken();
+  this._goNext(TokenType.Function);
+  let id = null;
+  if (this._checkCurrentTokenType(TokenType.Identifier)) {
+    id = this._parseIdentifier();
+  }
+  const node: FunctionExpression = {
+    type: NodeType.FunctionExpression,
+    id,
+    params: [],
+    body: {
+      type: NodeType.BlockStatement,
+      body: [],
+      start: start,
+      end: Infinity,
+    },
+    start,
+    end: 0,
+  };
+  return node;
+}
+
+// 用于解析函数参数
+private _parseParams(): Identifier[] | Expression[] {
+  // 消费 "("
+  this._goNext(TokenType.LeftParen);
+  const params = [];
+  // 逐个解析括号中的参数
+  while (!this._checkCurrentTokenType(TokenType.RightParen)) {
+    let param = this._parseIdentifier();
+    params.push(param);
+  }
+  // 消费 ")"
+  this._goNext(TokenType.RightParen);
+  return params;
+}
+
+// 用于解析函数体
+private _parseBlockStatement(): BlockStatement {
+  const { start } = this._getCurrentToken();
+  const blockStatement: BlockStatement = {
+    type: NodeType.BlockStatement,
+    body: [],
+    start,
+    end: Infinity,
+  };
+  // 消费 "{"
+  this._goNext(TokenType.LeftCurly);
+  while (!this._checkCurrentTokenType(TokenType.RightCurly)) {
+    // 递归调用 _parseStatement 解析函数体中的语句(Statement)
+    const node = this._parseStatement();
+    blockStatement.body.push(node);
+  }
+  blockStatement.end = this._getCurrentToken().end;
+  // 消费 "}"
+  this._goNext(TokenType.RightCurly);
+  return blockStatement;
+}
+~~~
+一个简易的 `Parser` 现在就已经搭建出来了，你可以用如下的测试用例看看程序运行的效果，代码如下:
+~~~ts
+// src/__test__/parser.test.ts
+describe("testParserFunction", () => {
+  test("test example code", () => {
+    const result = {
+      type: "Program",
+      body: [
+        {
+          type: "VariableDeclaration",
+          kind: "let",
+          declarations: [
+            {
+              type: "VariableDeclarator",
+              id: {
+                type: "Identifier",
+                name: "a",
+                start: 4,
+                end: 5,
+              },
+              init: {
+                type: "FunctionExpression",
+                id: null,
+                params: [],
+                body: {
+                  type: "BlockStatement",
+                  body: [],
+                  start: 19,
+                  end: 21,
+                },
+                start: 8,
+                end: 21,
+              },
+              start: 0,
+              end: 21,
+            },
+          ],
+          start: 0,
+          end: 21,
+        },
+      ],
+      start: 0,
+      end: 21,
+    };
+    const code = `let a = function() {};`;
+    const tokenizer = new Tokenizer(code);
+    const parser = new Parser(tokenizer.tokenize());
+    expect(parser.parse()).toEqual(result);
+  });
+});
+~~~
+
+### 实现 Bundler
+首先我们来梳理一下整体的实现思路，如下图所示:
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/598856bbb7bd4dae8040143b203e85bb~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
+
+第一步我们需要获取模块的内容并解析模块 AST，然后梳理模块间的依赖关系，生成一张模块依赖图(`ModuleGraph`)。
+
+接下来，我们根据模块依赖图生成拓扑排序后的模块列表，以保证最后的产物中各个模块的顺序是正确的，比如模块 A 依赖了模块 B，那么在产物中，模块 B 的代码需要保证在模块 A 的代码之前执行。
+
+当然，Tree Shaking 的实现也是很重要的一环，我会带你实现一个基于 import/export 符号分析的 Tree Shaking 效果，保证只有被 import 的部分被打包进产物。最后，我们便可以输出完整的 Bundle 代码，完成模块打包。
+
+#### 开发环境搭建
+我们先来搭建一下项目的基本开发环境，首先新建目录`my-bundler`，然后进入目录中执行 `pnpm init -y` 初始化，安装一些必要的依赖:
+>新项目需与 `ast-parser` 平级，因为需要使用到 `ast-parser`
+~~~shell
+pnpm i magic-string -S
+pnpm i @types/node tsup typescript typescript-transform-paths -D
+~~~
+新建`tsconfig.json`，内容如下:
+~~~json
+{
+  "compilerOptions": {
+    "target": "es2016",
+    "allowJs": true,
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "outDir": "dist",
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "sourceMap": true,
+    "baseUrl": "src",
+    "rootDir": "src",
+    "declaration": true,
+    "plugins": [
+      {
+        "transform": "typescript-transform-paths"  /* 支持别名 */ 
+      },
+      {
+        "transform": "typescript-transform-paths",
+        "afterDeclarations": true  /* 支持类型文件中的别名 */ 
+      }
+    ],
+    "paths": {
+      "*": ["./*"],
+      "ast-parser": ["../../ast-parser"]  /* AST 解析器的路径*/
+    }
+  },
+  "include": ["src"],
+  "references": [{ "path": "../ast-parser" }]
+}
+~~~
+然后在 `package.json` 中添加如下的构建脚本:
+~~~json
+"scripts": {
+  "dev": "tsup ./src/rollup.ts --format cjs,esm --dts --clean --watch",
+  "build": "tsup ./src/rollup.ts --format cjs,esm --dts --clean --minify"
+}
+~~~
+接下来，你可以在`src`目录下新建`index.ts`，内容如下:
+~~~ts
+// src/index.ts
+import { Bundle } from './Bundle';
+
+export interface BuildOptions {
+  input: string;
+}
+
+export function build(options: BuildOptions) {
+  const bundle = new Bundle({
+    entry: options.input
+  });
+  return bundle.build().then(() => {
+    return {
+      generate: () => bundle.render()
+    };
+  });
+}
+~~~
+由此可见，所有核心的逻辑我们封装在了 Bundle 对象中，接着新建`Bundle.ts`及其依赖的`Graph.ts`， 添加如下的代码骨架:
+~~~ts
+// Bundle.ts
+export class Bundle {
+  graph: Graph;
+  constructor(options: BundleOptions) {
+    // 初始化模块依赖图对象
+    this.graph = new Graph({
+      entry: options.entry,
+      bundle: this
+    });
+  }
+
+  async build() {
+    // 模块打包逻辑，完成所有的 AST 相关操作
+    return this.graph.build();
+  }
+  
+  render() {
+    // 代码生成逻辑，拼接模块 AST 节点，产出代码
+  }
+  
+  getModuleById(id: string) {
+    return this.graph.getModuleById(id);
+  }
+
+  addModule(module: Module) {
+    return this.graph.addModule(module);
+  }
+}
+
+// Graph.ts
+// 模块依赖图对象的实现
+import { dirname, resolve } from 'path';
+export class Graph {
+  entryPath: string;
+  basedir: string;
+  moduleById: Record<string, Module> = {};
+  modules: Module[] = [];
+
+  constructor(options: GraphOptions) {
+    const { entry, bundle } = options;
+    this.entryPath = resolve(entry);
+    this.basedir = dirname(this.entryPath);
+    this.bundle = bundle;
+  }
+  
+  async build() {
+    // 1. 获取并解析模块信息
+    // 2. 构建依赖关系图
+    // 3. 模块拓扑排序
+    // 4. Tree Shaking, 标记需要包含的语句
+  }
+  
+  getModuleById(id: string) {
+    return this.moduleById[id];
+  }
+
+  addModule(module: Module) {
+    if (!this.moduleById[module.id]) {
+      this.moduleById[module.id] = module;
+      this.modules.push(module);
+    }
+  }
+}
+~~~
+接下来，我们就正式开始实现打包器的模块解析逻辑。
+
+### 模块 AST 解析
+我们基于目前的 `Graph.ts` 继续开发，首先在 Graph 对象中初始化模块加载器(`ModuleLoader`):
+~~~ts
+// src/Graph.ts
+import { dirname, resolve } from 'path';
+export class Graph {
+  constructor(options: GraphOptions) {
+    // 省略其它代码
+    // 初始化模块加载器对象
+    this.moduleLoader = new ModuleLoader(bundle);
+  }
+  
+  async build() {
+    // 1. 获取并解析模块信息，返回入口模块对象
+    const entryModule = await this.moduleLoader.fetchModule(
+      this.entryPath,
+      null,
+      true
+    );
+  }
+}
+~~~
+然后添加`ModuleLoader.ts`，代码如下:
+~~~ts
+// src/ModuleLoader.ts
+export class ModuleLoader {
+  bundle: Bundle;
+  resolveIdsMap: Map<string, string | false> = new Map();
+  constructor(bundle: Bundle) {
+    this.bundle = bundle;
+  }
+ 
+  // 解析模块逻辑
+  resolveId(id: string, importer: string | null) {
+    const cacheKey = id + importer;
+    if (this.resolveIdsMap.has(cacheKey)) {
+      return this.resolveIdsMap.get(cacheKey)!;
+    }
+    const resolved = defaultResolver(id, importer);
+    this.resolveIdsMap.set(cacheKey, resolved);
+    return resolved;
+  }
+  
+  // 加载模块内容并解析
+  async fetchModule(
+    id: string,
+    importer: null | string,
+    isEntry = false,
+    bundle: Bundle = this.bundle,
+    loader: ModuleLoader = this
+  ): Promise<Module | null> {
+    const path = this.resolveId(id, importer);
+    // 查找缓存
+    const existModule = this.bundle.getModuleById(path);
+    if (existModule) {
+      return existModule;
+    }
+    const code = await readFile(path, { encoding: 'utf-8' });
+    // 初始化模块，解析 AST
+    const module = new Module({
+      path,
+      code,
+      bundle,
+      loader,
+      isEntry
+    });
+    this.bundle.addModule(module);
+    // 拉取所有的依赖模块
+    await this.fetchAllDependencies(module);
+    return module;
+  }
+  
+  async fetchAllDependencies(module: Module) {
+    await Promise.all(
+      module.dependencies.map((dep) => {
+        return this.fetchModule(dep, module.path);
+      })
+    );
+  }
+}
+~~~
+主要由 `fetchModule` 方法完成模块的加载和解析，流程如下:
+- 调用 resolveId 方法解析模块路径
+- 初始化模块实例即 Module 对象，解析模块 AST
+- 递归初始化模块的所有依赖模块
+
+其中，最主要的逻辑在于第二步，即 Module 对象实例的初始化，在这个过程中，模块代码将会被进行 AST 解析及依赖分析。接下来，让我们把目光集中在 Module 对象的实现上。
+~~~ts
+// src/Module.ts
+export class Module {
+  isEntry: boolean = false;
+  id: string;
+  path: string;
+  bundle: Bundle;
+  moduleLoader: ModuleLoader;
+  code: string;
+  magicString: MagicString;
+  statements: Statement[];
+  imports: Imports;
+  exports: Exports;
+  reexports: Exports;
+  exportAllSources: string[] = [];
+  exportAllModules: Module[] = [];
+  dependencies: string[] = [];
+  dependencyModules: Module[] = [];
+  referencedModules: Module[] = [];
+  constructor({ path, bundle, code, loader, isEntry = false }: ModuleOptions) {
+    this.id = path;
+    this.bundle = bundle;
+    this.moduleLoader = loader;
+    this.isEntry = isEntry;
+    this.path = path;
+    this.code = code;
+    this.magicString = new MagicString(code);
+    this.imports = {};
+    this.exports = {};
+    this.reexports = {};
+    this.declarations = {};
+    try {
+      const ast = parse(code) as any;
+      const nodes = ast.body as StatementNode[];
+      // 以语句(Statement)的维度来拆分 Module，保存 statement 的集合，供之后分析
+      this.statements = nodes.map((node) => {
+        const magicString = this.magicString.snip(node.start, node.end);
+        // Statement 对象将在后文中介绍具体实现
+        return new Statement(node, magicString, this);
+      });
+    } catch (e) {
+      console.log(e);
+      throw e;
+    }
+    // 分析 AST 节点
+    this.analyseAST();
+  }
+  analyseAST() {
+    // 以语句为最小单元来分析
+    this.statements.forEach((statement) => {
+      // 对 statement 进行分析
+      statement.analyse();
+      // 注册顶层声明
+      if (!statement.scope.parent) {
+        statement.scope.eachDeclaration((name, declaration) => {
+          this.declarations[name] = declaration;
+        });
+      }
+    });
+    // 注册 statement 的 next 属性，用于生成代码使用，next 即下一个 statement 的起始位置
+    const statements = this.statements;
+    let next = this.code.length;
+    for (let i = statements.length - 1; i >= 0; i--) {
+      statements[i].next = next;
+      next = statements[i].start;
+    }
+  }  
+}
+~~~
+我们可以来梳理一下解析 AST 节点主要做了哪些事情:
+1. 调用 ast-parser 将代码字符串解析为 AST 对象。
+2. 遍历 AST 对象中的各个语句，以语句的维度来进行 AST 分析，通过语句的分析结果来构造作用域链和模块依赖关系。
+
+ast-parser 的解析部分我们已经详细介绍过，这里不再赘述。接下来我们将重点放到 Statement 对象的实现上。你可以新建`src/Statement.ts`，内容如下:
+~~~ts
+// src/Statement.ts
+// 以下为三个工具函数
+// 是否为函数节点
+function isFunctionDeclaration(node: Declaration): boolean {
+  if (!node) return false;
+  return (
+    // function foo() {}
+    node.type === 'FunctionDeclaration' ||
+    // const foo = function() {}
+    (node.type === NodeType.VariableDeclarator &&
+      node.init &&
+      node.init.type === NodeType.FunctionExpression) ||
+    // export function ...
+    // export default function
+    ((node.type === NodeType.ExportNamedDeclaration ||
+      node.type === NodeType.ExportDefaultDeclaration) &&
+      !!node.declaration &&
+      node.declaration.type === NodeType.FunctionDeclaration)
+  );
+}
+
+// 是否为 export 声明节点
+export function isExportDeclaration(node: ExportDeclaration): boolean {
+  return /^Export/.test(node.type);
+}
+
+// 是否为 import 声明节点
+export function isImportDeclaration(node: any) {
+  return node.type === 'ImportDeclaration';
+}
+
+export class Statement {
+  node: StatementNode;
+  magicString: MagicString;
+  module: Module;
+  scope: Scope;
+  start: number;
+  next: number;
+  isImportDeclaration: boolean;
+  isExportDeclaration: boolean;
+  isReexportDeclaration: boolean;
+  isFunctionDeclaration: boolean;
+  isIncluded: boolean = false;
+  defines: Set<string> = new Set();
+  modifies: Set<string> = new Set();
+  dependsOn: Set<string> = new Set();
+  references: Reference[] = [];
+  constructor(node: StatementNode, magicString: MagicString, module: Module) {
+    this.magicString = magicString;
+    this.node = node;
+    this.module = module;
+    this.scope = new Scope({
+      statement: this
+    });
+    this.start = node.start;
+    this.next = 0;
+    this.isImportDeclaration = isImportDeclaration(node);
+    this.isExportDeclaration = isExportDeclaration(node as ExportDeclaration);
+    this.isReexportDeclaration =
+      this.isExportDeclaration &&
+      !!(node as ExportAllDeclaration | ExportNamedDeclaration).source;
+    this.isFunctionDeclaration = isFunctionDeclaration(
+      node as FunctionDeclaration
+    );
+
+  }
+
+  analyse() {
+    if (this.isImportDeclaration) return;
+    // 1、构建作用域链，记录 Declaration 节点表
+    buildScope(this);
+    // 2. 寻找引用的依赖节点，记录 Reference 节点表
+    findReference(this);
+  }
+}
+~~~
+在 Statement 节点的分析过程中主要需要做两件事情:
+- 构建作用域链。这是为了记录当前语句中声明的变量。
+- 记录引用的依赖节点。这是为了记录当前语句引用了哪些变量以及这些变量对应的 AST 节点。
+
+而无论是构建作用域链还是记录引用节点，我们都离不开一个最基本的操作，那就是对 AST 进行遍历操作。你可以新建src/utils/walk.ts，用来存放 AST 节点遍历的逻辑。
+~~~ts
+let shouldSkip;
+let shouldAbort: boolean;
+
+export function walk(ast: any, { enter, leave }: { enter: any; leave: any }) {
+    shouldAbort = false;
+    visit(ast, null, enter, leave);
+}
+
+let context = {
+    skip: () => (shouldSkip = true),
+    abort: () => (shouldAbort = true)
+};
+
+let childKeys = {} as Record<string, string[]>;
+
+let toString = Object.prototype.toString;
+
+function isArray(thing: Object) {
+    return toString.call(thing) === '[object Array]';
+}
+
+function visit(node: any, parent: any, enter: any, leave: any, prop?: string) {
+    if (!node || shouldAbort) return;
+
+    if (enter) {
+        shouldSkip = false;
+        enter.call(context, node, parent, prop);
+        if (shouldSkip || shouldAbort) return;
+    }
+
+    let keys =
+        childKeys[node.type] ||
+        (childKeys[node.type] = Object.keys(node).filter(
+            (key) => typeof node[key] === 'object'
+        ));
+
+    let key, value;
+
+    for (let i = 0; i < keys.length; i++) {
+        key = keys[i];
+        value = node[key];
+
+        if (isArray(value)) {
+            for (let j = 0; j < value.length; j++) {
+                visit(value[j], node, enter, leave, key);
+            }
+        } else if (value && value.type) {
+            visit(value, node, enter, leave, key);
+        }
+    }
+
+    if (leave && !shouldAbort) {
+        leave(node, parent, prop);
+    }
+}
+~~~
+接下来我们主要通过这个遍历器来完成 Statement 节点的分析。对于作用域链的分析，我们先来新建一个 Scope 对象，封装作用域相关的基本信息:
+~~~ts
+// src/utils/Scope.ts
+import { Statement } from 'Statement';
+import { Declaration } from 'ast/Declaration';
+
+interface ScopeOptions {
+  parent?: Scope;
+  paramNodes?: any[];
+  block?: boolean;
+  statement: Statement;
+  isTopLevel?: boolean;
+}
+
+export class Scope {
+  // 父作用域
+  parent?: Scope;
+  // 如果是函数作用域，则需要参数节点
+  paramNodes: any[];
+  // 是否为块级作用域
+  isBlockScope?: boolean;
+  // 作用域对应的语句节点
+  statement: Statement;
+  // 变量/函数 声明节点，为 Scope 的核心数据
+  declarations: Record<string, Declaration> = {};
+  constructor(options: ScopeOptions) {
+    const { parent, paramNodes, block, statement } = options;
+    this.parent = parent;
+    this.paramNodes = paramNodes || [];
+    this.statement = statement;
+    this.isBlockScope = !!block;
+    this.paramNodes.forEach(
+      (node) =>
+        (this.declarations[node.name] = new Declaration(
+          node,
+          true,
+          this.statement
+        ))
+    );
+  }
+
+  addDeclaration(node: any, isBlockDeclaration: boolean) {
+    // block scope & var, 向上追溯，直到顶层作用域
+    if (this.isBlockScope && !isBlockDeclaration && this.parent) {
+      this.parent.addDeclaration(node, isBlockDeclaration);
+    } else {
+      // 否则在当前作用域新建声明节点(Declaration)
+      const key = node.id && node.id.name;
+      this.declarations[key] = new Declaration(node, false, this.statement);
+    }
+  }
+
+  // 遍历声明节点(Declaration)
+  eachDeclaration(fn: (name: string, dec: Declaration) => void) {
+    Object.keys(this.declarations).forEach((key) => {
+      fn(key, this.declarations[key]);
+    });
+  }
+
+  contains(name: string): Declaration {
+    return this.findDeclaration(name);
+  }
+
+  findDeclaration(name: string): Declaration {
+    return (
+      this.declarations[name] ||
+      (this.parent && this.parent.findDeclaration(name))
+    );
+  }
+}
+~~~
+Scope 的核心在于声明节点(即`Declaration`)的收集与存储，而上述的代码中并没有 Declaration 对象的实现，接下来我们来封装一下这个对象:
+~~~ts
+// src/ast/Declaration.ts
+import { Module } from '../Module';
+import { Statement } from '../Statement';
+import { Reference } from './Reference';
+
+export class Declaration {
+  isFunctionDeclaration: boolean = false;
+  functionNode: any;
+  statement: Statement | null;
+  name: string | null = null;
+  isParam: boolean = false;
+  isUsed: boolean = false;
+  isReassigned: boolean = false;
+  constructor(node: any, isParam: boolean, statement: Statement | null) {
+    // 考虑函数和变量声明两种情况
+    if (node) {
+      if (node.type === 'FunctionDeclaration') {
+        this.isFunctionDeclaration = true;
+        this.functionNode = node;
+      } else if (
+        node.type === 'VariableDeclarator' &&
+        node.init &&
+        /FunctionExpression/.test(node.init.type)
+      ) {
+        this.isFunctionDeclaration = true;
+        this.functionNode = node.init;
+      }
+    }
+    this.statement = statement;
+    this.isParam = isParam;
+  }
+  
+  addReference(reference: Reference) {
+    reference.declaration = this;
+    this.name = reference.name;
+  }
+}
+~~~
+既然有了声明节点，那么我们如果感知到哪些地方使用了这些节点呢？这时候就需要 Reference 节点登场了，它的作用就是记录其它节点与 Declaration 节点的引用关系，让我门来简单实现一下:
+~~~ts
+import { Scope } from './Scope';
+import { Statement } from '../Statement';
+import { Declaration } from './Declaration';
+
+export class Reference {
+  node: any;
+  scope: Scope;
+  statement: Statement;
+  // declaration 信息在构建依赖图的部分补充
+  declaration: Declaration | null = null;
+  name: string;
+  start: number;
+  end: number;
+  objectPaths: any[] = [];
+  constructor(node: any, scope: Scope, statement: Statement) {
+    this.node = node;
+    this.scope = scope;
+    this.statement = statement;
+    this.start = node.start;
+    this.end = node.end;
+    let root = node;
+    this.objectPaths = [];
+    while (root.type === 'MemberExpression') {
+      this.objectPaths.unshift(root.property);
+      root = root.object;
+    }
+    this.objectPaths.unshift(root);
+    this.name = root.name;
+  }
+}
+~~~
+前面铺垫了这么多基础的数据结构，让大家了解到各个关键对象的作用及其联系，接下来我们正式开始编写构建作用域链的代码。
+
+你可以新建`src/utils/buildScope.ts`，内容如下:
+~~~ts
+import { walk } from 'utils/walk';
+import { Scope } from 'ast/Scope';
+import { Statement } from 'Statement';
+import {
+  NodeType,
+  Node,
+  VariableDeclaration,
+  VariableDeclarator
+} from 'ast-parser';
+import { FunctionDeclaration } from 'ast-parser';
+
+export function buildScope(statement: Statement) {
+  const { node, scope: initialScope } = statement;
+  let scope = initialScope;
+  // 遍历 AST
+  walk(node, {
+    // 遵循深度优先的原则，每进入和离开一个节点会触发 enter 和 leave 钩子
+    // 如 a 的子节点为 b，那么触发顺序为 a-enter、b-enter、b-leave、a-leave
+    enter(node: Node) {
+      // function foo () {...}
+      if (node.type === NodeType.FunctionDeclaration) {
+        scope.addDeclaration(node, false);
+      }
+      // var let const
+      if (node.type === NodeType.VariableDeclaration) {
+        const currentNode = node as VariableDeclaration;
+        const isBlockDeclaration = currentNode.kind !== 'var';
+        currentNode.declarations.forEach((declarator: VariableDeclarator) => {
+          scope.addDeclaration(declarator, isBlockDeclaration);
+        });
+      }
+
+      let newScope;
+
+      // function scope
+      if (node.type === NodeType.FunctionDeclaration) {
+        const currentNode = node as FunctionDeclaration;
+        newScope = new Scope({
+          parent: scope,
+          block: false,
+          paramNodes: currentNode.params,
+          statement
+        });
+      }
+
+      // new block scope
+      if (node.type === NodeType.BlockStatement) {
+        newScope = new Scope({
+          parent: scope,
+          block: true,
+          statement
+        });
+      }
+      // 记录 Scope 父子关系
+      if (newScope) {
+        Object.defineProperty(node, '_scope', {
+          value: newScope,
+          configurable: true
+        });
+
+        scope = newScope;
+      }
+    },
+    leave(node: any) {
+      // 更新当前作用域
+      // 当前 scope 即 node._scope
+      if (node._scope && scope.parent) {
+        scope = scope.parent;
+      }
+    }
+  });
+}
+~~~
+从中可以看到，我们会对如下类型的 AST 节点进行处理:
+- 变量声明节点。包括`var`、`let`和`const`声明对应的节点。对`let`和`const`，我们需要将声明节点绑定到`当前作用域`中，而对于`var`，需要绑定到全局作用域。
+- 函数声明节点。对于这类节点，我们直接创建一个新的作用域。
+- 块级节点。即用 `{ }` 包裹的节点，如 if 块、函数体，此时我们也创建新的作用域。
+
+在构建完作用域完成后，我们进入下一个环节: **记录引用节点**。
+
+新建`src/utils/findReference.ts`，内容如下:
+~~~ts
+import { Statement } from 'Statement';
+import { walk } from 'utils/walk';
+import { Reference } from 'ast/Reference';
+
+function isReference(node: any, parent: any): boolean {
+  if (node.type === 'MemberExpression' && parent.type !== 'MemberExpression') {
+    return true;
+  }
+  if (node.type === 'Identifier') {
+    // 如 export { foo as bar }, 忽略 bar
+    if (parent.type === 'ExportSpecifier' && node !== parent.local)
+      return false;
+    // 如 import { foo as bar } from 'xxx', 忽略 bar
+    if (parent.type === 'ImportSpecifier' && node !== parent.imported) {
+      return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+export function findReference(statement: Statement) {
+  const { references, scope: initialScope, node } = statement;
+  let scope = initialScope;
+  walk(node, {
+    enter(node: any, parent: any) {
+      if (node._scope) scope = node._scope;
+      if (isReference(node, parent)) {
+        // 记录 Reference 节点
+        const reference = new Reference(node, scope, statement);
+        references.push(reference);
+      }
+    },
+    leave(node: any) {
+      if (node._scope && scope.parent) {
+        scope = scope.parent;
+      }
+    }
+  });
+}
+~~~
+至此，我们就完成了模块 AST 解析的功能。
+
+### 模块依赖图绑定
+回到 Graph 对象中，接下来我们需要实现的是模块依赖图的构建:
+~~~ts
+// src/Graph.ts
+export class Graph {
+  async build() {
+    //  ✅(完成) 1. 获取并解析模块信息
+    // 2. 构建依赖关系图
+    this.module.forEach(module => module.bind());
+    // 3. 模块拓扑排序
+    // 4. Tree Shaking, 标记需要包含的语句
+  }
+}
+~~~
+现在我们在 Module 对象的 `AnalyzeAST` 中新增依赖绑定的代码:
+~~~ts
+// src/Module.ts
+analyzeAST() {
+  // 如果语句为 import/export 声明，那么给当前模块记录依赖的标识符
+  this.statements.forEach((statement) => {
+    if (statement.isImportDeclaration) {
+      this.addImports(statement);
+    } else if (statement.isExportDeclaration) {
+      this.addExports(statement);
+    }
+  });
+}
+
+// 处理 import 声明
+addImports(statement: Statement) {
+  const node = statement.node as any;
+  const source = node.source.value;
+  // import
+  node.specifiers.forEach((specifier: Specifier) => {
+    // 为方便理解，本文只处理具名导入
+    const localName = specifier.local.name;
+    const name = specifier.imported.name;
+    this.imports[localName] = { source, name, localName };
+  });
+  this._addDependencySource(source);
+}
+
+// 处理 export 声明
+addExports(statement: Statement) {
+  const node = statement.node as any;
+  const source = node.source && node.source.value;
+  // 为方便立即，本文只处理具名导出
+  if (node.type === 'ExportNamedDeclaration') {
+    // export { a, b } from 'mod'
+    if (node.specifiers.length) {
+      node.specifiers.forEach((specifier: Specifier) => {
+        const localName = specifier.local.name;
+        const exportedName = specifier.exported.name;
+        this.exports[exportedName] = {
+          localName,
+          name: exportedName
+        };
+        if (source) {
+          this.reexports[localName] = {
+            statement,
+            source,
+            localName,
+            name: localName,
+            module: undefined
+          };
+          this.imports[localName] = {
+            source,
+            localName,
+            name: localName
+          };
+          this._addDependencySource(source);
+        }
+      });
+    } else {
+      const declaration = node.declaration;
+      let name;
+      if (declaration.type === 'VariableDeclaration') {
+        // export const foo = 2;
+        name = declaration.declarations[0].id.name;
+      } else {
+        // export function foo() {}
+        name = declaration.id.name;
+      }
+      this.exports[name] = {
+        statement,
+        localName: name,
+        name
+      };
+    }
+  } else if (node.type === 'ExportAllDeclaration') {
+    // export * from 'mod'
+    if (source) {
+      this.exportAllSources.push(source);
+      this.addDependencySource(source);
+    }
+  }
+}
+
+private _addDependencySource(source: string) {
+  if (!this.dependencies.includes(source)) {
+    this.dependencies.push(source);
+  }
+}
+~~~
+在记录完 import 和 export 的标识符之后，我们根据这些标识符绑定到具体的模块对象，新增`bind`方法，实现如下: 
+~~~ts
+bind() {
+  // 省略已有代码
+  // 记录标识符对应的模块对象
+  this.bindDependencies();
+  /// 除此之外，根据之前记录的 Reference 节点绑定对应的 Declaration 节点
+  this.bindReferences();
+}
+
+bindDependencies() {
+  [...Object.values(this.imports), ...Object.values(this.reexports)].forEach(
+    (specifier) => {
+      specifier.module = this._getModuleBySource(specifier.source!);
+    }
+  );
+  this.exportAllModules = this.exportAllSources.map(
+    this._getModuleBySource.bind(this)
+  );
+  // 建立模块依赖图
+  this.dependencyModules = this.dependencies.map(
+    this._getModuleBySource.bind(this)
+  );
+  this.dependencyModules.forEach((module) => {
+    module.referencedModules.push(this);
+  });
+}
+
+bindReferences() {
+  this.statements.forEach((statement) => {
+    statement.references.forEach((reference) => {
+      // 根据引用寻找声明的位置
+      // 寻找顺序: 1. statement 2. 当前模块 3. 依赖模块
+      const declaration =
+        reference.scope.findDeclaration(reference.name) ||
+        this.trace(reference.name);
+      if (declaration) {
+        declaration.addReference(reference);
+      }
+    });
+  });
+}
+
+private _getModuleBySource(source: string) {
+  const id = this.moduleLoader.resolveId(source!, this.path) as string;
+  return this.bundle.getModuleById(id);
+}
+~~~
+现在，我们便将各个模块间的依赖关系绑定完成了。
+
+### 模块拓扑排序
+接下来，我们将所有的模块根据依赖关系进行拓扑排序:
+~~~ts
+// src/Graph.ts
+export class Graph {
+  async build() {
+    //  ✅(完成) 1. 获取并解析模块信息
+    //  ✅(完成) 2. 构建依赖关系图
+    // 3. 模块拓扑排序
+    this.orderedModules = this.sortModules(entryModule!);
+    // 4. Tree Shaking, 标记需要包含的语句
+  }
+  
+  sortModules(entryModule: Module) {
+    // 拓扑排序模块数组
+    const orderedModules: Module[] = [];
+    // 记录已经分析过的模块表
+    const analysedModule: Record<string, boolean> = {};
+    // 记录模块的父模块 id 
+    const parent: Record<string, string> = {};
+    // 记录循环依赖
+    const cyclePathList: string[][] = [];
+    
+    // 用来回溯，用来定位循环依赖
+    function getCyclePath(id: string, parentId: string): string[] {
+      const paths = [id];
+      let currrentId = parentId;
+      while (currrentId !== id) {
+        paths.push(currrentId);
+        // 向前回溯
+        currrentId = parent[currrentId];
+      }
+      paths.push(paths[0]);
+      return paths.reverse();
+    }
+    
+    // 拓扑排序核心逻辑，基于依赖图的后序遍历完成
+    function analyseModule(module: Module) {
+      if (analysedModule[module.id]) {
+        return;
+      }
+      for (const dependency of module.dependencyModules) {
+        // 检测循环依赖
+        // 为什么是这个条件，下文会分析
+        if (parent[dependency.id]) {
+          if (!analysedModule[dependency.id]) {
+            cyclePathList.push(getCyclePath(dependency.id, module.id));
+          }
+          continue;
+        }
+        parent[dependency.id] = module.id;
+        analyseModule(dependency);
+      }
+      analysedModule[module.id] = true;
+      orderedModules.push(module);
+    }
+    // 从入口模块开始分析
+    analyseModule(entryModule);
+    // 如果有循环依赖，则打印循环依赖信息
+    if (cyclePathList.length) {
+      cyclePathList.forEach((paths) => {
+        console.log(paths);
+      });
+      process.exit(1);
+    }
+    return orderedModules;
+  }
+}
+~~~
+拓扑排序的核心在于对依赖图进行后续遍历，将被依赖的模块放到前面，如下图所示:
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/a33a6a2f4d284f1093b3ea5e796a03aa~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
+
+其中 A 依赖 B 和 C，B 和 C 依赖 D，D 依赖 E，那么最后的拓扑排序即`E、D、B、C、A`。但也有一种特殊情况，就是出现循环的情况，如下面这张图所示:
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/a5de64cd3e114e98873976cd3dbc768f~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
+
+上图中的依赖关系呈现了`B->C->D->B`的循环依赖，这种情况是我们需要避免的。那么如何来检测出循环依赖呢？
+
+由于 `analyseModule` 函数中采用后序的方式来遍历依赖，也就是说一旦某个模块被记录到 `analysedModule` 表中，那么也就意味着其所有的依赖模块已经被遍历完成了:
+~~~ts
+function analyseModule(module: Module) {
+  if (analysedModule[module.id]) {
+    return;
+  }
+  for (const dependency of module.dependencyModules) {
+    // 检测循环依赖的代码省略
+    parent[dependency.id] = module.id;
+    analyseModule(dependency);
+  }
+  analysedModule[module.id] = true;
+  orderedModules.push(module);
+}
+~~~
+如果某个模块没有被记录到 analysedModule 中，则表示它的依赖模块并没有分析完，在这个前提下中，如果再次遍历到这个模块，说明已经出现了循环依赖，因此检测循环依赖的条件应该为下面这样:
+~~~ts
+for (const dependency of module.dependencyModules) {
+  // 检测循环依赖
+  // 1. 不为入口模块
+  if (parent[dependency.id]) {
+    // 2. 依赖模块还没有分析结束
+    if (!analysedModule[dependency.id]) {
+      cyclePathList.push(getCyclePath(dependency.id, module.id));
+    }
+    continue;
+  }
+  parent[dependency.id] = module.id;
+  analyseModule(dependency);
+}
+~~~
+到目前为止，我们完成了第三步模块拓扑排序的步骤，接下来我们进入 `Tree Shaking` 功能的开发:
+~~~ts
+// src/Graph.ts
+export class Graph {
+  async build() {
+    // ✅(完成) 1. 获取并解析模块信息
+    // ✅(完成) 2. 构建依赖关系图
+    // ✅(完成) 3. 模块拓扑排序
+    // 4. Tree Shaking, 标记需要包含的语句
+  }
+}
+~~~
+### 实现 Tree Shaking
+相信 Tree Shaking 对于大家并不陌生，它主要的作用就是在打包产物中摇掉没有使用的代码，从而优化产物体积。而得益于 ES 模块的静态特性，我们可以基于 import/export 的符号可达性来进行 Tree Shaking 分析，如:
+~~~ts
+// index.ts
+import { a } from './utils';
+
+console.log(a);
+
+// utils.ts
+export const a = 1;
+
+export const b = 2;
+~~~
+由于在如上的代码中我们只使用到了 a，则 a 属于可达符号，b 属于不可达符号，因此最后的代码不会包含 b 相关的实现代码。
+
+接下来我们就来实现这一功能，即基于符号可达性来进行无用代码的删除。
+~~~ts
+// src/Graph.ts
+export class Graph {
+  async build() {
+    // ✅(完成) 1. 获取并解析模块信息
+    // ✅(完成) 2. 构建依赖关系图
+    // ✅(完成) 3. 模块拓扑排序
+    // 4. Tree Shaking, 标记需要包含的语句
+    // 从入口处分析
+    entryModule!.getExports().forEach((name) => {
+      const declaration = entryModule!.traceExport(name);
+      declaration!.use();
+    });
+  }
+}
+~~~
+在 Module 对象中，我们需要增加`getExports`和`traceExport`方法来获取和分析模块的导出:
+~~~ts
+// 拿到模块所有导出
+getExports(): string[] {
+  return [
+    ...Object.keys(this.exports),
+    ...Object.keys(this.reexports),
+    ...this.exportAllModules
+      .map(module => module.getExports())
+      .flat()  
+    ];
+}
+
+// 从导出名追溯到 Declaration 声明节点
+traceExport(name: string): Declaration | null {
+  // 1. reexport
+  // export { foo as bar } from './mod'
+  const reexportDeclaration = this.reexports[name];
+  if (reexportDeclaration) {
+    // 说明是从其它模块 reexport 出来的
+    // 经过 bindDependencies 方法处理，现已绑定 module
+    const declaration = reexportDeclaration.module!.traceExport(
+      reexportDeclaration.localName
+    );
+    if (!declaration) {
+      throw new Error(
+        `${reexportDeclaration.localName} is not exported by module ${
+          reexportDeclaration.module!.path
+        }(imported by ${this.path})`
+      );
+    }
+    return declaration;
+  }
+  // 2. export
+  // export { foo }
+  const exportDeclaration = this.exports[name];
+  if (exportDeclaration) {
+    const declaration = this.trace(name);
+    if (declaration) {
+      return declaration;
+    }
+  }
+  // 3. export all
+  for (let exportAllModule of this.exportAllModules) {
+    const declaration = exportAllModule.trace(name);
+    if (declaration) {
+      return declaration;
+    }
+  }
+  return null;
+}
+
+trace(name: string) {
+  if (this.declarations[name]) {
+    // 从当前模块找
+    return this.declarations[name];
+  }
+  // 从依赖模块找
+  if (this.imports[name]) {
+    const importSpecifier = this.imports[name];
+    const importModule = importSpecifier.module!;
+    const declaration = importModule.traceExport(importSpecifier.name);
+    if (declaration) {
+      return declaration;
+    }
+  }
+  return null;
+}
+~~~
+当我们对每个导出找到对应的 Declaration 节点之后，则对这个节点进行标记，从而让其代码能够在代码生成阶段得以保留。那么如何进行标记呢？
+
+我们不妨回到 Declaration 的实现中，增加 `use` 方法:
+~~~ts
+use() {
+  // 标记该节点被使用
+  this.isUsed = true;
+  // 对应的 statement 节点也应该被标记
+  if (this.statement) {
+    this.statement.mark();
+  }
+}
+
+// 另外，你可以加上 render 方法，便于后续代码生成的步骤
+render() {
+  return this.name;
+}
+~~~
+接下来我们到 Statement 对象中，继续增加 mark 方法，来追溯被使用过的 Declaration 节点:
+~~~ts
+// src/Statement.ts
+mark() {
+  if (this.isIncluded) {
+    return;
+  }
+  this.isIncluded = true;
+  this.references.forEach(
+    (ref: Reference) => ref.declaration && ref.declaration.use()
+  );
+}
+~~~
+这时候，Reference 节点的作用就体现出来了，由于我们之前专门收集到 Statement 的 Reference 节点，通过 Reference 节点我们可以追溯到对应的 Declaration 节点，并调用其 use 方法进行标记。
+
+### 代码生成
+如此，我们便完成了 Tree Shaking 的标记过程，接下来我们看看如何来进行代码生成，直观地看到 Tree Shaking 的效果。
+
+我们在 Module 对象中增加`render`方法，用来将模块渲染为字符串:
+~~~ts
+render() {
+  const source = this.magicString.clone().trim();
+  this.statements.forEach((statement) => {
+    // 1. Tree Shaking
+    if (!statement.isIncluded) {
+      source.remove(statement.start, statement.next);
+      return;
+    }
+    // 2. 重写引用位置的变量名 -> 对应的声明位置的变量名
+    statement.references.forEach((reference) => {
+      const { start, end } = reference;
+      const declaration = reference.declaration;
+      if (declaration) {
+        const name = declaration.render();
+        source.overwrite(start, end, name!);
+      }
+    });
+    // 3. 擦除/重写 export 相关的代码
+    if (statement.isExportDeclaration && !this.isEntry) {
+      // export { foo, bar }
+      if (
+        statement.node.type === 'ExportNamedDeclaration' &&
+        statement.node.specifiers.length
+      ) {
+        source.remove(statement.start, statement.next);
+      }
+      // remove `export` from `export const foo = 42`
+      else if (
+        statement.node.type === 'ExportNamedDeclaration' &&
+        (statement.node.declaration!.type === 'VariableDeclaration' ||
+          statement.node.declaration!.type === 'FunctionDeclaration')
+      ) {
+        source.remove(
+          statement.node.start,
+          statement.node.declaration!.start
+        );
+      }
+      // remove `export * from './mod'`
+      else if (statement.node.type === 'ExportAllDeclaration') {
+        source.remove(statement.start, statement.next);
+      }
+    }
+  });
+  return source.trim();
+}
+~~~
+接着，我们在 Bundle 对象也实现一下 render 方法，用来生成最后的产物代码:
+~~~ts
+render(): { code: string } {
+  let msBundle = new MagicString.Bundle({ separator: '\n' });
+  // 按照模块拓扑顺序生成代码
+  this.graph.orderedModules.forEach((module) => {
+    msBundle.addSource({
+      content: module.render()
+    });
+  });
+
+  return {
+    code: msBundle.toString(),
+  };
+}
+~~~
+现在我们终于可以来测试目前的 Bundler 功能了，测试代码如下:
+~~~ts
+// test.js
+const fs = require('fs');
+const { build } = require('./dist/index');
+
+async function buildTest() {
+  const bundle = await build({
+    input: './test/index.js'
+  });
+  const res = bundle.generate();
+  fs.writeFileSync('./test/bundle.js', res.code);
+}
+
+buildTest();
+
+// test/index.js
+import { a, add } from './utils.js';
+
+export const c = add(a, 2);
+
+// test/utils.js
+export const a = 1;
+export const b = 2;
+export const add = function (num1, num2) {
+  return num1 + num2;
+};
+~~~
+在终端执行`node test.js`，即可将产物代码输出到 test 目录下的 `bundle.js` 中:
+~~~ts
+// test/bundle.js
+const a = 1;
+const add = function (num1, num2) {
+  return num1 + num2;
+};
+export const c = add(a, 2);
+~~~
+可以看到，最后的产物代码已经成功生成，变量 b 相关的代码已经完全从产出中擦除，实现了基于符号可达性的 Tree Shaking 的效果。
+
+## Vite 3.0 核心更新盘点与分析
+
+### 开发阶段的更新
+
+#### 1. CLI 的更新
+在执行 vite 命令启动项目时，终端的界面和之前会有所不同，而更重要的是，为了避免 Vite 开发服务的端口和别的应用冲突，默认的端口号从之前的 3000 变成了 5173。
+
+#### 2. 开箱即用的 WebSocket 连接策略
+Vite 2 中有存在一个痛点，即在存在代理的情况下(比如 Web IDE)需要我们手动配置 WebSocket 使 HMR 生效。目前 Vite 内置了一套更加完善的 WebSocket 连接策略，自动满足更多场景的 HMR 需求。
+
+#### 3. 服务冷启动性能提升
+Vite 3.0 在服务冷启动方面做了非常多的工作，来最大程度提升项目启动的速度。
+
+首先我们来盘点一下 Vite 2.x 阶段服务冷启动的一些问题。
+
+从 Vite 2.0 到 2.9 版本之前，Vite 会在服务启动之前进行依赖预构建，也就是使用 Esbuild 将项目中使用到的依赖扫描出来(Scan)，然后分别进行一次打包(Optimize)。
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/c70c2bcca11049e0bc68c0f3171ce613~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
+
+这样会造成两个问题:
+- 依赖预构建会阻塞 Dev Server 启动，但其实不阻塞的情况下，Dev Server 也可以正常启动。
+- 当某些 Vite 插件手动注入了 import 语句，比如调用 `babel-plugin-import` 添加`import Button from 'antd/lib/button'`，就会导致 Vite 的二次预构建，因为 `antd/lib/button` 的引入代码由 Vite 插件注入，属于 Dev Server 运行时发现的依赖，冷启动阶段无法扫描到。
+
+所谓的二次预构建包含两个步骤，一是需要将所有的依赖全量预构建，二是由于依赖更新，页面需要进行 reload，加载最新的依赖代码。这样会导致 Dev Server 性能明显下降，尤其是在新增依赖较多的场景下，很容易出现浏览器**卡住**的情况。因此二次预构建也是需要极力避免的。当时 [vite-plugin-optimize-persist](https://github.com/antfu/vite-plugin-optimize-persist) 就是为了解决二次预构建带来的问题，通过持久化的方式记录 Dev Server 运行时扫描到的依赖，从而让首次预构建便可以感知到，避免二次预构建的发生。
+
+到了 2.9 版本，Vite 将预构建的逻辑做了一次整体的重构，最后的效果是下面这样的:
+- Dev Server 启动后预构建(Optimize 阶段)在后台执行，也就是预构建不再阻塞 Dev Server 的启动，只需要等待 Scan 阶段完成，不过通常这个阶段的开销非常小。
+
+  ![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/e7a3508c7f794cdfa04cc1bc53dfbe40~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
+- 如果某些依赖是 Dev Server 运行时才发现的，那么 Vite 会尽可能地复用已有预构建产物，尽量不进行 page reload。
+> 具体实现大家可以去查看这个 [PR](https://github.com/vitejs/vite/pull/6758)
+
+那问题就完全解决了吗？其实并不是，在某些场景下，Vite 仍然不可避免地需要二次预构建。如下面的这个例子:
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/9c34a6a46e494eef8dda6fc80a4bef5f~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
+
+A 和 B 都是项目的第三方依赖，它们也同时依赖 C。那么当 Vite 预构建 A 的时候，将会 A 和 C 一起进行打包。但 Vite 在运行时发现了依赖 B，而 A 和 B 需要共享 C 的代码，这样 C 的代码可能就会被抽离成一个公共的 chunk，因此之前 A 的预构建产物可能就发生变化了，那么此时 Vite 必须要强制刷新页面，让浏览器使用最新的预构建产物。这仍然是一个二次预构建(所有依赖再次打包 + page reload)的过程。
+
+总体而言，2.9 版本解决了预构建阻塞服务启动的问题，但并没有完全解决二次预构建的问题。
+
+但在 Vite 3.0，二次预构建的问题也得到了根本的解决。那 Vite 3.0 是如何做到的呢？
+
+核心的解决思路在于`延迟处理`，即把预构建的行为延迟到**页面加载的最后阶段**进行，此时 Vite 已经编译完了所有的源文件，可以准确地记录下所有需要预构建的依赖(包括 Vite 插件添加的一些依赖)，然后统一进行预构建，将预构建的产物响应给给浏览器即可。
+
+因此，与 Vite 2.0 相比，Vite 3.0 在冷启动阶段所做的优化主要有两个方面:
+- 预构建不再阻塞 Dev Server 的启动，真正做到服务秒启动的效果；
+- 从根本上防止二次预构建的发生。
+
+#### 4. import.meta.glob 语法更新
+Vite 3.0 对 `import.meta.glob` 的实现进行了重写，支持了更加灵活的 glob 语法，增加了如下的一些特性:
+- 多种模式匹配:
+  ~~~ts
+  import.meta.glob(["./dir/*.js", "./another/*.js"]);
+  ~~~
+- 否定模式(!):
+  ~~~ts
+  import.meta.glob(["./dir/*.js", "!**/bar.js"]);
+  ~~~
+- 命名导入，可以更好地做到 Tree Shaking:
+  ~~~ts
+  import.meta.glob("./dir/*.js", { import: "setup" });
+  ~~~
+- 自定义 query 参数:
+  ~~~ts
+  import.meta.glob("./dir/*.js", { query: { custom: "data" } });
+  ~~~
+- 指定 eager 模式，替换掉原来`import.meta.globEager`:
+  ~~~ts
+  import.meta.glob("./dir/*.js", { eager: true });
+  ~~~
+
+### 三、生产阶段的更新
+#### 1. SSR 产物默认使用 ESM 格式
+在当下的社区生态中，众多 SSR 框架已经在使用 ESM 格式作为默认的产物格式。Vite 3.0 也积极拥抱社区，支持 SSR 构建默认打包出 ESM 格式的产物。
+
+#### 2. Relative Base 支持
+Vite 3.0 正式支持 Relative Base(即配置`base: ''`)，主要用于构建时无法确定 base 地址的场景。
+
+### 四、实验性功能
+#### 1. 更细粒度的 base 配置
+在某些场景下，我们需要将不同的资源部署到不同的 CDN 上，比如将图片部署到单独的 CDN，和 JS/CSS 的部署服务区分开来。但 2.x 的版本仅支持统一的部署域名，即`base` 配置。在 3.0 中，你可以通过 `renderBuiltUrl` 进行更细粒度的配置:
+~~~ts
+{
+  experimental: {
+    renderBuiltUrl: (filename: string, { hostType: 'js' | 'css' | 'html' }) => {
+      if (hostType === 'js') {
+        return { runtime: `window.__toCdnUrl(${JSON.stringify(filename)})` }
+      } else {
+        return 'https://cdn.domain.com/assets/' + filename
+      }
+    }
+  }
+}
+~~~
+#### 2. Esbuild 预构建用于生产环境
+这应该是 Vite 架构上非常大的一个改动: 将原来仅仅用于开发阶段的依赖预构建功能应用在生产环境。在 Vite 2.x 中，开发阶段使用 Esbuild 来打包依赖，而在生产环境使用 Rollup 进行打包，用 `@rollupjs/plugin-commonjs` 来处理 cjs 的依赖，这样做会导致依赖处理的不一致问题，造成一些生产构建中的 bug。
+
+但 Vite 3.0 中支持通过配置将 Esbulid 预构建同时用于开发环境和生产环境，仅添加`optimizeDeps.disabled: false` 的配置即可。不过这个改动确实比较大，Vite 团队不打算将此作为 v3 的正式更新内容，而是一个实验性质的功能，不会默认开启。
+
+顺便提一句，Rollup 将在接下来的几个月发布 v3 的大版本，要知道，Rollup 2.0 发布至今已经过去 2 年多的时间了，无论是 Rollup 还是 Vite 来讲，这都是一次非常重大的变更。由于 Vite 的架构非常依赖 Rollup，在 Rollup 发布 v3 之后，Vite 也将跟随着发布 Vite 的第 4 个 major 版本。所以，Vite 4.0 的到来也不远啦：）
+
+### 五、仓库内部的变化
+除了本身功能上的演进，Vite 的仓库本身也产生了不少的变化，从中我们也能了解到社区的一些动向:
+- 不再支持 Nodejs 12，需要 Node.js 14.18+ 的版本。
+- 单元测试和 E2E 测试从 Jest 完全迁移到 Vitest，一方面 Vitest 更快、体验更好，另一方面也能在 Vite 这样大型的仓库完善 Vitest 的生态，进一步提升 Vitest 稳定性。
+- VitePress 文档部分也参与 CI 流程。
+- 包管理器 pnpm 迁移至 v7。
+- 不管是 `Vite` 本身的包还是 E2E 中测试的项目，都在 package.json 中声明 `type: "module"`，即 Pure ESM 包，对外提供 ESM 格式的产物，将社区 Pure ESM 的趋势又推动了一步。
+- 官方所有的 Vite 插件都采用 `unbuild`(新一代库构建工具) 进行构建，`pluin-vue-jsx` 和 `plugin-legacy` 均迁移到了 TS 上。
+- 包体积优化。3.0 进一步优化 Vite 本身的产物和 node_modules 体积，将 `terser` 和 `node-forge` 的依赖移除，让用户进行按需安装(`node-forge` 的功能是实现 https 证书生成，可用 `@vitejs/plugin-basic-ssl` 插件替代)
+
+不得不说在自身包体积的优化方面， Vite 还是做的很细致的，这也是很多库开发者忽视的一点，有时候加个插件就得安装动辄上百 MB 的依赖，导致项目的 node_modules 最后变得非常臃肿，此时不妨学习一下 Vite 是怎么优化自身体积的。
+
+### 六、未来规划
+首先在 Vite 3.0 发布之后会重点保证 3.0 的稳定性，解决目前的一系列 issue。
+
+其次，Rollup 团队将在接下来的几个月发布新的 major 版本，Vite 将持续跟进，紧接着发布 v4 版本，并在 v4 版本中将目前的一些实践性功能稳定下来。
 
 
 
