@@ -1356,7 +1356,7 @@ const updateComponentPreRender = (instance, nextVNode, optimized) => {
 ![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/f0088d60c2054ec9b204f662e55d22cc~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
 
 
-## 渲染器:数组子节点的 diff 算法
+## 渲染器:数组子节点的 DIFF 算法
 
 ### 1. 从头比对
 `Vue 3` 的 `diff` 算法第一步就是进行新老节点从头比对的方式来判断是否是同类型的节点：
@@ -1690,19 +1690,176 @@ newIndexToOldIndexMap = [5, 3, 4, 0]
 ~~~
 而且此时的 `moved` 也被标记为 `true`。
 
+### 移动和增加新节点
+通过前面的操作，我们完成了对旧节点的移除和更新，那么接下来就是需要进行对节点的移动和新节点的增加了：
+~~~ts
+// 根据 newIndexToOldIndexMap 求取最长公共子序列
+const increasingNewIndexSequence = moved
+  ? getSequence(newIndexToOldIndexMap)
+  : EMPTY_ARR
+// 最长公共子序列尾部索引  
+j = increasingNewIndexSequence.length - 1
+// 从尾部开始遍历
+for (i = toBePatched - 1; i >= 0; i--) {
+  const nextIndex = s2 + i
+  const nextChild = c2[nextIndex]
+  const anchor = nextIndex + 1 < l2 ? c2[nextIndex + 1].el : parentAnchor
+  // 如果新子序列中的节点在旧子序列中不存在，则新增节点
+  if (newIndexToOldIndexMap[i] === 0) {
+    patch(null, nextChild, container, anchor, parentComponent, parentSuspense, isSVG)
+  } else if (moved) {
+    // 如果需要移动且
+    // 没有最长递增子序列
+    // 当前的节点不在最长递增子序列中
+    if (j < 0 || i !== increasingNewIndexSequence[j]) {
+      move(nextChild, container, anchor, MoveType.REORDER)
+    } else {
+      j--
+    }
+  }
+}
+~~~
+**Step 1：** 这里针对 `moved` 是 `true` 的情况，则会进行求取最长递增子序列的索引操作。
+
+什么是最长递增子序列？简单来说指的是找到一个特定的最长的子序列，并且子序列中的所有元素单调递增。本例中，`newIndexToOldIndexMap = [5, 3, 4, 0]` 最长递增子序列的值为 `[3, 4]`, 对应到 `newIndexToOldIndexMap` 中的索引即 `increasingNewIndexSequence = [1, 2]`。关于具体的算法细节，我们后面再详细探讨。
+
+**Step 2：** 从尾部开始遍历新的子序列，在遍历的过程中，如果新子序列中的节点在旧子序列中不存在，也就是 `newIndexToOldIndexMap[i] === 0`，则新增节点。
+
+**Step 3：** 判断是否存在节点移动的情况，如果存在的话则看节点的索引是不是在最长递增子序列中，如果不在，则将它移动到锚点的前面，否则仅移动最长子序列的尾部指针。
+
+针对上述例子中，新的子序列为 `e,c,d,i`。最长递增子序列的索引为 `[1, 2]`。开始遍历到 `i` 节点时，因为 `newIndexToOldIndexMap[i] = 0` 所以新增，然后遍历到 `c,d` 节点，因为存在于最长子序列中，所以最后 `j = -1`。当遍历到 `e` 节点时，此时 `j = -1` 并且 `e` 节点不存在于最长递增子序列索引中，索引最后一步就是把节点 `e` 进行一次移动：
+~~~ts
+move(nextChild, container, anchor, MoveType.REORDER)
+~~~
+其中 `anchor` 是参照物，记录着上一次更新的节点信息，也就是节点 `c` 的信息，所以这里的意思就是将节点 `e` 移动到节点 `c` 前面。
+
+至此，完成了所有节点的增、删、更新、移动的操作，此次操作结果如下：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/1dcba8989ae348e6af85333a22280da2~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
+
+### 最长递增子序列
+求最长递增子序列是 LeetCode 上的一道经典算法题，原题：[300. 最长递增子序列](https://leetcode.cn/problems/longest-increasing-subsequence/)。
+
+什么是上升子序列？简单来说指的是找到一个特定的最长的子序列，并且子序列中的所有元素单调递增。
+
+假设我们的序列为 `[5, 3, 4, 9]` ，那么最长的递增子序列是 `[3, 4]`。
+
+那么如何找到最长的递增子序列呢？`Vue` 内部使用的是一套 `贪心 + 二分查找` 的算法，关于贪心和二分查找的解释如下。
+1. 贪心算法：贪心算法在每一步都做出了当时看起来最佳的选择，也就是说，它总是做出局部最优的选择，寄希望这样的选择能导致全局最优解。[leetCode 455. 分发饼干](https://leetcode.cn/problems/assign-cookies/description/)。
+2. 二分查找：每次的查找都是和区间的中间元素对比，将待查找的区间缩小为一半，直到找到目标元素，或者区间被缩小为 0（没找到）。[leetCode 704. 二分查找](https://leetcode.cn/problems/binary-search/)。
+
+那么这里我们再结合一下贪心算法的思想，在求取最长上升子序列时，对于同样长度是二的序列 `[2, 3]` 一定比 `[2, 5]` 好，因为要想让子序列尽可能地长，那么上升得尽可能慢，这样潜力更大。
+
+所以我们可以创建一个临时数组，用来保存最长的递增子序列，如果当前遍历的元素大于临时数组中的最后一个元素（也就是临时数组的最大值）时，那么将其追加到临时数组的尾部，否则，查找临时数组，找到第一个大于该元素的数并替换它，这样就保证了临时数组上升时最慢的。因为是单调递增的序列，我们也可以在临时数组中用二分查找，降低时间复杂度。
+
+以输入序列 `[1, 4, 5, 2, 8, 7, 6, 0]` 为例，根据上面算法的描述，我们大致可以得到如下的计算步骤：
+1. `[1]`
+2. `[1, 4]`
+3. `[1, 4, 5]`
+4. `[1, 2, 5]`
+5. `[1, 2, 5, 8]`
+6. `[1, 2, 5, 7]`
+7. `[0, 2, 5, 6]`
+
+可以看到，如果单纯地按照上述算法的模式，得到的结果的长度虽然一致，但位置顺序和值并不符合预期，预期结果是 `[1, 4, 5, 6]`。那么在 `Vue` 中是如何解决这个顺序和值错乱的问题呢？
+
+我们一起来看看源码的实现：
+~~~ts
+function getSequence (arr) {
+  const p = arr.slice()
+  const result = [0]
+  let i, j, u, v, c
+  const len = arr.length
+  for (i = 0; i < len; i++) {
+    const arrI = arr[i]
+    // 排除等于 0 的情况
+    if (arrI !== 0) {
+      j = result[result.length - 1]
+      // 与最后一项进行比较
+      if (arr[j] < arrI) {
+        // 存储在 result 更新前的最后一个索引的值
+        p[i] = j
+        result.push(i)
+        continue
+      }
+      u = 0
+      v = result.length - 1
+      // 二分搜索，查找比 arrI 小的节点，更新 result 的值
+      while (u < v) {
+        // 取整得到当前位置
+        c = ((u + v) / 2) | 0
+        if (arr[result[c]] < arrI) {
+          u = c + 1
+        }
+        else {
+          v = c
+        }
+      }
+      if (arrI < arr[result[u]]) {
+        if (u > 0) {
+          // 正确的结果
+          p[i] = result[u - 1]
+        }
+        // 有可能替换会导致结果不正确，需要一个新数组 p 记录正确的结果
+        result[u] = i
+      }
+    }
+  }
+  u = result.length
+  v = result[u - 1]
+
+  // 回溯数组 p，找到最终的索引
+  while (u-- > 0) {
+    result[u] = v
+    v = p[v]
+  }
+  return result
+}
+~~~
+其中 `result` 中存储的是长度为 `i` 的递增子序列最小末尾值的索引。`p` 是来存储在每次更新 `result` 前最后一个索引的值，并且它的 `key` 是这次要更新的 `result` 值：
+~~~ts
+ // 插入
+ p[i] = j
+ result.push(i)
+ // 替换
+ p[i] = result[u - 1]
+ result[u] = i
+~~~
+对于上述的实例，我们在进行最后一步回溯数组 `p` 之前，得到的数据机构如下：
+~~~ts
+result = [ 0, 3, 2, 6 ] // => [0, 2, 5, 6]
+
+p = [1, 0, 1, 0, 2, 2, 2]
+~~~
+从 `result` 最后一个元素 `6` 对应的索引 `6` 开始回溯，可以看到 `p[6] = 2`，`p[2] = 1`，`p[1] = 0`，所以通过对 `p` 的回溯，得到最终的 `result` 值是 `[0, 1, 2, 6]`，也就找到最长递增子序列的最终索引了。
+
+### 番外
+至此我们介绍完了关于 `Vue3` 的 `diff` 算法。接下来小伙伴们可以思考两个问题：
+1. 为什么 `Vue 3` 不再沿用之前 `Vue 2` 的双端 `diff` 算法而改成现在的这种模式呢？
+2. 我们使用 `v-for` 编写列表时为什么不建议使用 `index` 作为 `key`?
+
+#### 解答第一个问题
+在 `Vue2` 里 `diff` 会进行：
+1. 头和头比
+2. 尾和尾比
+3. 头和尾比
+4. 尾和头比
+5. 都没有命中的对比
+
+在 `Vue3` 里 `diff` 会进行：
+1. 头和头比
+2. 尾和尾比
+3. 基于最长递增子序列进行移动/添加/删除
+
+在 `Vue2` 中，头尾比对和尾头比对就算发现新老节点是属于 `sameVnode` 时还是需要进行节点位置的移动。另外在没有命中 `1-4` 步骤的情况下进行新旧节点的映射关系查找再进行位置移动也不是性能最优的方式。最优的方式本小节已经讲解到，就是基于最长递增子序列进行移动/添加/删除。
+
+在 `Vue3` 中，基于最长递增子序列进行移动/添加/删除 的`diff`更新，已经涵盖了 `Vue2` 的 `3-5` 步骤，而且性能是最优解。所以相对于 `Vue2`，`Vue3` 在`diff`算法方面做了很大的优化工作。
+
+#### 解答第二个问题
+[参考这篇文章](https://juejin.cn/post/6844904113587634184#heading-9)
 
 
-
-
-
-
-
-
-
-
-
-
-
+## 响应式原理:基于 Proxy 的响应式
 
 
 
