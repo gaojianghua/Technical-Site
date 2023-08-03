@@ -2172,29 +2172,438 @@ export function trackEffects(
 >注意到 `Proxy` 在访问对象属性时才递归执行劫持对象属性，相比 `Object.defineProperty` 在定义时就遍历把所有层级的对象设置成响应式而言，在性能上有所提升。
 
 ### 2. set
+上面说完了 `get` 的流程，我们了解了依赖收集后的数据结构存储在了 `targetMap` 中，接下来我们接着看 `set` 的过程：
+~~~ts
+const set = /*#__PURE__*/ createSetter()
+~~~
+可以看到核心其实通过 `createSetter` 来实现的：
+~~~ts
+function createSetter(shallow = false) {
+  return function set(target, key, value, receiver) {
+    let oldValue = target[key]
+    // 不是浅层响应式，这里默认是 false
+    if (!shallow) {
+      // 不是浅层响应式对象
+      if (!isShallow(value) && !isReadonly(value)) {
+        oldValue = toRaw(oldValue)
+        value = toRaw(value)
+      }
+      // ...
+    } else {
+      // 在浅模式中，对象被设置为原始值，而不管是否是响应式
+    }
 
+    const hadKey =
+      isArray(target) && isIntegerKey(key)
+        ? Number(key) < target.length
+        : hasOwn(target, key)
+    const result = Reflect.set(target, key, value, receiver)
+     // 如果目标的原型链也是一个 proxy，通过 Reflect.set 修改原型链上的属性会再次触发 setter，这种情况下就没必要触发两次 trigger 了
+    if (target === toRaw(receiver)) {
+      if (!hadKey) {
+        trigger(target, TriggerOpTypes.ADD, key, value)
+      } else if (hasChanged(value, oldValue)) {
+        trigger(target, TriggerOpTypes.SET, key, value, oldValue)
+      }
+    }
+    return result
+  }
+}
+~~~
+可以看到 `set` 的核心逻辑是先根据是否是浅层响应式来确定原始值和新值，这里默认不是浅层的响应式，所以会先把原始值和新值进行 `toRaw` 转换，然后通过 `Reflect.set` 设置值，最后通过 `trigger` 函数派发通知 ，并依据 `key` 是否存在于 `target` 上来确定通知类型是 `add`（新增） 还是 `set`（修改）。
 
+接下来核心就是 `trigger` 的逻辑，是如何实现触发响应的:
+~~~ts
+export function trigger(target,type,key,newValue,oldValue,oldTarget) {
+  const depsMap = targetMap.get(target)
+  if (!depsMap) {
+    return
+  }
+  let deps: (Dep | undefined)[] = []
+  if (type === TriggerOpTypes.CLEAR) {
+    deps = [...depsMap.values()]
+  } else if (key === 'length' && isArray(target)) {
+    depsMap.forEach((dep, key) => {
+      if (key === 'length' || key >= toNumber(newValue)) {
+        deps.push(dep)
+      }
+    })
+  } else {
+    if (key !== void 0) {
+      deps.push(depsMap.get(key))
+    }
 
+    switch (type) {
+      case TriggerOpTypes.ADD:
+        if (!isArray(target)) {
+          deps.push(depsMap.get(ITERATE_KEY))
+          if (isMap(target)) {
+            deps.push(depsMap.get(MAP_KEY_ITERATE_KEY))
+          }
+        } else if (isIntegerKey(key)) {
+          deps.push(depsMap.get('length'))
+        }
+        break
+      case TriggerOpTypes.DELETE:
+        if (!isArray(target)) {
+          deps.push(depsMap.get(ITERATE_KEY))
+          if (isMap(target)) {
+            deps.push(depsMap.get(MAP_KEY_ITERATE_KEY))
+          }
+        }
+        break
+      case TriggerOpTypes.SET:
+        if (isMap(target)) {
+          deps.push(depsMap.get(ITERATE_KEY))
+        }
+        break
+    }
+  }
 
+  if (deps.length === 1) {
+    if (deps[0]) {
+      triggerEffects(deps[0])
+    }
+  } else {
+    const effects: ReactiveEffect[] = []
+    for (const dep of deps) {
+      if (dep) {
+        effects.push(...dep)
+      }
+    }
+    triggerEffects(createDep(effects))
+  }
+}
+~~~
+内容有点多，看起来有点头大，我们来简化一下：
+~~~ts
+export function trigger(target, type, key) {
+  const dep = targetMap.get(target)
+  dep.get(key).forEach(effect => effect.run())
+}
+~~~
+核心其实就是通过 `target` 找到 `targetMap` 中的 `dep`，再根据 `key` 来找到所有的副作用函数 `effect` 遍历执行。副作用函数就是上面 `get` 收集起来的。
 
+这里有个有意思的地方是对数组的操作监听，我们来看一段代码：
+~~~ts
+const state = reactive([]);
 
+effect(() => {
+  console.log(`state: ${state[1]}`)
+});
 
+// 不会触发 effect
+state.push(0);
 
+// 触发 effect
+state.push(1);
+~~~
+上面的 `demo` 中，我们第一次访问了 `state[1]`， 所以，对 `state[1]` 进行了依赖收集，而第一次的 `state.push(0)` 设置的是 `state` 的第 `0` 个元素，所以不会触发响应式更新。而第二次的 `push` 触发了对 `state[1]` 的更新。这看起来很合理，没啥问题。那么我们再来看另外一个示例：
+~~~ts
+// 响应式数据
+const state = reactive([])
 
+// 观测变化
+effect(() => console.log('state map: ', state.map(item => item))
 
+state.push(1)
+~~~
+按照常理来说，`state.map` 由于 `state` 是个空数组，所以理论上不会对数组的每一项进行访问，所以 `state.push(1)` 理论上也不会触发 `effect`。但实际上是会的，为什么呢？我们再来看一下一个 `proxy` 的 `demo`：
+~~~ts
+const raw = []
+const arr = new Proxy(raw, {
+  get(target, key) {
+    console.log('get', key)
+    return Reflect.get(target, key)
+  },
+  set(target, key, value) {
+    console.log('set', key)
+    return Reflect.set(target, key, value)
+  }
+})
 
+arr.map(v => v)
+~~~
+可以看到打印的内容如下：
+~~~
+get map
+get length
+get constructor
+~~~
+可以看到 `map` 函数的操作，会触发对数组的 `length` 访问！这就有意思了，当访问数组 `length` 的时候，我们进行了对 `state` 的依赖收集，而数组的 `push` 操作也会改变 `length` 的长度，如果我们对 `length` 做监听，那么此时便会触发 `effect`！而 `Vue` 也是这么做的，也就是这段代码：
+~~~ts
+deps.push(depsMap.get('length'))
+~~~
+同理，对于 `for in`, `forEach`, `map ...` 都会触发 `length` 的依赖收集，从而 `pop`, `push`, `shift...` 等等操作都会触发响应式更新！
 
+另外，除了数组，对象的 `Object.keys` , `for ... of ...` 等等对象遍历操作都会触发响应式的依赖收集，这是因为 `Vue` 在定义 `Proxy` 的时候，定义了 `ownKeys` 这个函数：
+~~~ts
+function ownKeys(target) {
+  track(target, TrackOpTypes.ITERATE, isArray(target) ? 'length' : ITERATE_KEY)
+  return Reflect.ownKeys(target)
+}
+~~~
+`ownKeys` 函数内部执行了 `track` 进行了对 `Object` 的 `ITERATE_KEY` 的依赖收集。而在 `setter` 的时候，则对 `ITERATE_KEY` 进行了响应式触发：
+~~~ts
+deps.push(depsMap.get(ITERATE_KEY))
+~~~
 
+### 课外知识
+在上面的源码中出现了一个有意思的标识符 `/*#__PURE__*/`。要说这个东西，那就需要说到和这玩意相关的 `Tree-Shaking` 副作用了。我们知道 `Tree-Shaking` 可以删除一些 `DC（dead code）` 代码。但是对于一些有副作用的函数代码，却是无法进行很好的识别和删除，举个例子：
+~~~ts
+foo()
 
+function foo(obj) {
+  obj?.a
+}
+~~~
+上述代码中，`foo` 函数本身是没有任何意义的，仅仅是对对象 `obj` 进行了属性 `a` 的读取操作，但是 `Tree-Shaking` 是无法删除该函数的，因为上述的属性读取操作可能会产生副作用，因为 `obj` 可能是一个响应式对象，我们可能对 `obj` 定了一个 `getter` 在 `getter` 中触发了很多不可预期的操作。
 
+如果我们确认 `foo` 函数是一个不会有副作用的纯净的函数，那么这个时候 `/*#__PURE__*/` 就派上用场了，其作用就是告诉打包器，对于 `foo` 函数的调用不会产生副作用，你可以放心地对其进行 `Tree-Shaking`。
 
+另外，值得一提的是，在 `Vue 3` 源码中，包含了大量的 `/*#__PURE__*/` 标识符，可见 `Vue 3` 对源码体积的控制是多么的用心！
 
+## 响应式原理:副作用函数探秘
+前面我们说到了 `Reactive` 会在 `proxy getter` 的时候收集 `effect` 依赖，在 `proxy setter` 的时候触发 `effect` 的执行。那么 `effect` 副作用函数到底是个什么？以及是如何被收集起来的呢？
 
+### effect
+找到源码中关于 `effect` 部分的定义：
+~~~ts
+export function effect (fn, options) {
+  // 如果 fn 已经是一个 effect 函数了，则指向原始函数
+  if (fn.effect) {
+    fn = fn.effect.fn
+  }
+  // 构造 _effect 实例
+  const _effect = new ReactiveEffect(fn)
+  
+  // options 初始化
+  if (options) {
+    extend(_effect, options)
+    if (options.scope) recordEffectScope(_effect, options.scope)
+  }
+  
+  // 如有 options 或者 不是懒加载，执行 _effect.run()
+  if (!options || !options.lazy) {
+    _effect.run()
+  }
+  
+  // 返回 _effect.run
+  const runner = _effect.run.bind(_effect)
+  runner.effect = _effect
+  return runner
+}
+~~~
+这个 `effect` 函数内部核心是通过 `ReactiveEffect` 类创建了一个 `_effect` 实例，从代码来看，`_effect` 上包含了一个 `run` 函数。默认 `effect` 是没有传入 `options` 参数的，所以这里直接执行了 `_effect.run()`。我们知道，`fn` 函数是在 `effect` 函数中的一个入参，比如：
+~~~ts
+const state = reactive({a: 1})
 
+effect(() => console.log(state.a))
+~~~
+根据上一小节，我们知道因为这里我们访问了 `state.a` 所以收集了副作用函数，但是需要知道的是这里的 `effect` 传入的是一个 `fn`，所以要想访问 `state.a` 那这个 `fn` 必须要执行才可以。那是在哪里执行的呢？接下来看一下 `ReactiveEffect` 的实现：
+~~~ts
+// 用于记录位于响应上下文中的effect嵌套层次数
+let effectTrackDepth = 0
+// 二进制位，每一位用于标识当前effect嵌套层级的依赖收集的启用状态
+export left trackOpBit = 1
+// 表示最大标记的位数
+const maxMarkerBits = 30
 
+// 当前活跃的 effect
+let activeEffect;
 
+export class ReactiveEffect {
+  // 用于标识副作用函数是否位于响应式上下文中被执行
+  active = true
+  // 副作用函数持有它所在的所有依赖集合的引用，用于从这些依赖集合删除自身
+  deps = []
+  // 指针为，用于嵌套 effect 执行后动态切换 activeEffect
+  parent = undefined
+  // ...
+  run() {
+    // 若当前 ReactiveEffect 对象脱离响应式上下文
+    // 那么其对应的副作用函数被执行时不会再收集依赖
+    if (!this.active) {
+      return this.fn()
+    }
+    
+    // 缓存是否需要收集依赖
+    let lastShouldTrack = shouldTrack
+    
+    try {
+      // 保存上一个 activeEffect 到当前的 parent 上
+      this.parent = activeEffect
+      // activeEffect 指向当前的 effect
+      activeEffect = this
+      // shouldTrack 置成 true
+      shouldTrack = true
+      // 左移操作符 << 将第一个操作数向左移动指定位数
+      // 左边超出的位数将会被清除，右边将会补零。
+      // trackOpBit 是基于 1 左移 effectTrackDepth 位
+      trackOpBit = 1 << ++effectTrackDepth
+      
+      // 如果未超过最大嵌套层数，则执行 initDepMarkers
+      if (effectTrackDepth <= maxMarkerBits) {
+        initDepMarkers(this)
+      } else {
+        cleanupEffect(this)
+      }
+      // 这里执行了 fn
+      return this.fn()
+    } finally {
+      if (effectTrackDepth <= maxMarkerBits) {
+        // 用于对曾经跟踪过，但本次副作用函数执行时没有跟踪的依赖采取删除操作。
+        // 新跟踪的 和 本轮跟踪过的都会被保留
+        finalizeDepMarkers(this)
+      }
+      
+      // << --effectTrackDepth 右移动 effectTrackDepth 位
+      trackOpBit = 1 << --effectTrackDepth
+      
+      // 返回上个 activeEffect
+      activeEffect = this.parent
+      // 返回上个 shouldTrack
+      shouldTrack = lastShouldTrack
+      // 情况本次的 parent 指向
+      this.parent = undefined
+    }
+  }
+}
+~~~
+大致看一眼，我们可以看到在 `ReactiveEffect` 中是执行了 `this.fn()` 的，这也就解释了 `effect` 中的回调函数 `fn` 是在这里被调用的。接下来详细研究一下这个 `ReactiveEffect`。
 
+但这段代码看起来不是很长，但涉及了好几个概念，我们来一个个看。
+#### 1. parent 的作用
+为什么 `ReactiveEffect` 要设计一个 `parent` 这样一个看似没啥用的变量指针来存储上一次的 `activeEffect` 呢？如果改成下面这样不是更简单吗？
+~~~ts
+run() {
+  if (!this.active) {
+    return this.fn();
+  }
+  // 初始化
+  shouldTrack = true;
+  activeEffect = this;
 
+  const result = this.fn();
+  
+  // 重置
+  shouldTrack = false;
+  
+  return result;
+}
+~~~
+其实对于下面这样的代码：
+~~~ts
+const state = reactive({a: 1})
+
+effect(() => console.log(state.a))
+
+state.a++
+~~~
+`effect` 函数内调用 `ReactiveEffect` 实例的 `run` 函数。`run` 函数执行的时候，把 `activeEffect` 指向 `this`。然后执行 `effect` 传入的 `fn` 函数，函数在执行的时候访问了 `state.a` 触发了 `getter` 钩子。回顾一下上一节的内容，`getter` 的时候有触发添加 `activeEffect` 的功能：
+~~~ts
+// 把 activeEffect 添加到 dep 中
+dep.add(activeEffect!)
+~~~
+而 `activeEffect` 正是这里的 `this`。当执行 `state.a++` 时，访问了`state.a` 的 `setter`。上一节也说了，`setter` 的执行会调用 `effect.run` 函数：
+~~~ts
+// triggerEffects
+effect.run();
+~~~
+所以又会执行 `fn`。
+
+到这里看似很完美，那么我们再来看另外一个例子🌰：
+~~~ts
+const state = reactive({
+  a: 1,
+  b: 2
+});
+
+// ef1
+effect(() => {
+  // ef2
+  effect(() => console.log(`b: ${state.b}`))
+  console.log(`a: ${state.a}`)
+});
+
+state.a ++
+~~~
+按照上面的逻辑，在第一次 `effect` 执行的时候，`activeEffect = ef1` 然后再执行内部的 `effect`， 此时 `activeEffect = ef2` 然后 `ef2` 执行完成回到 `ef1` 函数体内，此时再访问 `state.a` 触发对 `a` 的依赖收集，但收集到的却是 `ef2`。那么最终打印的是：
+~~~ts
+b: 2
+a: 1
+b: 2
+~~~
+很明显不符合我们的要求，我们期望的是输出：
+~~~ts
+b: 2
+a: 1
+b: 2
+a: 2
+~~~
+这时候 `parent` 就排上用场了，当为 `effect` 加上 `parent` 属性后，我们再来捋一下整体的流程。
+1. 执行 `ef1` 的时候，`activeEffect` 指向 `ef1`，此时 `parent` 是 `undefined`。
+2. 执行 `ef1 fn` 遇到了 `ef2`，调用 `ef2` 此时 `ef2` 的 `parent` 指向 `ef1`， `activeEffect` 指向 `ef2`。然后执行 `ef2` 的 `fn`。
+3. `ef2` 的 `fn` 执行的时候，访问了 `state.b` 依赖收集 `ef2`。执行完成后，`activeEffect = this.parent `又把 `activeEffect` 指向了 `ef1`。
+4. 返回 `ef1` 的 `fn` 体继续执行，此时访问 `state.a` 依赖收集 `activeEffect` 为 `ef1`。
+5. 触发 `state.a` 的 `setter`，调用 `a` 的副作用 `ef1`，依次打印……
+
+到这里相信各位小伙伴已经清楚了 `parent` 的作用了，那就是**通过 `parent` 这个标记，来回切换 `activeEffect` 的指向，从而完成对嵌套 `effect` 的正确的依赖收集**。
+
+#### 2. 依赖清理
+在说依赖清理之前，再来看一个有意思的例子：
+~~~ts
+const state = reactive({
+  a: 1,
+  show: true
+});
+
+effect(() => {
+  if (state.show) {
+    console.log(`a: ${state.a}`)
+  }
+});
+
+state.a ++
+
+setTimeout(() => {
+  state.show = false
+  state.a ++
+}, 1000)
+~~~
+上面的例子中，我们在 `effect` 中完成了对 `show` 和 `a` 的依赖收集，然后 `1s` 后，我们改变了 `show` 的状态为 `false`。此时 `effect` 内的函数中的 `console.log` 将永远不会执行，然后再触发 `state.a++` 的动作，访问 `a` 的 `getter`，如果没有依赖清理，那么按照之前的做法，测试也会触发 `effect.fn` 的执行，但这个执行其实没意义的，因为 `a` 已经没有被使用了，是一个永远不会被访问到的变量，造成了性能浪费。所以我们需要删除 `a` 的副作用函数，让它不要执行。
+
+接下来一起来看看 `Vue` 是怎么做的吧！这里涉及到的内容有点多，我们先一个个解释，首先补习一下关于 `js` 的一些操作符的基础知识。
+
+##### 1. 左移（<<）
+左移操作符 (`<<`) 将第一个操作数转换成 2 进制后向左移动指定位数，左边超出的位数将会被清除，右边将会补零。
+~~~ts
+const a = 1;         // 00000000000000000000000000000001
+const b = 1;       
+
+console.log(a << b); // 00000000000000000000000000000010
+// expected output: 2
+~~~
+
+##### 2. 位或操作（|）
+位或操作符（|）， 如果两位之一为 1，则设置每位为 1。
+~~~ts
+const a = 5;        // 00000000000000000000000000000101
+const b = 3;        // 00000000000000000000000000000011
+
+console.log(a | b); // 00000000000000000000000000000111
+// expected output: 7
+~~~
+
+##### 3. 按位与（&）
+按位与运算符 (`&`) 在两个操作数对应的二进位都为 `1` 时，该位的结果值才为 `1`，否则为 `0`。
+~~~ts
+const a = 5;        // 00000000000000000000000000000101
+const b = 3;        // 00000000000000000000000000000011
+
+console.log(a & b); // 00000000000000000000000000000001
+// expected output: 1
+~~~
 
 
 

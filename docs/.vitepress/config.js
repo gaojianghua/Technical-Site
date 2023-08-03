@@ -73,6 +73,8 @@ function sidebarGuide() {
                 { text: 'Test', link: '/guide/test' },
                 { text: 'RxJS', link: '/guide/rxjs' },
                 { text: 'Electron', link: '/guide/electron' },
+                { text: 'Three', link: '/guide/three' },
+                { text: 'Micro-Frontends', link: '/guide/micro-frontends' },
             ],
         },
         {
@@ -101,8 +103,10 @@ function sidebarGuide() {
             items: [
                 { text: 'GoLang', link: '/guide/goLang' },
                 { text: 'Gin', link: '/guide/gin' },
+                { text: 'Grpc', link: '/guide/grpc' },
                 { text: 'Node', link: '/guide/node' },
                 { text: 'Nest', link: '/guide/nest' },
+                { text: 'Micro-Services', link: '/guide/micro-services' },
             ],
         },
         {
