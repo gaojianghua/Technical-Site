@@ -2605,19 +2605,177 @@ console.log(a & b); // 00000000000000000000000000000001
 // expected output: 1
 ~~~
 
+##### 4. 按位非（~）
+按位非运算符（~），反转操作数的位。
+~~~ts
+const a = 5;     // 00000000000000000000000000000101
+const b = -3;    // 11111111111111111111111111111101
+
+console.log(~a); // 11111111111111111111111111111010
+// expected output: -6
+
+console.log(~b); // 00000000000000000000000000000010
+// expected output: 2
+~~~
+有了这些基础的知识点后，再来认识几个变量。
+
+##### 1. effectTrackDepth
+用于记录位于响应上下文中的 `effect` 嵌套层次数，默认值为 `0`。
+~~~ts
+// effectTrackDepth = 0
+effect(() => {
+  // effectTrackDepth = 1
+  effect(() => {})
+})
+~~~
+##### 2. trackOpBit
+二进制位，每一位用于标识当前 `effect` 嵌套层级的依赖收集的启用状态。默认值为 `1`，即 `00000000000000000000000000000001`。
+##### 3. maxMarkerBits
+表示最大的 `effect` 嵌套的层次数，最大值为 `30`。
+
+好了，搞懂了这些操作符之后，我们来看看 `Vue` 的依赖清理是如何实现的，先来看不超过 `maxMarkerBits` 层级数的嵌套 `effect` 的依赖收集的过程，还以上面那个 `demo` 作为示例：
+~~~ts
+const state = reactive({
+  a: 1,
+  show: true
+});
+
+effect(() => {
+  if (state.show) {
+    console.log(`a: ${state.a}`)
+  }
+});
+
+state.a ++
+
+setTimeout(() => {
+  state.show = false
+  state.a ++
+}, 1000)
+~~~
+**Step 1**：`run` 函数执行的时候，`trackOpBit = 1 << ++effectTrackDepth` 这个语句执行完成后，得到 `effectTrackDepth = 1`；`trackOpBit.toString(2) = 00000000000000000000000000000010`。
+
+**Step 2**：因为 `effectTrackDepth < maxMarkerBits` ，所以执行 `initDepMarkers` 函数，因为这里的 `deps` 在初始化的时候还是个空数组，所以此函数未执行。
+~~~ts
+export const initDepMarkers = ({ deps }) => {
+  if (deps.length) {
+    for (let i = 0; i < deps.length; i++) {
+      deps[i].w |= trackOpBit // set was tracked
+    }
+  }
+}
+~~~
+**Step 3**：执行 `this.fn` 函数，先访问 `state.show`，触发了 `trackEffects`。
+~~~ts
+export function trackEffects(dep) {
+  let shouldTrack = false
+  if (effectTrackDepth <= maxMarkerBits) {
+    // 如果本轮副作用函数执行过程中已经访问并收集过，则不用再收集该依赖
+    if (!newTracked(dep)) {
+      // 设置 dep.n
+      dep.n |= trackOpBit
+      shouldTrack = !wasTracked(dep)
+    }
+  } else {
+    // Full cleanup mode.
+    shouldTrack = !dep.has(activeEffect!)
+  }
+
+  if (shouldTrack) {
+    dep.add(activeEffect!)
+    activeEffect!.deps.push(dep)
+  }
+}
+~~~
+这里需要额外了解 2 个函数：`wasTracked`（已经被收集过，缩写是 w） 和 `newTracked`（新收集的依赖，缩写是 `n`）。
+~~~ts
+export const wasTracked = dep => (dep.w & trackOpBit) > 0
+
+export const newTracked = dep => (dep.n & trackOpBit) > 0
+~~~
+进入 `trackEffects` 时，因为此时还没有为 `dep.n` 进行或运算赋值，所以 `state.show` 的 `newTracked = false`，`wasTracked = false`。
+
+所以计算得到 `shouldTrack = true`，最后将 `activeEffect` 收集进入 `dep` 中，同时执行了 `activeEffect.deps.push(dep)` 将 `dep` 存入了 `activeEffect` 的 `deps` 中。然后访问 `state.a` 重复上述操作。上述步骤执行完成后的 `activeEffect.deps` 如下：
+~~~ts
+[
+  {"w":0,"n": 00000000000000000000000000000010, [effect]},
+  {"w":0,"n": 00000000000000000000000000000010, [effect]}
+]
+~~~
+**Step 4**：最后执行 `finalizeDepMarkers` 函数，根据第 3 步，此时 `effect` 中的 `deps` 包含了 2 个 `dep`，分别是 `state.show` 和 `state.a`。 `finalizeDepMarkers` 函数内部执行了 `wasTracked`（已经被收集过，缩写是 `w`） 和 `newTracked`（新收集的依赖，缩写是 `n`） 函数，因为 `dep.w = 0` 所以 `wasTracked = false`。
+~~~ts
+export const finalizeDepMarkers = (effect: ReactiveEffect) => {
+  const { deps } = effect
+  if (deps.length) {
+    let ptr = 0
+    for (let i = 0; i < deps.length; i++) {
+      const dep = deps[i]
+      if (wasTracked(dep) && !newTracked(dep)) {
+        dep.delete(effect)
+      } else {
+        // 缩小依赖集合的大小
+        deps[ptr++] = dep
+      }
+      // clear bits
+      dep.w &= ~trackOpBit
+      dep.n &= ~trackOpBit
+    }
+    deps.length = ptr
+  }
+}
+~~~
+因为 `wasTracked = false`，因此 `finalizeDepMarkers` 处理后仍然将副作用函数保留在这两个属性对应的依赖集合中，同时把 `dep.w` 和 `dep.n` 重置回 `0`。
+~~~ts
+[{"w":0, "n":0, [effect]},{"w":0, "n":0, [effect]}]
+~~~
+**Step 5**：当执行 `state.show = false` 的时候，触发 `effect.run` 的执行，此时执行 `initDepMarkers` 时，因为已经存在了 `dep`，所以先访问 `state.show`。
+
+当执行到 `trackEffects` 时，此时的 `newTracked = false`，执行逻辑和之前一致。只不过因为 `state.show = false`，所以没有触发 `state.a` 的这一部分逻辑的处理，最后得到的结果为：
+~~~ts
+[
+  {
+    "w": 00000000000000000000000000000010,
+    "n": 00000000000000000000000000000010,
+    [effect]
+  },
+  {
+    "w": 00000000000000000000000000000010, 
+    "n": 0,
+    [effect]
+  }
+]
+~~~
+**Step 6**：最后执行 `finalizeDepMarkers` 时，如下。
+~~~ts
+if (wasTracked(dep) && !newTracked(dep)) {
+  dep.delete(effect)
+}
+~~~
+因为这里的 `state.a` 的 `wasTracked = true` 且 `newTracked` 为 `false`，所以执行了 `dep.delete(effect)` 将 `effect` 从 `dep` 中踢掉。
+
+**Step 7**：`1s` 后执行 `state.a++` 的操作，由于 `state.a` 中没有 `effect` 了，所以不会执行副作用函数。
+
+**总结**： `Vue` 在组件的 `effect` 执行之前，会根据 `dep` 的收集标记位 `w` 和 `n` 来进行清理依赖，删除之前 `state.a` 收集的 `effect` 依赖。这样当我们修改 `state.a` 时，由于已经没有依赖了，就不会触发 `effect` 重新执行。
+
+>注意，当 `effectTrackDepth` 大于 `30` 时，会调用 `cleanup` 来清理依赖，其实 `cleanup` 的原理就是依赖收集前全部删除所有的 `dep`，依赖收集时再一个个加进来，这个性能其实是比较差的，所以 `Vue 3.2` 改成了通过二进制标记位的方式来选择性删除和添加，提升了性能。关于这部分更多的细节，可以参考[这个PR](https://github.com/vuejs/core/pull/4017)。
+
+### 总结
+到这里，我们基本上讲完了 `Vue 3` 的响应式原理基础，如果有小伙伴了解 `Vue 2` 的响应式原理，应该清楚 `Vue2` 的响应式原理可以理解成如下一幅图：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/d27092e7846c4a47909cbba07b852799~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
+
+在 `Vue 2` 中，`Watcher` 就是依赖，有专门针对组件渲染的 `render watcher`。
+1. 依赖收集：组件在 `render` 的时候会访问模板中的数据，触发 `getter` 把 `watcher` 作为依赖收集。
+2. 触发渲染：当修改数据时，会触发 `setter`，通知 `watcher` 更新，进而触发了组件的重新渲染。
+
+相应地，在 `Vue 3` 中的响应式流程如下：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/e9dd98a0d60447b3bcde4df4facb00af~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
+
+可以看到，`Vue 3` 相对于 `Vue 2` 的响应式差别不大，主要就是劫持数据的方式改成用 `Proxy` 实现，以及收集的依赖由 `watcher` 实例变成了组件副作用函数 `effect`。另外，值得一提的是 `Vue 3` 在响应式设计上又多考虑了层级嵌套的依赖收集问题和不必要的依赖清理问题。
 
 
-
-
-
-
-
-
-
-
-
-
-
+## 响应式原理:Vue 3 的 nextTick
 
 
 
