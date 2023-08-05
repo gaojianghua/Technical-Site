@@ -3119,11 +3119,595 @@ export default {
 当点击按钮时，因为 `update` 内部执行的是当前组件的同一个 `componentUpdateFn` 函数，状态 `msg` 和 `number` 的 `update` 的 `id` 是一致的，所以 `queue` 中，只有一个 `update` 函数，只会进行一次统一的更新。
 
 ## 响应式原理:watch 函数的实现原理
+在组合式 API 中，我们可以使用 `watch` [函数](https://cn.vuejs.org/api/reactivity-core.html#watch)在每次响应式状态发生变化时触发回调函数，`watch` 的第一个参数可以是不同形式的数据类型：它可以是一个 `ref`（包括计算属性）、一个响应式对象、一个 `getter 函数`、或多个数据源组成的数组。
+~~~ts
+const x = ref(0)
+const y = ref(0)
+const state = reactive({ num: 0 })
 
+// 单个 ref
+watch(x, (newX) => {
+  console.log(`x is ${newX}`)
+})
 
+// getter 函数
+watch(
+  () => x.value + y.value,
+  (sum) => {
+    console.log(`sum of x + y is: ${sum}`)
+  }
+)
 
+// 响应式对象
+watch(
+  state,
+  (newState) => {
+    console.log(`new state num is: ${newState.num}`)
+  }
+)
 
+// 多个来源组成的数组
+watch([x, () => y.value], ([newX, newY]) => {
+  console.log(`x is ${newX} and y is ${newY}`)
+})
+~~~
+了解了一些基础的 `watch` 使用示例后，我们开始分析一下 `watch` 函数是如何实现的呢。
 
+### 标准化 source
+先来看一下 `watch` 函数实现的代码：
+~~~ts
+function watch(source, cb, options) { 
+  // ...
+  return doWatch(source, cb, options) 
+} 
+
+function doWatch(source, cb, { immediate, deep, flush, onTrack, onTrigger } = EMPTY_OBJ) { 
+  // ...
+}
+~~~
+`watch` 函数内部是通过 `doWatch` 来执行的，在分析 `doWatch` 函数实现前，我们先看看前面的示例中，`watch` 监听的 `source` 可以是多种类型，一个函数可以支持多种类型的参数入参，那么实现该函数最好的设计模式就是 `adapter` 代理模式。就是将底层模型设计成一致的，抹平调用差异，这也是 `doWatch` 函数实现的第一步：标准化 `source` 参数。
+
+一起来看看其中的实现：
+~~~ts
+function doWatch(source, cb, { immediate, deep, flush, onTrack, onTrigger } = EMPTY_OBJ) {
+  // ...
+  // source 不合法的时候警告函数
+  const warnInvalidSource = (s: unknown) => {
+    warn(
+      `Invalid watch source: `,
+      s,
+      `A watch source can only be a getter/effect function, a ref, ` +
+      `a reactive object, or an array of these types.`
+    )
+  }
+  
+  const instance = currentInstance
+  let getter
+  let forceTrigger = false
+  let isMultiSource = false
+
+  // 判断是不是 ref 类型
+  if (isRef(source)) {
+    getter = () => source.value
+    forceTrigger = isShallow(source)
+  }
+  // 判断是不是响应式对象
+  else if (isReactive(source)) {
+    getter = () => source
+    deep = true
+  }
+  // 判断是不是数组类型
+  else if (isArray(source)) {
+    isMultiSource = true
+    forceTrigger = source.some(s => isReactive(s) || isShallow(s))
+    getter = () =>
+      source.map(s => {
+        if (isRef(s)) {
+          return s.value
+        } else if (isReactive(s)) {
+          return traverse(s)
+        } else if (isFunction(s)) {
+          return callWithErrorHandling(s, instance, ErrorCodes.WATCH_GETTER)
+        } else {
+          __DEV__ && warnInvalidSource(s)
+        }
+      })
+  }
+  // 判断是不是函数类型
+  else if (isFunction(source)) {
+    if (cb) {
+      // getter with cb
+      getter = () =>
+        callWithErrorHandling(source, instance, ErrorCodes.WATCH_GETTER)
+    } else {
+      // 如果只有一个函数作为source 入参，则执行 watchEffect 的逻辑
+      // ...
+    }
+  }
+  // 都不符合，则告警
+  else {
+    getter = NOOP
+    __DEV__ && warnInvalidSource(source)
+  }
+
+  // 深度监听
+  if (cb && deep) {
+    const baseGetter = getter
+    getter = () => traverse(baseGetter())
+  }
+  
+  // ...
+}
+~~~
+由于 `doWatch` 函数代码量比较多，我们先一部分一部分地来解读，这里我们只关注于标准化 `source` 的逻辑。可以看到 `doWatch` 函数会对入参的 `source` 做不同类型的判断逻辑，然后生成一个统一的 `getter` 函数：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/3595032837.png)
+
+`getter` 函数就是简单地对不同数据类型设置一个访问 `source` 的操作，比如对于 `ref` 就是一个创建了一个访问 `source.value` 的函数。
+
+那么为什么需要**访问**呢？由之前的响应式原理我们知道，只有在触发 `proxy getter` 的时候，才会进行依赖收集，所以，这里标准化的 `source` 函数中，不管是什么类型的 `source` 都会设计一个访问器函数。
+
+另外，需要注意的是当 `source` 是个响应式对象时，源码中会同时设置 `deep = true`。这是因为对于响应式对象，需要进行深度监听，因为响应式对象中的属性变化时，都需要进行反馈。那是怎么做到深度监听的呢？在回答这个问题之前，我们前面说了监听一个对象的属性就是需要先访问对象的属性，触发 `proxy getter`，把副作用 `cb` 收集起来。源码中则是通过 `traverse` 函数来实现对响应式对象属性的遍历访问：
+~~~ts
+export function traverse(value, seen) {
+  // ...
+  if (isRef(value)) {
+    // 如果是 ref 类型，继续递归执行 .value值
+    traverse(value.value, seen)
+  } else if (Array.isArray(value)) {
+    // 如果是数组类型
+    for (let i = 0; i < value.length; i++) {
+      // 递归调用 traverse 进行处理
+      traverse(value[i], seen)
+    }
+  } else if (isPlainObject(value)) {
+    // 如果是对象，使用 for in 读取对象的每一个值，并递归调用 traverse 进行处理
+    for (const key in value) {
+      traverse((value as any)[key], seen)
+    }
+  }
+  return value
+}
+~~~
+### 构造副作用 effect
+前面说到，我们通过一系列操作，标准化了用户传入的 `source` 成了一个 `getter` 函数，此时的 `getter` 函数一方面还没有真正执行，也就没有触发对属性的访问操作。
+
+`watch` 的本质是对数据源进行依赖收集，当依赖变化时，回调执行 `cb` 函数并传入新旧值。所以我们需要构造一个副作用函数，完成对数据源的变化追踪：
+~~~ts
+function doWatch(source, cb, { immediate, deep, flush, onTrack, onTrigger } = EMPTY_OBJ) { 
+  // ...
+  const effect = new ReactiveEffect(getter, scheduler)
+}
+~~~
+这里的 `getter` 就是前面构造的属性访问函数，我们在介绍响应式原理的章节中，介绍过 `ReactiveEffect` 函数，这里再来回顾一下 `ReactiveEffect` 的实现：
+~~~ts
+class ReactiveEffect {
+  constructor(
+    public fn: () => T,
+    public scheduler: EffectScheduler | null = null,
+    scope?: EffectScope
+  ) {
+    recordEffectScope(this, scope)
+  }
+  
+  run() {
+    // ...  
+    this.fn()
+  }
+}
+~~~
+这里细节部分可以详细阅读响应式原理的部分，我们只需要知道这里的 `ReactiveEffect run` 函数内部执行了 `this.fn()` 也就是上面传入的 `getter` 函数，所以，本质上是在此时完成了对 `watch source` 的访问。
+
+然后再看一下 `ReactiveEffect` 的第二个参数 `scheduler`，是如何构造的呢？
+
+### 构造 scheduler 调度
+~~~ts
+function doWatch(source, cb, { immediate, deep, flush, onTrack, onTrigger } = EMPTY_OBJ) {
+  // ...
+  let oldValue = isMultiSource 
+    ? new Array(source.length).fill(INITIAL_WATCHER_VALUE)
+    : INITIAL_WATCHER_VALUE
+  const job = () => {
+    // 被卸载
+    if (!effect.active) {
+      return
+    }
+    if (cb) {
+      // 获取新值
+      const newValue = effect.run()
+      // ...
+      // 执行 cb 函数
+      callWithAsyncErrorHandling(cb, instance, ErrorCodes.WATCH_CALLBACK, [
+        newValue,
+        // 第一次更改时传递旧值为 undefined
+        oldValue === INITIAL_WATCHER_VALUE
+          ? undefined
+          : (isMultiSource && oldValue[0] === INITIAL_WATCHER_VALUE)
+            ? []
+            : oldValue,
+        onCleanup
+        ])
+      oldValue = newValue
+    } else {
+      // watchEffect
+      effect.run()
+    }
+  }
+
+  let scheduler
+  // 直接赋值为 job 函数
+  if (flush === 'sync') {
+    scheduler = job
+  } else if (flush === 'post') {
+    // 渲染后执行，放入 postRenderEffect 队列
+    scheduler = () => queuePostRenderEffect(job, instance && instance.suspense)
+  } else {
+    // 默认是渲染更新之前执行，设置 job.pre = true
+    job.pre = true
+    if (instance) job.id = instance.uid
+    scheduler = () => queueJob(job)
+  }
+}
+~~~
+>`scheduler` 我们在批量调度更新章节有简单介绍过，本质这里是根据不同的 `watch options` 中的 `flush` 参数来设置不同的调度节点，这里默认是渲染更新前执行，也就是在异步更新队列 `queue` 执行前执行。
+
+`scheduler` 核心就是将 `job` 放入异步执行队列中，但有个特殊，也就是 `flush = 'sync'` 时，是放入同步执行的。那么 `job` 是个什么啥玩意呢？
+
+上述代码的注释已经很详尽了，`job` 其实就是一个用来执行回调函数 `cb` 的函数而已，在执行 `cb` 的同时，传入了 `source` 的新旧值。
+
+### effect run 函数执行
+前面我们说到了，`ReactiveEffect` 内部的 `run` 函数，执行了依赖访问的 `getter` 函数，所以 `run` 函数是如何被执行的呢？
+~~~ts
+function doWatch(source, cb, { immediate, deep, flush, onTrack, onTrigger } = EMPTY_OBJ) {
+  //...
+  // 如果存在 cb
+  if (cb) {
+    // 立即执行
+    if (immediate) {
+      // 首次直接执行 job
+      job()
+    } else {
+      // 执行run 函数，获取旧值
+      oldValue = effect.run()
+    }
+  }
+}
+~~~
+可以看到在执行 `effect.run` 的前面判断了是否是立即执行的模式，如果是立即执行，则直接执行上面的 `job` 函数，而此时的 `job` 函数是没有旧值的，所以此时执行的 `oldValue = undefined`。
+
+### 返回销毁函数
+最后，会返回侦听器销毁函数，也就是 `watch API` 执行后返回的函数。我们可以通过调用它来停止 `watcher` 对数据的侦听。
+~~~ts
+function doWatch(source, cb, { immediate, deep, flush, onTrack, onTrigger } = EMPTY_OBJ) {
+  //...
+  return () => {
+    effect.stop()
+    if (instance && instance.scope) {
+      remove(instance.scope.effects!, effect)
+    }
+  }
+}
+~~~
+销毁函数内部会执行 `effect.stop` 方法，用来停止对数据的 `effect` 响应。并且，如果是在组件中注册的 `watcher`，也会移除组件 `effects` 对这个 `runner` 的引用。
+
+### 总结
+所谓 `watch`，就是观测一个响应式数据或者监测一个副作用函数里面的响应式数据，当数据发生变化的时候通知并执行相应的回调函数。而内部实现，就是通过构造一个 `effect` 副作用对象，通过对 `watch` 监听属性的访问触发副作用收集，当修改监听属性时，根据 `flush` 的状态触发 `job` 的不同阶段更新。
+
+## 响应式原理:computed 函数的实现原理
+计算属性接受一个 `getter` 函数，返回一个只读的响应式 `ref` 对象。该 `ref` 通过 `.value` 暴露 `getter` 函数的返回值。
+~~~ts
+const count = ref(1)
+const plusOne = computed(() => count.value + 1)
+
+console.log(plusOne.value) // 2
+
+plusOne.value++ // 错误
+~~~
+它也可以接受一个带有 `get` 和 `set` 函数的对象来创建一个可写的 `ref` 对象。
+~~~ts
+const count = ref(1)
+const plusOne = computed({
+  get: () => count.value + 1,
+  set: (val) => {
+    count.value = val - 1
+  }
+})
+
+plusOne.value = 1
+console.log(count.value) // 0
+~~~
+接下来看看源码里是如何实现 `computed` 的 `API`。
+
+### 构造 setter 和 getter
+~~~ts
+function computed(getterOrOptions, debugOptions, isSSR = false) {
+  let getter
+  let setter
+  // 判断第一个参数是不是一个函数
+  const onlyGetter = isFunction(getterOrOptions)
+  
+  // 构造 setter 和 getter 函数
+  if (onlyGetter) {
+    getter = getterOrOptions
+    // 如果第一个参数是一个函数，那么就是只读的
+    setter = __DEV__
+      ? () => {
+          console.warn('Write operation failed: computed value is readonly')
+        }
+      : NOOP
+  } else {
+    getter = getterOrOptions.get
+    setter = getterOrOptions.set
+  }
+  // 构造 ref 响应式对象
+  const cRef = new ComputedRefImpl(getter, setter, onlyGetter || !setter, isSSR)
+  // 返回响应式 ref
+  return cRef
+}
+~~~
+可以看到，这段 `computed` 函数体最初就是需要格式化传入的参数，根据第一个参数入参的类型来构造统一的 `setter` 和 `getter` 函数，并传入 `ComputedRefImpl` 类中，进行实例化 `ref` 响应式对象。
+
+接下来一起看看 `ComputedRefImpl` 是如何构造 `cRef` 响应式对象的。
+
+### 构造 cRef 响应式对象
+~~~ts
+class ComputedRefImpl {
+  public dep = undefined
+
+  private _value
+  public readonly effect
+  //表示 ref 类型
+  public readonly __v_isRef = true
+  //是否只读
+  public readonly [ReactiveFlags.IS_READONLY] = false
+  //用于控制是否进行值更新(代表是否脏值)
+  public _dirty = true
+  // 缓存
+  public _cacheable
+
+  constructor(
+    getter,
+    _setter,
+    isReadonly,
+    isSSR
+  ) {
+    // 把 getter 作为响应式依赖函数 fn 参数
+    this.effect = new ReactiveEffect(getter, () => {
+      if (!this._dirty) {
+        this._dirty = true
+        // 触发更新
+        triggerRefValue(this)
+      }
+    })
+    // 标记 effect 的 computed 属性
+    this.effect.computed = this
+    this.effect.active = this._cacheable = !isSSR
+    this[ReactiveFlags.IS_READONLY] = isReadonly
+  }
+
+  get value() {
+    const self = toRaw(this)
+    // 依赖收集
+    trackRefValue(self)
+    // 脏值则进行更新
+    if (self._dirty || !self._cacheable) {
+      self._dirty = false
+      // 更新值
+      self._value = self.effect.run()!
+    }
+    return self._value
+  }
+  // 执行 setter
+  set value(newValue) {
+    this._setter(newValue)
+  }
+}
+~~~
+简单看一下该类的实现：在构造函数的时候，创建了一个副作用对象 `effect`。并为 `effect` 额外定义了一个 `computed` 属性执行当前响应式对象 `cRef`。
+
+另外，定义了一个 `get` 方法，当我们通过 `ref.value` 取值的时候可以进行依赖收集，将定义的 `effect` 收集起来。
+
+其次，定义了一个 `set` 方法，该方法就是执行传入进来的 `setter` 函数。
+
+最后，熟悉 `Vue` 的开发者都知道 `computed` 的特性就在于能够缓存计算的值（提升性能），只有当 `computed` 的依赖发生变化时才会重新计算，否则读取 `computed` 的值则一直是之前的值。在源码这里，实现上述功能相关的变量分别是 `_dirty` 和 `_cacheable` 这 2 个，用来控制缓存的实现。
+
+有了上面的介绍，我们来看一个具体的例子，看看 `computed` 是如何执行的：
+~~~vue
+<template> 
+  <div> 
+    {{ plusOne }} 
+  </div> 
+  <button @click="plus">plus</button> 
+</template> 
+<script> 
+  import { ref, computed } from 'vue' 
+  export default { 
+    setup() { 
+      const num = ref(0) 
+      const plusOne = computed(() => { 
+        return num.value + 1 
+      }) 
+
+      function plus() { 
+        num.value++ 
+      } 
+      return { 
+        plusOne, 
+        plus 
+      } 
+    } 
+  } 
+</script>
+~~~
+**Step 1**：`setup` 函数体内，`computed` 函数执行，初始的过程中，生成了一个 `computed effect`。
+
+**Step 2**：初始化渲染的时候，`render` 函数访问了 `plusOne.value`，触发了收集，此时收集的副作用为 `render effect`，因为是首次访问，所以此时的 `self._dirty = true` 执行 `effect.run()` 也就是执行了 `getter` 函数，得到 `_value = 1`。
+
+**Step 3**：`getter` 函数体内访问了 `num.value` 触发了对 `num` 的依赖收集，此时收集到的依赖为 `computed effect`。
+
+**Step 4**：点击按钮，此时 `num = 1` 触发了 `computed effect` 的 `schduler` 调度，因为 `_dirty = false`，所以触发了 `triggerRefValue` 的执行，同时，设置 `_dirty = true`。
+
+**Step 5**：`triggerRefValue` 执行过程中，会执行 `computed effect.run()` 触发 `getter` 函数的执行。因为此时的 `_dirty = true`，所以 `get value` 会重新计算 `_value` 的值为 `plusOne.value = 2`。
+
+**Step 6**：`plusOne.value` 值变化后，触发了 `render effect.run` 重新渲染。
+
+可以看到 `computed` 函数通过 `_dirty` 把 `computed` 的缓存特性表现得淋漓尽致，只有当 `_dirty = true` 的时候，才会进行重新计算求值，而 `_dirty = true` 只有在首次取值或者取值内部依赖发生变化时才会执行。
+
+### 计算属性的执行顺序
+这里，我们介绍完了 computed 的核心流程，但是细心的同学可能发现，这里我们还漏了一个小的知识点没有介绍，就是在类 ComputedRefImpl 的构造函数中，执行了这样一行代码：
+~~~ts
+this.effect.computed = this
+~~~
+那么这行代码的作用是什么呢？在说这个作用之前，我们先来看一个 `demo`:
+~~~ts
+const { ref, effect, computed } = Vue
+
+const n = ref(0)
+const plusOne = computed(() => n.value + 1)
+effect(() => {
+  n.value
+  console.log(plusOne.value)
+})
+n.value++
+~~~
+小伙伴们可以猜测一下上述代码的打印结果。
+
+可能有些小伙伴猜测应该是：
+~~~
+1
+1
+2
+~~~
+首先是 `effect` 函数先执行，触发 `n` 的依赖收集，然后访问了 `plusOne.value`，再收集 `computed effect`。然后执行 `n.value++` 按照顺序触发 `effect` 执行，所以理论上先触发 `effect` 函数内部的回调，再去执行 `computed` 的重新求值。所以输出是上述结果。
+
+但事实却是：
+~~~
+1
+2
+2
+~~~
+这就是因为上面那一行代码的作用。`effect.computed` 的标记保障了 `computed effect` 会优先于其他普通副作用函数先执行，关于具体的实现，可以看一下 `triggerEffects` 函数体内对 `computed` 的特殊处理：
+~~~ts
+function triggerEffects(dep, debuggerEventExtraInfo) {
+  const effects = isArray(dep) ? dep : [...dep]
+  // 确保执行完所有的 computed
+  for (const effect of effects) {
+    if (effect.computed) {
+      triggerEffect(effect, debuggerEventExtraInfo)
+    }
+  }
+  // 再执行其他的副作用函数
+  for (const effect of effects) {
+    if (!effect.computed) {
+      triggerEffect(effect, debuggerEventExtraInfo)
+    }
+  }
+}
+~~~
+### 总结
+总而言之，计算属性可以**从状态数据中计算出新数据**，`computed` 和 `methods` 的最大差异是它具备缓存性，如果依赖项不变时不会重新计算，而是直接返回缓存的值。
+
+搞懂了本小节关于 `computed` 函数的介绍后，相信你已经知道计算属性相对于普通函数的不同之处的原理，在以后的开发中，可以更合理地使用计算属性！
+
+## 响应式原理:依赖注入实现跨级组件数据共享
+通常情况下，当我们需要从父组件向子组件传递数据时，会使用 [props](https://cn.vuejs.org/guide/components/props.html)。对于层级不深的父子组件可以通过 `props` 透传数据，但是当父子层级过深时，数据透传将会变得非常麻烦和难以维护，引用 `Vue.js` 官网的一张图：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/2684660051.png)
+
+而依赖注入则是为了解决 `prop` 逐级透传 的问题而诞生的，父组件 `provide` 需要共享给子组件的数据，子组件 `inject` 使用需要的父组件状态数据，而且可以保持响应式。
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/2817661459.png)
+
+再来看一个依赖注入的使用示例：
+~~~ts
+// 父组件
+import { provide, ref } from 'vue'
+const msg = ref('hello')
+provide(/* 注入名 */ 'message', /* 值 */ msg)
+
+//子组件使用
+import { inject } from 'vue'
+const message = inject('message')
+~~~
+### Provide
+`Provide` 顾名思义，就是一个数据提供方，看看源码里面是如何提供的：
+~~~ts
+export function provide(key, value) {
+  if (!currentInstance) {
+    // ...
+  } else {
+    // 获取当前组件实例上的 provides 对象
+    let provides = currentInstance.provides
+    // 获取父组件实例上的 provides 对象
+    const parentProvides =
+      currentInstance.parent && currentInstance.parent.provides
+    // 当前组件的 providers 指向父组件的情况  
+    if (parentProvides === provides) {
+      // 继承父组件再创建一个 provides
+      provides = currentInstance.provides = Object.create(parentProvides)
+    }
+    // 生成 provides 对象
+    provides[key] = value
+  }
+}
+~~~
+这里稍微回忆一下 `Object.create` 这个函数：这个方法用于创建一个新对象，使用现有的对象来作为新创建对象的原型（`prototype`）。
+
+所以 `provide` 就是通过获取当前组件实例对象上的 `provides`，然后通过 `Object.create` 把父组件的 `provides` 属性设置到当前的组件实例对象的 `provides` 属性的原型对象上。最后再将需要 provid 的数据存储在当前的组件实例对象上的 provides上。
+
+这里你可能会有个疑问，当前组件上实例的 `provides` 为什么会等于父组件上的 `provides` 呢？这是因为在组件实例 `currentInstance` 创建的时候进行了初始化的：
+~~~ts
+appContext = {
+  // ...
+  provides: Object.create(null),
+}
+
+const instance = { 
+  // 依赖注入相关 
+  provides: parent ? parent.provides : Object.create(appContext.provides), 
+  // 其它属性 
+  // ... 
+}
+~~~
+可以看到，如果父组件定义了 `provide` 那么子组件初始的过程中都会将自己的 `provide` 指向父组件的 `provide`。而根组件因为没有父组件，则被赋值为一个空对象。大致可以表示为：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/2181722567.png)
+
+### Inject
+`Inject` 顾名思义，就是一个数据注入方，看看源码里面是如何实现注入的：
+~~~ts
+export function inject(key, defaultValue, treatDefaultAsFactory = false) {
+    // 获取当前组件实例
+    const instance = currentInstance || currentRenderingInstance
+    if (instance) {
+        // 获取父组件上的 provides 对象
+        const provides =
+            instance.parent == null
+                ? instance.vnode.appContext && instance.vnode.appContext.provides
+                : instance.parent.provides
+        // 如果能取到，则返回值
+        if (provides && key in provides) {
+            return provides[key]
+        } else if (arguments.length > 1) {
+            // 返回默认值
+            return treatDefaultAsFactory && isFunction(defaultValue)
+                // 如果默认内容是个函数的，就执行并且通过call方法把组件实例的代理对象绑定到该函数的this上
+                ? defaultValue.call(instance.proxy)
+                : defaultValue
+        }
+    }
+}
+~~~
+这里的实现就显得通俗易懂了，核心也就是从当前组件实例的父组件上取 `provides` 对象，然后再查找父组件 `provides` 上有没有对应的属性。因为父组件的 `provides` 是通过原型链的方式和父组件的父组件进行了关联，如果父组件上没有，那么会通过原型链的方式再向上取，这也实现了不管组件层级多深，总是可以找到对应的 `provide` 的提供方数据。
+
+### 总结
+通过上面的分析，我们知道了依赖注入的实现原理相对还是比较简单的，比较有意思的事他巧妙地利用了原型和原型链的方式进行数据的继承和获取。
+
+在执行 `provide` 的时候，会将父组件的的 `provides` 关联成当前组件实例 `provides` 对象原型上的属性，当在 `inject` 获取数据的时候，则会根据原型链的规则进行查找，找不到的话则会返回用户自定义的默认值。
+
+最后，我们知道 `Vue` 通过了依赖注入的方式实现了跨层级组件的状态共享问题。跨层级的状态共享问题是不是听起来有点耳熟？没错，那就是 `vuex` / `pinia` 所做的事情。
+
+## 编译器:模板是如何被编译成 AST 的
 
 
 
