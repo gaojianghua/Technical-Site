@@ -3708,6 +3708,1755 @@ export function inject(key, defaultValue, treatDefaultAsFactory = false) {
 最后，我们知道 `Vue` 通过了依赖注入的方式实现了跨层级组件的状态共享问题。跨层级的状态共享问题是不是听起来有点耳熟？没错，那就是 `vuex` / `pinia` 所做的事情。
 
 ## 编译器:模板是如何被编译成 AST 的
+通过前面的小节，我们知道组件渲染成 `vnode` 的过程，其实就是组件的 `render` 函数调用执行的结果。但是我们写 `Vue` 项目时，经常会使用 `<template>` 的模版式写法，很少使用 `render` 函数的写法，那么 `Vue` 是如何实现从 模版 转成 `render` 函数的呢？
+
+另外，关于模版编译成 `render` 函数的结果，也可以通过官方提供的 [模版导出工具](https://vue-next-template-explorer.netlify.app/#eyJzcmMiOiI8ZGl2PkhlbGxvIFdvcmxkPC9kaXY+Iiwib3B0aW9ucyI6e319) 现在调试编译结果。
+
+`Vue3` 的核心编译源码文件在 `packages/compiler-dom/src/index.ts` 中：
+~~~ts
+function compile(template, options = {}) { 
+  return baseCompile(template, extend({}, parserOptions, options, { 
+    nodeTransforms: [...DOMNodeTransforms, ...(options.nodeTransforms || [])], 
+    directiveTransforms: extend({}, DOMDirectiveTransforms, options.directiveTransforms || {}), 
+    transformHoist:  null 
+  })) 
+}
+~~~
+其核心调用的就是 `baseCompile` 函数，接下来一起看一下 `baseCompile` 的实现：
+~~~ts
+export function baseCompile(template, options = {}) {
+  // 如果是字符串模版，则直接进行解析，转成 AST
+  const ast = isString(template) ? baseParse(template, options) : template
+  const [nodeTransforms, directiveTransforms] =
+    getBaseTransformPreset(prefixIdentifiers)
+  
+  // AST 转换成 JS AST
+  transform(
+    ast,
+    extend({}, options, {
+      prefixIdentifiers,
+      nodeTransforms: [
+        ...nodeTransforms,
+        ...(options.nodeTransforms || []) // user transforms
+      ],
+      directiveTransforms: extend(
+        {},
+        directiveTransforms,
+        options.directiveTransforms || {} // user transforms
+      )
+    })
+  )
+  
+  // JS AST 生成代码
+  return generate(
+    ast,
+    extend({}, options, {
+      prefixIdentifiers
+    })
+  )
+}
+~~~
+可以看到 `baseCompile` 函数核心就只有 3 步：
+- 对 `template` 模版进行词法和语法分析，生成 `AST`
+- `AST` 转换成附有 `JS` 语义的 `JavaScript AST`
+- 解析 `JavaScript AST` 生成代码
+
+### 解析 template 生成 AST
+一个简单的模版如下：
+~~~vue
+<template>
+  <!-- 这是一段注释 -->
+  <p>{{ msg }}</p>
+</template>
+~~~
+这个模版经过 `baseParse` 后转成的 `AST` 结果如下：
+~~~json
+{
+  "type": 0,
+  "children": [
+    {
+      "type": 3,
+      "content": " 这是一段注释 ",
+      "loc": {
+        "start": {
+          "column": 3,
+          "line": 2,
+          "offset": 3
+        },
+        "end": {
+          "column": 18,
+          "line": 2,
+          "offset": 18
+        },
+        "source": "<!-- 这是一段注释 -->"
+      }
+    },
+    {
+      "type": 1,
+      "ns": 0,
+      "tag": "p",
+      "tagType": 0,
+      "props": [],
+      "isSelfClosing": false,
+      "children": [
+        {
+          "type": 5,
+          "content": {
+            "type": 4,
+            "isStatic": false,
+            "constType": 0,
+            "content": "msg",
+            "loc": {
+              "start": {
+                "column": 9,
+                "line": 3,
+                "offset": 27
+              },
+              "end": {
+                "column": 12,
+                "line": 3,
+                "offset": 30
+              },
+              "source": "msg"
+            }
+          },
+          "loc": {
+            "start": {
+              "column": 6,
+              "line": 3,
+              "offset": 24
+            },
+            "end": {
+              "column": 15,
+              "line": 3,
+              "offset": 33
+            },
+            "source": "{{ msg }}"
+          }
+        }
+      ],
+      "loc": {
+        "start": {
+          "column": 3,
+          "line": 3,
+          "offset": 21
+        },
+        "end": {
+          "column": 19,
+          "line": 3,
+          "offset": 37
+        },
+        "source": "<p>{{ msg }}</p>"
+      }
+    }
+  ],
+  "helpers": [],
+  "components": [],
+  "directives": [],
+  "hoists": [],
+  "imports": [],
+  "cached": 0,
+  "temps": 0,
+  "loc": {
+    "start": {
+      "column": 1,
+      "line": 1,
+      "offset": 0
+    },
+    "end": {
+      "column": 1,
+      "line": 4,
+      "offset": 38
+    },
+    "source": "\n  <!-- 这是一段注释 -->\n  <p>{{ msg }}</p>\n"
+  }
+}
+~~~
+其中有一个 `type` 字段，用来标记 `AST` 节点的类型，这里涉及到的枚举如下：
+~~~ts
+export const enum NodeTypes {
+  ROOT, // 0 根节点
+  ELEMENT, // 1 元素节点
+  TEXT, // 2 文本节点
+  COMMENT, // 3 注释节点
+  SIMPLE_EXPRESSION, // 4 表达式
+  INTERPOLATION, // 5 插值节点
+  // ...
+}
+~~~
+另外，`props` 描述的是节点的属性，`loc` 代表的是节点对应的代码相关信息，包括代码的起始位置等等。
+
+有了上面的一些基础知识，我们来看看生成 `AST` 的核心算法：
+~~~ts
+export function baseParse(content, options) {
+  // 创建解析上下文
+  const context = createParserContext(content, options)
+  // 获取起点位置
+  const start = getCursor(context)
+  // 创建 AST
+  return createRoot(
+    parseChildren(context, TextModes.DATA, []),
+    getSelection(context, start)
+  )
+}
+~~~
+其中创建解析上下文得到的 `context` 的过程：
+~~~ts
+function createParserContext(content, options) { 
+  return { 
+    options: extend({}, defaultParserOptions, options), 
+    column: 1, 
+    line: 1, 
+    offset: 0, 
+    // 存储原始模版内容
+    originalSource: content, 
+    source: content, 
+    inPre: false, 
+    inVPre: false 
+  } 
+}
+~~~
+`createParserContext` 本质就是返回了一个 `context` 对象，用来标记解析过程中的上下文内容。
+
+接下来我们核心需要分析的是 `parseChildren` 函数，该函数是生成 `AST` 的核心函数。通过函数调用我们大致清楚该函数传入了初始化生成的 `context` 对象，`context` 对象中包含我们初始的模版内容，存储在 `originalSource` 和 `source` 中。
+
+先来看看 `parseChildren` 对节点内容解析的过程：
+~~~ts
+function parseChildren(context, mode, ancestors) {
+  // 获取父节点
+  const parent = last(ancestors)
+  const ns = parent ? parent.ns : Namespaces.HTML
+  const nodes: TemplateChildNode[] = []
+  // 判断是否到达结束位置，遍历结束
+  while (!isEnd(context, mode, ancestors)) {
+    // template 中的字符串
+    const s = context.source
+    let node = undefined
+    // 如果 mode 是 DATA 和 RCDATA 模式
+    if (mode === TextModes.DATA || mode === TextModes.RCDATA) {
+      // 处理 {{ 开头的情况
+      if (!context.inVPre && startsWith(s, context.options.delimiters[0])) {
+        // '{{'
+        node = parseInterpolation(context, mode)
+      } else if (mode === TextModes.DATA && s[0] === '<') {
+        // 以 < 开头且就一个 < 字符
+        if (s.length === 1) {  
+          emitError(context, ErrorCodes.EOF_BEFORE_TAG_NAME, 1)
+        } else if (s[1] === '!') {
+          // 以 <! 开头的情况
+          if (startsWith(s, '<!--')) {
+            // 如果是 <!-- 这种情况，则按照注释节点处理
+            node = parseComment(context)
+          } else if (startsWith(s, '<!DOCTYPE')) {
+            // 如果是 <!DOCTYPE 这种情况
+            node = parseBogusComment(context)
+          } else if (startsWith(s, '<![CDATA[')) {
+            // 如果是 <![CDATA[ 这种情况
+            if (ns !== Namespaces.HTML) {
+              node = parseCDATA(context, ancestors)
+            } else {
+              emitError(context, ErrorCodes.CDATA_IN_HTML_CONTENT)
+              node = parseBogusComment(context)
+            }
+          } else {
+            // 都不是的话，则报错
+            emitError(context, ErrorCodes.INCORRECTLY_OPENED_COMMENT)
+            node = parseBogusComment(context)
+          }
+        } else if (s[1] === '/') {
+          // 以 </ 开头，并且只有 </ 的情况
+          if (s.length === 2) {
+            emitError(context, ErrorCodes.EOF_BEFORE_TAG_NAME, 2)
+          } else if (s[2] === '>') {
+            // </> 缺少结束标签，报错
+            emitError(context, ErrorCodes.MISSING_END_TAG_NAME, 2)
+            advanceBy(context, 3)
+            continue
+          } else if (/[a-z]/i.test(s[2])) {
+            // 文本中存在多余的结束标签的情况 </p>
+            emitError(context, ErrorCodes.X_INVALID_END_TAG)
+            parseTag(context, TagType.End, parent)
+            continue
+          } else {
+            emitError(
+              context,
+              ErrorCodes.INVALID_FIRST_CHARACTER_OF_TAG_NAME,
+              2
+            )
+            node = parseBogusComment(context)
+          }
+        } else if (/[a-z]/i.test(s[1])) {
+          // 解析标签元素节点
+          node = parseElement(context, ancestors)
+        } else if (s[1] === '?') {
+          emitError(
+            context,
+            ErrorCodes.UNEXPECTED_QUESTION_MARK_INSTEAD_OF_TAG_NAME,
+            1
+          )
+          node = parseBogusComment(context)
+        } else {
+          emitError(context, ErrorCodes.INVALID_FIRST_CHARACTER_OF_TAG_NAME, 1)
+        }
+      }
+    }
+    if (!node) {
+      // 解析普通文本节点
+      node = parseText(context, mode)
+    }
+
+    if (isArray(node)) {
+      for (let i = 0; i < node.length; i++) {
+        pushNode(nodes, node[i])
+      }
+    } else {
+      pushNode(nodes, node)
+    }
+  }
+}
+~~~
+上述代码量虽然挺多，但整体要做的事情还是比较明确和清晰的。从上述代码中可以看到，Vue 在解析模板字符串时，可分为两种情况：以 `<` 开头的字符串和不以 `<` 开头的字符串。
+
+其中，不以 `<` 开头的字符串有两种情况：它是文本节点或 `{{ exp }}` 插值表达式。
+
+而以 `<` 开头的字符串又分为以下几种情况：
+- 元素开始标签，比如 `<div>`
+- 注释节点 `<!-- 123 -->`
+- 文档声明 `<!DOCTYPE html>`
+- 纯文本标签 `<![CDATA[<]]>`
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/394756358.png)
+
+接下来我们介绍几个比较重要的解析器。
+
+#### 1. 解析插值
+根据前面的描述，我们知道当遇到字符串 `{{msg}}` 的时候，会把当前代码当做是插值节点来解析，进入 `parseInterpolation` 函数体内：
+~~~ts
+function parseInterpolation(context, mode) {
+  // 从配置中获取插值开始和结束分隔符，默认是 {{ 和 }}
+  const [open, close] = context.options.delimiters
+  // 获取结束分隔符的位置
+  const closeIndex = context.source.indexOf(close, open.length)
+  // 如果不存在结束分隔符，则报错
+  if (closeIndex === -1) {
+    emitError(context, ErrorCodes.X_MISSING_INTERPOLATION_END)
+    return undefined
+  }
+
+  // 获取开始解析的起点
+  const start = getCursor(context)
+  // 解析位置移动到插值开始分隔符后
+  advanceBy(context, open.length)
+  // 获取插值起点位置
+  const innerStart = getCursor(context)
+  // 获取插值结束位置
+  const innerEnd = getCursor(context)
+  // 插值原始内容的长度
+  const rawContentLength = closeIndex - open.length
+  // 插值原始内容
+  const rawContent = context.source.slice(0, rawContentLength)
+  // 获取插值的内容，并移动位置到插值的内容后
+  const preTrimContent = parseTextData(context, rawContentLength, mode)
+  const content = preTrimContent.trim()
+  // 如果存在空格的情况，需要计算偏移值
+  const startOffset = preTrimContent.indexOf(content)
+  if (startOffset > 0) {
+    // 更新插值起点位置
+    advancePositionWithMutation(innerStart, rawContent, startOffset)
+  }
+  // 如果尾部存在空格的情况
+  const endOffset =
+    rawContentLength - (preTrimContent.length - content.length - startOffset)
+  // 也需要更新尾部的位置
+  advancePositionWithMutation(innerEnd, rawContent, endOffset)
+  // 移动位置到插值结束分隔符后
+  advanceBy(context, close.length)
+
+  return {
+    type: NodeTypes.INTERPOLATION,
+    content: {
+      type: NodeTypes.SIMPLE_EXPRESSION,
+      isStatic: false,
+      // Set `isConstant` to false by default and will decide in transformExpression
+      constType: ConstantTypes.NOT_CONSTANT,
+      content,
+      loc: getSelection(context, innerStart, innerEnd)
+    },
+    loc: getSelection(context, start)
+  }
+}
+~~~
+这里大量使用了一个重要函数 `advanceBy(context, numberOfCharacters)`。其功能是更新解析上下文 `context` 中的 `source` 来移动代码解析的位置，同时更新 `offset`、`line`、`column` 等和代码位置相关的属性，这样来达到一步步 蚕食 模版字符串的目的，从而达到对整个模版字符 `chuancontext` 是字符串的上下文对象，`numberOfCharacters` 是要前进的字符数。
+
+针对这样一段代码：
+~~~vue
+<div>{{ msg }}</div>
+~~~
+调用 `advance(s, 14)` 函数，得到结果：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/4204263875.png)
+
+可以看到，`parseInterpolation` 函数本质就是通过插值的开始标签 `{{` 和结束标签 `}}` 找到插值的内容 `content`。然后再计算插值的起始位置，接着就是前进代码到插值结束分隔符后，表示插值部分代码处理完毕，可以继续解析后续代码了。
+
+最后返回一个描述插值节点的 `AST` 对象，其中，`loc` 记录了插值的代码开头和结束的位置信息，`type` 表示当前节点的类型，`content` 表示当前节点的内容信息。
+
+#### 2. 解析文本
+针对源代码起点位置的字符不是 `<` 或者 `{{` 时，则当做是文本节点处理，调用 `parseText` 函数：
+~~~ts
+function parseText(context, mode) {
+  // 文本结束符
+  const endTokens = mode === TextModes.CDATA ? [']]>'] : ['<', context.options.delimiters[0]]
+
+  let endIndex = context.source.length
+  // 遍历文本结束符，匹配找到结束的位置
+  for (let i = 0; i < endTokens.length; i++) {
+    const index = context.source.indexOf(endTokens[i], 1)
+    if (index !== -1 && endIndex > index) {
+      endIndex = index
+    }
+  }
+  
+  const start = getCursor(context)
+  // 获取文本的内容，并前进代码到文本的内容后
+  const content = parseTextData(context, endIndex, mode)
+
+  return {
+    type: NodeTypes.TEXT,
+    content,
+    loc: getSelection(context, start)
+  }
+}
+~~~
+`parseText` 函数整体功能还是比较简单的，如果一段文本，在 `CDATA` 模式下，当遇到 `]]>` 即为结束位置，否则，都是在遇到 `<` 或者插值分隔符 `{{` 结束。所以通过遍历这些结束符，匹配并找到文本结束的位置。
+
+找到文本结束位置后，就可以通过 `parseTextData` 函数来获取到文本的内容并前进到文本内容后。
+
+最后返回一个文本节点的 `AST` 对象。
+
+#### 3. 解析节点
+当起点字符是 `<` 开头，且后续字符串匹配 `/[a-z]/i` 正则表达式，则会进入 `parseElement` 的节点解析函数：
+~~~ts
+function parseElement(context, ancestors) {
+  // ...
+  // 开始标签
+  // 获取当前元素的父标签节点
+  const parent = last(ancestors)
+  // 解析开始标签，生成一个标签节点，并前进代码到开始标签后
+  const element = parseTag(context, TagType.Start, parent)
+  // 如果是自闭和标签，直接返回标签节点
+  if (element.isSelfClosing || context.options.isVoidTag(element.tag)) {
+    return element
+  }
+  
+  // 下面是处理子节点的逻辑
+  // 先把标签节点添加到 ancestors，入栈
+  ancestors.push(element)
+  const mode = context.options.getTextMode(element, parent)
+  // 递归解析子节点，传入 ancestors
+  const children = parseChildren(context, mode, ancestors)
+  // 子节点解析完成 ancestors 出栈
+  ancestors.pop()
+
+  // ...
+  element.children = children
+  
+  // 结束标签
+  if (startsWithEndTagOpen(context.source, element.tag)) {
+    // 解析结束标签，并前进代码到结束标签后
+    parseTag(context, TagType.End, parent)
+  } else {
+    // ...
+  }
+  // 更新标签节点的代码位置，结束位置到结束标签后
+  element.loc = getSelection(context, element.loc.start)
+  
+  return element
+}
+~~~
+可以看到，`parseElement` 主要做了三件事情：解析开始标签，解析子节点，解析闭合标签。
+
+在解析子节点过程中， `Vue` 会用一个栈 `ancestors` 来保存解析到的元素标签。当它遇到开始标签时，会将这个标签推入栈，遇到结束标签时，将刚才的标签弹出栈。它的作用是保存当前已经解析了，但还没解析完的元素标签。这个栈还有另一个作用，在解析到某个字节点时，通过 `ancestors[ancestors.length - 1]` 可以获取它的父元素。
+~~~vue
+<div class="app">
+  <p>{{ msg }}</p> 
+  一个文本节点 
+</div>
+~~~
+从我们的示例来看，它的出入栈顺序是这样的：
+~~~js
+[] // 刚开始时空栈
+[div] // div 入栈
+[div, p] // p 入栈
+[div] // p 节点解析完成，出栈
+[] // div 节点解析完成，出栈
+~~~
+另外，在解析开始标签和解析闭合标签时，都用到了一个 `parseTag` 函数，这也是节点标签解析的核心函数：
+~~~ts
+function parseTag(context, type, parent) {
+  const start = getCursor(context)
+  // 匹配标签文本结束的位置
+  const match = /^</?([a-z][^\t\r\n\f />]*)/i.exec(context.source)!
+  const tag = match[1]
+  const ns = context.options.getNamespace(tag, parent)
+  // 前进代码到标签文本结束位置
+  advanceBy(context, match[0].length)
+  // 前进代码到标签文本后面的空白字符后
+  advanceSpaces(context)
+  
+  // 解析标签中的属性，并前进代码到属性后
+  let props = parseAttributes(context, type)
+  // ...
+  // 标签闭合.
+  let isSelfClosing = false
+  if (context.source.length === 0) {
+    emitError(context, ErrorCodes.EOF_IN_TAG)
+  } else {
+    // 判断是否自闭合标签
+    isSelfClosing = startsWith(context.source, '/>')
+    // 结束标签不应该是自闭和标签
+    if (type === TagType.End && isSelfClosing) {
+      emitError(context, ErrorCodes.END_TAG_WITH_TRAILING_SOLIDUS)
+    }
+    // 前进代码到闭合标签后
+    advanceBy(context, isSelfClosing ? 2 : 1)
+  }
+  
+  // 闭合标签，则退出
+  if (type === TagType.End) {
+    return
+  }
+  
+  let tagType = ElementTypes.ELEMENT
+  if (!context.inVPre) {
+    // 接下来判断标签类型，是组件、插槽还是模板
+    if (tag === 'slot') {
+      tagType = ElementTypes.SLOT
+    } else if (tag === 'template') {
+      if (
+        props.some(
+          p =>
+            p.type === NodeTypes.DIRECTIVE && isSpecialTemplateDirective(p.name)
+        )
+      ) {
+        tagType = ElementTypes.TEMPLATE
+      }
+    } else if (isComponent(tag, props, context)) {
+      tagType = ElementTypes.COMPONENT
+    }
+  }
+
+  return {
+    type: NodeTypes.ELEMENT,
+    ns,
+    tag,
+    tagType,
+    props,
+    isSelfClosing,
+    children: [],
+    loc: getSelection(context, start),
+    codegenNode: undefined // to be created during transform phase
+  }
+}
+~~~
+`parseTag` 函数首先会匹配标签的文本的节点信息，比如 `<div class="test">{{ msg }}</div>` 得到的 `match` 信息如下：
+~~~
+[
+  '<div',
+  'div', 
+  index: 0,
+  input: '<div class="test">{{ msg }}</div>\n',
+  groups: undefined
+]
+~~~
+然后将代码前进到节点信息后，再通过 `parseAttributes` 函数来解析标签中的 `props` 属性，比如 `class`、`style` 等等。
+
+接下来再去判断是不是一个自闭和标签，并前进代码到闭合标签后；
+
+最后根据 `tag` 判断标签类型，是组件、插槽还是模板。
+
+`parseTag` 完成后，最终就是返回一个节点描述的 `AST` 对象，如果有子节点，会继续进入 `parseChildren` 的递归流程，不断更新节点的 `children` 对象。
+
+### 总结
+有了上面的介绍，我们来看一个简单的 `demo` 来理解 `AST` 创建的过程。针对以下模版：
+~~~vue
+<div class="test">
+  {{ msg }}
+  <p>这是一段文本</p>
+</div>
+~~~
+我们来演示一下创建过程：
+
+#### div 标签解析
+首先进入 `parseChildren` 遇到 `<div` 标签，进入 `parseElement` 函数，`parseElement` 函数通过 `parseTag` 函数得到 `element` 的数据结构为：
+~~~json
+{
+  "type": 1, // 标签节点
+  "ns": 0,
+  "tag": "div",
+  "tagType": 0,
+  "props": [
+    {
+      "type": 6,
+      "name": "class",
+      "value": {
+       // ...
+      },
+      "loc": {
+        // ...
+      }
+    }
+  ],
+  "isSelfClosing": false,
+  "children": [],
+  "loc": {
+    "start": {
+      "column": 3,
+      "line": 2,
+      "offset": 3
+    },
+    "end": {
+      "column": 21,
+      "line": 2,
+      "offset": 21
+    },
+    "source": "<div class='test'>"
+  }
+}
+~~~
+此时的 `context` 经过 `advanceBy` 操作后，内容为：
+~~~json
+{
+  "options": {
+    // ...
+  },
+  "column": 18,
+  "line": 1,
+  "offset": 18,
+  "originalSource": "<div class='test''>\n    {{ msg }}\n    <p>这是一段文本</p>\n  </div>\n",
+  "source": "\n    {{ msg }}\n    <p>这是一段文本</p>\n  </div>\n",
+  "inPre": false,
+  "inVPre": false
+}
+~~~
+#### 插值标签解析
+然后再进入 `parseChildren` 流程，此时的 `source` 内容如下：
+~~~
+  {{ msg }}
+  <p>这是一段文本</p>
+</div>
+~~~
+此时的开始标签是 `{{` 所以进入插值解析的函数 `parseInterpolation`，该函数执行完成后得到的 `source` 结果如下：
+~~~
+  <p>这是一段文本</p>
+</div>
+~~~
+> 这里关于 `AST` 内容就会包含插值节点的信息描述。 `context` 内容则会在 `parseInterpolation` 后继续更新，执行后续 `source` 的内容坐标，这里不再赘述
+
+#### p 标签解析
+在完成，插值节点解析后，在 `parseChildren` 内存在一个 `while` 判断：`while (!isEnd(context, mode, ancestors))`，因为还未到达闭合标签的位置，所以接着进入 `p` 标签的解析 `parseElement`。解析完成后得到 `source` 内容如下：
+~~~
+  这是一段文本</p>
+</div>
+~~~
+此时继续进入 `parseChildren` 递归。
+
+#### 解析文本节点
+然后遇到的了文本开头的内容，会进入 `parseText` 文本解析的流程，完成 `parseText` 后，得到的 `source` 内容如下：
+~~~
+</p>
+</div>
+~~~
+#### 解析闭合标签
+此时 `while` 退出循环，进入 `parseTag` 继续解析闭合标签，首先是 `</p>` 标签，因为不是自闭和标签，则继续更新 `content` 后，然后更新标签节点的代码位置，最后得到的 `source` 如下：
+~~~
+</div>
+~~~
+最后再继续解析闭合标签 `</div>` 更新 `content` 和标签节点`div`的代码位置，直到结束。
+
+## 编译器:AST 是如何被转换成 JS AST 的
+接下来进入模版编译的第二步 `transform`，`transform` 的目标是为了生成 `JavaScript AST`。因为渲染函数是一堆 `js` 代码构成的，编译器最终产物就是渲染函数，所以理想中的 `AST` 应该是用来描述渲染函数的 `JS` 代码。
+
+### Transform
+~~~ts
+function baseCompile(template, options) {
+  const isModuleMode = options.mode === 'module'
+  // 用来标记代码生成模式
+  const prefixIdentifiers =
+    !__BROWSER__ && (options.prefixIdentifiers === true || isModuleMode)
+  // 获取节点和指令转换的方法
+  const [nodeTransforms, directiveTransforms] = getBaseTransformPreset()
+  // AST 转换成 Javascript AST
+  transform(
+    ast,
+    extend({}, options, {
+      prefixIdentifiers,
+      nodeTransforms: [
+        ...nodeTransforms,
+        ...(options.nodeTransforms || [])
+      ],
+      directiveTransforms: extend(
+        {},
+        directiveTransforms,
+        options.directiveTransforms || {}
+      )
+    })
+  )
+}
+~~~
+其中第一个参数 `prefixIdentifiers` 是用于标记前缀代码生成模式的。举个例子，以下代码：
+~~~vue
+<div>
+  {{msg}}
+</div>
+~~~
+在 `module` 模式下，生成的渲染函数是一个通过 `with(_ctx) { ... }` 包裹后的，大致为：
+~~~ts
+return function render(_ctx) {
+  with (_ctx) {
+    const { toDisplayString, openBlock, createElementBlock } = Vue
+    return (openBlock(), createElementBlock("div", null, toDisplayString(msg), 1 /* TEXT */))
+  }
+}
+~~~
+而在 `function` 模式下，生成的渲染函数中的动态内容，则会被转成 `_ctx.msg` 的模式：
+~~~ts
+import { toDisplayString, openBlock, createElementBlock } from "vue"
+export function render(_ctx) {
+  return (openBlock(), createElementBlock("div", null, toDisplayString(ctx.msg), 1 /* TEXT */))
+}
+~~~
+而参数 `nodeTransforms` 和 `directiveTransforms` 对象则是由 `getBaseTransformPreset` 生成的一系列预设函数：
+~~~ts
+function getBaseTransformPreset(prefixIdentifiers) {
+    return [
+        [
+            transformOnce,
+            transformIf,
+            transformFor,
+            transformExpression,
+            transformSlotOutlet,
+            transformElement,
+            trackSlotScopes,
+            transformText
+        ],
+        {
+            on: transformOn,
+            bind: transformBind,
+            model: transformModel
+        }
+    ]
+}
+~~~
+`nodeTransforms` 涵盖了特殊节点的转换函数，比如文本节点、`v-if` 节点等等，`directiveTransforms` 则包含了一些指令的转换函数。
+
+这些转换函数的细节，不是这里的核心，我们将在下文进行几个重点函数的介绍，其余的有兴趣的小伙伴可以自行翻阅 `vue3` 源码查看实现的细节。接下来我们将核心介绍 `transform` 函数的实现：
+~~~ts
+export function transform(root, options) {
+    // 生成 transform 上下文
+    const context = createTransformContext(root, options)
+    // 遍历处理 ast 节点
+    traverseNode(root, context)
+    // 静态提升
+    if (options.hoistStatic) {
+        hoistStatic(root, context)
+    }
+    // 创建根代码生成节点
+    if (!options.ssr) {
+        createRootCodegen(root, context)
+    }
+    // 最终确定元信息
+    root.helpers = [...context.helpers.keys()]
+    root.components = [...context.components]
+    root.directives = [...context.directives]
+    root.imports = context.imports
+    root.hoists = context.hoists
+    root.temps = context.temps
+    root.cached = context.cached
+}
+~~~
+#### 1. 生成 transform 上下文
+在正式开始 `transform` 前，需要创建生成一个 `transformContext`，即 `transform` 上下文。
+~~~ts
+export function createTransformContext(root, TransformOptions) {
+  const context = {
+    // 选项配置
+    hoistStatic,
+    cacheHandlers,
+    nodeTransforms,
+    directiveTransforms,
+    transformHoist,
+    // ...
+    // 状态数据
+    root,
+    helpers: new Map(),
+    components: new Set(),
+    directives: new Set(),
+    hoists: [],
+    // ....
+    // 一些函数
+    helper(name) {},
+    removeHelper(name) {},
+    helperString(name) {},
+    replaceNode(node) {},
+    removeNode(node) {},
+    onNodeRemoved: () => {},
+    addIdentifiers(exp) {},
+    removeIdentifiers(exp) {},
+    hoist(exp) {},
+    cache(exp, isVNode = false) {}
+  }
+
+  return context
+}
+~~~
+可以看到这个上下文对象 `context` 内主要包含三部分：`transform` 过程中的一些配置属性，一些状态数据，以及在 `transform` 过程中可能会调用的一些辅助函数。
+
+#### 2. 遍历AST节点
+~~~ts
+export function traverseNode(node, context) {
+  context.currentNode = node
+  // 节点转换函数
+  const { nodeTransforms } = context
+  const exitFns = []
+  for (let i = 0; i < nodeTransforms.length; i++) {
+    // 执行节点转换函数，返回得到一个退出函数
+    const onExit = nodeTransforms[i](node, context)
+    // 收集所有退出函数
+    if (onExit) {
+      if (isArray(onExit)) {
+        exitFns.push(...onExit)
+      } else {
+        exitFns.push(onExit)
+      }
+    }
+    if (!context.currentNode) {
+      // 节点被移除
+      return
+    } else {
+      node = context.currentNode
+    }
+  }
+
+  switch (node.type) {
+    case NodeTypes.COMMENT:
+      if (!context.ssr) {
+        // context 中 helpers 添加 CREATE_COMMENT 辅助函数
+        context.helper(CREATE_COMMENT)
+      }
+      break
+    case NodeTypes.INTERPOLATION:
+      // context 中 helpers 添加 TO_DISPLAY_STRING 辅助函数
+      if (!context.ssr) {
+        context.helper(TO_DISPLAY_STRING)
+      }
+      break
+    case NodeTypes.IF:
+      // 递归遍历每个分支节点
+      for (let i = 0; i < node.branches.length; i++) {
+        traverseNode(node.branches[i], context)
+      }
+      break
+    case NodeTypes.IF_BRANCH:
+    case NodeTypes.FOR:
+    case NodeTypes.ELEMENT:
+    case NodeTypes.ROOT:
+      // 遍历子节点
+      traverseChildren(node, context)
+      break
+  }
+  
+  context.currentNode = node
+  // 执行上面收集到的所有退出函数
+  let i = exitFns.length
+  while (i--) {
+    exitFns[i]()
+  }
+}
+~~~
+`traverseNode` 递归的遍历 `ast` 中的每个节点，然后执行一些转换函数 `nodeTransforms`，这些转换函数就是我们上面介绍的通过 `getBaseTransformPreset` 生成的对象，值得注意的是：`nodeTransforms` 返回的是一个数组，说明这些转换函数是有序的，顺序代表着优先级关系，比如对于`if`的处理优先级就比 `for` 要高，因为如果条件不满足很可能有大部分内容都没必要进行转换。
+
+另外，如果转换函数执行完成后，有返回退出函数 `onExit` 的话，那么会被统一存贮到 `exitFns` 当中，在所有字节点处理完成统一执行调用。
+
+##### transformElement
+根据上文我们知道了对节点进行处理，就是通过一系列函数对节点的的各个部分的内容分别进行处理。鉴于这些函数很多内容也很庞杂，我们拿其中一个函数`transformElement`进行分析，理解对**AST**的转化过程：
+~~~ts
+export const transformElement = (node, context) => {
+  // 这里就是返回了一个退出函数
+  return function postTransformElement() {
+    // ...
+    node.codegenNode = createVNodeCall(
+      context,
+      vnodeTag,
+      vnodeProps,
+      vnodeChildren,
+      vnodePatchFlag,
+      vnodeDynamicProps,
+      vnodeDirectives,
+      !!shouldUseBlock,
+      false /* disableTracking */,
+      isComponent,
+      node.loc
+    )
+  }
+}
+~~~
+可以看到，`transformElement` 的核心目的就是通过调用`createVNodeCall`函数获取 `VNodeCall` 对象，并赋值给 `node.codegenNode`。
+
+到这里，我们就大致明白了，我们前面一直提到需要把 `AST` 转成 `JavaScript AST`，实际上就是给 `AST` 的 `codegenNode` 属性赋值。接下来，我们接着看 `createVNodeCall` 函数的实现：
+~~~ts
+function createVNodeCall(context, tag, props, children, patchFlag, dynamicProps, directives, isBlock = false, disableTracking = false, loc = locStub) {
+  if (context) {
+    if (isBlock) {
+      context.helper(OPEN_BLOCK)
+      context.helper(getVNodeBlockHelper(context.inSSR, isComponent))
+    } else {
+      context.helper(getVNodeHelper(context.inSSR, isComponent))
+    }
+    if (directives) {
+      context.helper(WITH_DIRECTIVES)
+    }
+  }
+
+  return {
+    type: NodeTypes.VNODE_CALL,
+    tag,
+    props,
+    children,
+    patchFlag,
+    dynamicProps,
+    directives,
+    isBlock,
+    disableTracking,
+    loc
+  }
+}
+~~~
+该函数也非常容易理解，本质就是为了返回一个 `VNodeCall` 对象，该对象是用来描述 `js` 代码的。
+
+这里的函数 `context.helper` 是会把一些 `Symbol` 对象添加到 `context.helpers Set` 的数据结构当中，在接下来的代码生成阶段，会判断当前 `JS AST` 中是否存在 `helpers` 内容，如果存在，则会根据 `helpers` 中标记的 `Symbol` 对象，来生成辅助函数。
+
+接下来看一下之前的这样一个 `demo`
+~~~vue
+<template>
+    <!-- 这是一段注释 -->
+    <p>{{ msg }}</p>
+</template>
+~~~
+经过遍历`AST`节点 `traverseNode` 函数调用之后之后的结果大致如下：
+~~~json
+{
+  "type": 0,
+  "children": [
+    {
+      "type": 1,
+      "ns": 0,
+      "tag": "p",
+      "tagType": 0,
+      "props": [],
+      "isSelfClosing": false,
+      "children": [],
+      "loc": {},
+      "codegenNode": {
+        "type": 13,
+        "tag": "\"p\"",
+        "children": {
+          "type": 5,
+          "content": {
+            "type": 4,
+            "isStatic": false,
+            "constType": 0,
+            "content": "msg",
+            "loc": {
+              "start": {},
+              "end": {},
+              "source": "msg"
+            }
+          },
+          "loc": {
+            "start": {},
+            "end": {},
+            "source": "{{ msg }}"
+          }
+        },
+        "patchFlag": "1 /* TEXT */",
+        "isBlock": false,
+        "disableTracking": false,
+        "isComponent": false,
+        "loc": {
+          "start": {},
+          "end": {},
+          "source": "<p>{{ msg }}</p>"
+        }
+      }
+    }
+  ],
+  "helpers": [],
+  "components": [],
+  "directives": [],
+  "hoists": [],
+  "imports": [],
+  "cached": 0,
+  "temps": 0,
+  "loc": {
+    "start": {},
+    "end": {},
+    "source": "\n  <p>{{ msg }}</p>\n"
+  }
+}
+~~~
+可以看到，相比原节点，转换后的节点无论是在语义化还是在信息上，都更加丰富，我们可以依据它在代码生成阶段生成所需的代码。
+
+#### 3. 静态提升
+经过上一步的遍历 `AST` 节点后，我们接着来看一下静态提升做了哪些工作。
+~~~ts
+export function hoistStatic(root, context) {
+  walk(
+    root,
+    context,
+    // 根节点是不可提升的
+    isSingleElementRoot(root, root.children[0])
+  )
+}
+~~~
+`hoistStatic` 核心调用的就是 `walk` 函数：
+~~~ts
+function walk(node, context, doNotHoistNode = false) {
+  const { children } = node
+  // 记录那些被静态提升的节点数量
+  let hoistedCount = 0
+
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i]
+    // 普通元素节点可以被提升
+    if (
+      child.type === NodeTypes.ELEMENT &&
+      child.tagType === ElementTypes.ELEMENT
+    ) {
+      // 根据 doNotHoistNode 判断是否可以提升
+      // 设置 constantType 的值
+      const constantType = doNotHoistNode
+        ? ConstantTypes.NOT_CONSTANT
+        : getConstantType(child, context)
+      // constantType = CAN_SKIP_PATCH || CAN_HOIST || CAN_STRINGIFY
+      if (constantType > ConstantTypes.NOT_CONSTANT) {
+        // constantType = CAN_HOIST || CAN_STRINGIFY
+        if (constantType >= ConstantTypes.CAN_HOIST) {
+          // 可提升状态中，codegenNode = PatchFlags.HOISTED
+          child.codegenNode.patchFlag =
+            PatchFlags.HOISTED + (__DEV__ ? ` /* HOISTED */` : ``)
+  
+          // 提升节点，将节点存储到 转换上下文context 的 hoist 数组中
+          child.codegenNode = context.hoist(child.codegenNode!)
+          // 提升节点数量自增 1
+          hoistedCount++
+          continue
+        }
+      } else {
+        // 动态子节点可能存在一些静态可提升的属性
+        const codegenNode = child.codegenNode!
+        if (codegenNode.type === NodeTypes.VNODE_CALL) {
+          // 判断 props 是否可提升
+          const flag = getPatchFlag(codegenNode)
+          if (
+            (!flag ||
+              flag === PatchFlags.NEED_PATCH ||
+              flag === PatchFlags.TEXT) &&
+            getGeneratedPropsConstantType(child, context) >=
+              ConstantTypes.CAN_HOIST
+          ) {
+            // 提升 props
+            const props = getNodeProps(child)
+            if (props) {
+              codegenNode.props = context.hoist(props)
+            }
+          }
+          // 将节点的动态 props 添加到转换上下文对象中
+          if (codegenNode.dynamicProps) {
+            codegenNode.dynamicProps = context.hoist(codegenNode.dynamicProps)
+          }
+        }
+      }
+    }
+
+    if (child.type === NodeTypes.ELEMENT) {
+      // 组件是 slot 的情况
+      const isComponent = child.tagType === ElementTypes.COMPONENT
+      if (isComponent) {
+        context.scopes.vSlot++
+      }
+      // 如果节点类型是组件，则进行递归判断操作
+      walk(child, context)
+      if (isComponent) {
+        context.scopes.vSlot--
+      }
+    } else if (child.type === NodeTypes.FOR) {
+      // 再循环节点中，只有一个子节点的情况下，不需要提升
+      walk(child, context, child.children.length === 1)
+    } else if (child.type === NodeTypes.IF) {
+      for (let i = 0; i < child.branches.length; i++) {
+        // 在 v-if 这样的条件节点上，如果也只有一个分支逻辑的情况
+        walk(
+          child.branches[i],
+          context,
+          child.branches[i].children.length === 1
+        )
+      }
+    }
+  }
+  // 预字符串化
+  if (hoistedCount && context.transformHoist) {
+    context.transformHoist(children, context, node)
+  }
+  // ...
+}
+~~~
+该函数看起来比较复杂，其实就是通过 `walk` 这个递归函数，不断的判断节点是否符合可以静态提升的条件：只有普通的元素节点是可以提升的。
+
+如果满足条件，则会给节点的 `codegenNode` 属性中的 `patchFlag` 的值设置成 `PatchFlags.HOISTED`。
+
+接着执行转换器上下文中的 `context.hoist` 方法：
+~~~ts
+function hoist(exp) {
+  // 存储到 hoists 数组中
+  context.hoists.push(exp);
+  const identifier = createSimpleExpression(`_hoisted_${context.hoists.length}`, false, exp.loc, true)
+  identifier.hoisted = exp
+  return identifier
+}
+~~~
+该函数的作用就是将这个可以被提升的节点存储到转换上下文 `context` 的 `hoist` 数组中。这个数据就是用来存储那些可被提升节点的列表。
+
+接下来，我们再来说一下，为什么要做静态提升呢？ 如下模板所示：
+~~~html
+<div>
+  <p>text</p>
+</div>
+~~~
+在没有被提升的情况下其渲染函数相当于：
+~~~ts
+import { createElementVNode as _createElementVNode, openBlock as _openBlock, createElementBlock as _createElementBlock } from "vue"
+
+export function render(_ctx, _cache, $props, $setup, $data, $options) {
+  return (_openBlock(), _createElementBlock("div", null, [
+    _createElementVNode("p", null, "text")
+  ]))
+}
+~~~
+很明显，`p` 标签是静态的，它不会改变。但是如上渲染函数的问题也很明显，如果组件内存在动态的内容，当渲染函数重新执行时，即使 `p` 标签是静态的，那么它对应的 `VNode` 也会重新创建。
+
+**所谓的 “静态提升”，就是将一些静态的节点或属性提升到渲染函数之外。**如下面的代码所示：
+~~~ts
+import { createElementVNode as _createElementVNode, openBlock as _openBlock, createElementBlock as _createElementBlock } from "vue"
+
+const _hoisted_1 = /*#__PURE__*/_createElementVNode("p", null, "text", -1 /* HOISTED */)
+const _hoisted_2 = [
+  _hoisted_1
+]
+
+export function render(_ctx, _cache, $props, $setup, $data, $options) {
+  return (_openBlock(), _createElementBlock("div", null, _hoisted_2))
+}
+~~~
+这就实现了减少 `VNode` 创建的性能消耗。
+
+而这里的静态提升步骤生成的 `hoists`，会在 `codegenNode` 会在生成代码阶段帮助我们生成静态提升的相关代码。
+
+##### 预字符串化
+注意到在 `walk` 函数结束时，进行了静态提升节点的 `预字符串化`。什么是预字符串化呢？一起来看个示例：
+~~~vue
+<template>
+  <p></p>
+  ... 共 20+ 节点
+  <p></p>
+</template>
+~~~
+对于这样有大量静态提升的模版场景，如果不考虑 `预字符串化` 那么生成的渲染函数将会包含大量的 `createElementVNode` 函数：假设如上模板中有大量连续的静态的 `p` 标签，此时渲染函数生成的结果如下：
+~~~ts
+const _hoisted_1 = /*#__PURE__*/_createElementVNode("p", null, null, -1 /* HOISTED */)
+// ...
+const _hoisted_20 = /*#__PURE__*/_createElementVNode("p", null, null, -1 /* HOISTED */)
+const _hoisted_21 = [
+  _hoisted_1,
+  // ...
+  _hoisted_20,
+]
+
+export function render(_ctx, _cache, $props, $setup, $data, $options) {
+  return (_openBlock(), _createElementBlock("div", null, _hoisted_21))
+}
+~~~
+`createElementVNode` 大量连续性创建 `vnode` 也是挺影响性能的，所以可以通过 预字符串化 来一次性创建这些静态节点，采用 `与字符串化` 后，生成的渲染函数如下：
+~~~ts
+const _hoisted_1 = /*#__PURE__*/_createStaticVNode("<p></p>...<p></p>", 20)
+const _hoisted_21 = [
+  _hoisted_1
+]
+
+export function render(_ctx, _cache, $props, $setup, $data, $options) {
+  return (_openBlock(), _createElementBlock("div", null, _hoisted_21))
+}
+~~~
+这样一方面降低了 `createElementVNode` 连续创建带来的性能损耗，也降侧面减少了代码体积。关于 **预字符串化** 实现的细节函数 `transformHoist` 有兴趣的小伙伴可以再去深入了解。
+
+#### 4. 创建根代码生成节点
+介绍完了静态提升后，我们还剩最后一个 `createRootCodegen` 创建根代码生成节点，接下来一起看一下 `createRootCodegen` 函数的实现：
+~~~ts
+function createRootCodegen(root, context) {
+  const { helper } = context
+  const { children } = root
+  if (children.length === 1) {
+    const child = children[0]
+    // 如果子节点是单个元素节点，则将其转换成一个 block
+    if (isSingleElementRoot(root, child) && child.codegenNode) {
+      const codegenNode = child.codegenNode
+      if (codegenNode.type === NodeTypes.VNODE_CALL) {
+        makeBlock(codegenNode, context)
+      }
+      root.codegenNode = codegenNode
+    } else {
+      root.codegenNode = child
+    }
+  } else if (children.length > 1) {
+    // 如果子节点是多个节点，则返回一个 fragement 的代码生成节点
+    let patchFlag = PatchFlags.STABLE_FRAGMENT
+    let patchFlagText = PatchFlagNames[PatchFlags.STABLE_FRAGMENT]
+    
+    root.codegenNode = createVNodeCall(
+      context,
+      helper(FRAGMENT),
+      undefined,
+      root.children,
+      patchFlag + (__DEV__ ? ` /* ${patchFlagText} */` : ``),
+      undefined,
+      undefined,
+      true,
+      undefined,
+      false /* isComponent */
+    )
+  } else {
+    // no children = noop. codegen will return null.
+  }
+}
+~~~
+我们知道，`Vue3` 中是可以在 `template` 中写多个字节点的：
+~~~vue
+<template>
+  <p>1</p>
+  <p>2</p>
+</template>
+~~~
+`createRootCodegen`，核心就是创建根节点的 `codegenNode` 对象。所以当有多个子节点时，也就是 `children.length > 1` 时，调用 `createVNodeCall` 来创建一个新的 `fragment` 根节点 `codegenNode`。
+
+否则，就代表着只有一个根节点，直接让根节点的 `codegenNode` 等于第一个子节点的根节点的 `codegenNode` 即可。
+
+`createRootCodegen` 完成之后，接着把 `transform` 上下文在转换 `AST` 节点过程中创建的一些变量赋值给 `root` 节点对应的属性，这样方便在后续代码生成的过程中访问到这些变量。
+~~~ts
+root.helpers = [...context.helpers.keys()]
+root.components = [...context.components]
+root.directives = [...context.directives]
+root.imports = context.imports
+root.hoists = context.hoists
+root.temps = context.temps
+root.cached = context.cached
+~~~
+`transform` 节点的核心功能就是语法分析阶段，把 `AST` 节点做进一层转换，构造出语义化更强，信息更加丰富的 `codegenCode`。便于在下一小节 `generate` 中使用。
+
+## 编译器:JS AST 是如何生成渲染函数的
+接下来我们将进入模版编译的最后一步：代码生成器 `generate`。
+~~~ts
+generate(
+  ast,
+  extend({}, options, {
+    prefixIdentifiers
+  })
+)
+~~~
+一起来看一下 `generate` 的核心实现：
+~~~ts
+export function generate(ast, options = {}) {
+  // 创建代码生成上下文
+  const context = createCodegenContext(ast, options)
+  const {
+    mode,
+    push,
+    prefixIdentifiers,
+    indent,
+    deindent,
+    newline,
+    scopeId,
+    ssr
+  } = context
+
+  const hasHelpers = ast.helpers.length > 0
+  const useWithBlock = !prefixIdentifiers && mode !== 'module'
+  const genScopeId = !__BROWSER__ && scopeId != null && mode === 'module'
+  const isSetupInlined = !__BROWSER__ && !!options.inline
+  
+  // 生成预设代码
+  const preambleContext = isSetupInlined
+    ? createCodegenContext(ast, options)
+    : context
+  // 不在浏览器的环境且 mode 是 module   
+  if (!__BROWSER__ && mode === 'module') {
+    genModulePreamble(ast, preambleContext, genScopeId, isSetupInlined)
+  } else {
+    genFunctionPreamble(ast, preambleContext)
+  }
+  // 进入 render 函数构造
+  const functionName = `render`
+  const args = ['_ctx', '_cache']
+ 
+  const signature = args.join(', ')
+  
+  push(`function ${functionName}(${signature}) {`)
+  
+  indent()
+
+  if (useWithBlock) {
+    // 处理带 with 的情况，Web 端运行时编译
+    push(`with (_ctx) {`)
+    indent()
+    if (hasHelpers) {
+      push(`const { ${ast.helpers.map(aliasHelper).join(', ')} } = _Vue`)
+      push(`\n`)
+      newline()
+    }
+  }
+  
+  // 生成自定义组件声明代码
+  if (ast.components.length) {
+    genAssets(ast.components, 'component', context)
+    if (ast.directives.length || ast.temps > 0) {
+      newline()
+    }
+  }
+  // 生成自定义指令声明代码
+  if (ast.directives.length) {
+    genAssets(ast.directives, 'directive', context)
+    if (ast.temps > 0) {
+      newline()
+    }
+  }
+  // 生成临时变量代码
+  if (ast.temps > 0) {
+    push(`let `)
+    for (let i = 0; i < ast.temps; i++) {
+      push(`${i > 0 ? `, ` : ``}_temp${i}`)
+    }
+  }
+  if (ast.components.length || ast.directives.length || ast.temps) {
+    push(`\n`)
+    newline()
+  }
+
+  if (!ssr) {
+    push(`return `)
+  }
+  
+  // 生成创建 VNode 树的表达式
+  if (ast.codegenNode) {
+    genNode(ast.codegenNode, context)
+  } else {
+    push(`null`)
+  }
+
+  if (useWithBlock) {
+    deindent()
+    push(`}`)
+  }
+
+  deindent()
+  push(`}`)
+
+  return {
+    ast,
+    code: context.code,
+    preamble: isSetupInlined ? preambleContext.code : ``,
+    map: context.map ? (context.map as any).toJSON() : undefined
+  }
+}
+~~~
+这个函数看起来有点复杂，我们先来简单了解一下：`generate` 函数，接收两个参数，分别是经过转换器处理的 `ast` 抽象语法树，以及 `options` 代码生成选项。最终返回一个 `CodegenResult` 类型的对象：
+~~~ts
+return {
+    ast, // 抽象语法树
+    code, // render 函数代码字符串
+    preamble, // 代码字符串的前置部分
+    map, //可选的 sourceMap
+}
+~~~
+接下来开始深入了解一下该函数的核心功能。
+
+### 1. 创建代码生成上下文
+`generate` 函数的第一步是通过 `createCodegenContext` 来创建 `CodegenContext` 上下文对象。一起来看一下其核心实现：
+~~~ts
+function createCodegenContext(ast, { mode = 'function', prefixIdentifiers = mode === 'module', sourceMap = false, filename = `template.vue.html`, scopeId = null, optimizeBindings = false, runtimeGlobalName = `Vue`, runtimeModuleName = `vue`, ssr = false }) {
+  const context = {
+    mode,
+    prefixIdentifiers,
+    sourceMap,
+    filename,
+    scopeId,
+    optimizeBindings,
+    runtimeGlobalName,
+    runtimeModuleName,
+    ssr,
+    source: ast.loc.source,
+    code: ``,
+    column: 1,
+    line: 1,
+    offset: 0,
+    indentLevel: 0,
+    pure: false,
+    map: undefined,
+    helper(key) {
+      return `_${helperNameMap[key]}`
+    },
+    push(code) {
+      context.code += code
+      // ... 省略 非浏览器环境下的 addMapping
+    },
+    indent() {
+      newline(++context.indentLevel)
+    },
+    deindent(withoutNewLine = false) {
+      if (withoutNewLine) {
+        --context.indentLevel
+      }
+      else {
+        newline(--context.indentLevel)
+      }
+    },
+    newline() {
+      newline(context.indentLevel)
+    }
+  }
+  function newline(n) {
+    context.push('\n' + `  `.repeat(n))
+  }
+  return context
+}
+~~~
+可以看出 `createCodegenContext` 创建的 `context` 中，核心维护了一些基础配置变量和一些工具函数，我们来看几个比较常用的函数：
+- `push`：该函数的功能是将传入的字符串拼接入上下文中的 `code` 属性中。并且会生成对应的 `sourceMap`。
+- `indent`: 作用是缩进
+- `deindent`: 回退缩进
+- `newline`: 插入新的一行
+
+其中，`index`、`deindent`、`newline` 是用来辅助生成的代码字符串，用来格式化结构，让生成的代码字符串非常直观，就像在 `ide` 中敲入的制表符、换行、格式化代码块一样。
+
+在创建上下文变量完成后，接着进入生成预设代码的流程：
+
+### 2. 生成预设代码
+~~~ts
+// 不在浏览器的环境且 mode 是 module
+if (!__BROWSER__ && mode === 'module') {
+  // 使用 ES module 标准的 import 来导入 helper 的辅助函数，处理生成代码的前置部分
+  genModulePreamble(ast, preambleContext, genScopeId, isSetupInlined)
+} else {
+  // 否则生成的代码前置部分是一个单一的 const { helpers... } = Vue 处理代码前置部分
+  genFunctionPreamble(ast, preambleContext)
+}
+~~~
+`mode` 有两个选项:
+- `module`: 会通过 `ES module` 的 `import` 来导入 `ast` 中的 `helpers` 辅助函数，并用 `export` 默认导出 `render` 函数。
+- `function` 时，就会生成一个单一的 `const { helpers... } = Vue` 声明，并且 `return` 返回 `render` 函数。
+
+先看一下 `genModulePreamble` 的实现：
+~~~ts
+function genModulePreamble(ast, context, genScopeId, inline) {
+  const {
+    push,
+    newline,
+    optimizeImports,
+    runtimeModuleName,
+    ssrRuntimeModuleName
+  } = context
+  
+  // ...
+
+  if (ast.helpers.length) {
+    if (optimizeImports) {
+      // 生成 import 声明代码
+      push(
+        `import { ${ast.helpers
+          .map(s => helperNameMap[s])
+          .join(', ')} } from ${JSON.stringify(runtimeModuleName)}\n`
+      )
+      push(
+        `\n// Binding optimization for webpack code-split\nconst ${ast.helpers
+          .map(s => `_${helperNameMap[s]} = ${helperNameMap[s]}`)
+          .join(', ')}\n`
+      )
+    } else {
+      push(
+        `import { ${ast.helpers
+          .map(s => `${helperNameMap[s]} as _${helperNameMap[s]}`)
+          .join(', ')} } from ${JSON.stringify(runtimeModuleName)}\n`
+      )
+    }
+  }
+  // 提升静态节点
+  genHoists(ast.hoists, context)
+  newline()
+
+  if (!inline) {
+    push(`export `)
+  }
+}
+~~~
+其中 `ast.helpers` 是在 `transform` 阶段通过 `context.helper` 方法添加的，它的值如下：
+~~~ts
+[
+  Symbol(resolveComponent),
+  Symbol(createVNode),
+  Symbol(createCommentVNode),
+  Symbol(toDisplayString),
+  Symbol(openBlock),
+  Symbol(createBlock)
+]
+~~~
+所以这一步结束后，得到的代码为
+~~~ts
+import { createElementVNode as _createElementVNode, toDisplayString as _toDisplayString, Fragment as _Fragment, openBlock as _openBlock, createElementBlock as _createElementBlock } from "vue"
+~~~
+然后执行 `genHoists`：
+~~~ts
+function genHoists(hoists, context) {
+  if (!hoists.length) {
+    return
+  }
+  context.pure = true
+  const { push, newline } = context
+  
+  newline()
+  hoists.forEach((exp, i) => {
+    if (exp) {
+      push(`const _hoisted_${i + 1} = `)
+      genNode(exp, context)
+      newline()
+    }
+  })
+  
+  context.pure = false
+}
+~~~
+核心功能就是遍历 `ast.hoists` 数组，该数组是我们在 `transform` 的时候构造的，然生成静态提升变量定义的方法。在进行 `hoists` 数组遍历的时候，这里有个 `geNode` 函数，是用来生成节点的创建字符串的，一起来看一下其实现：
+~~~ts
+function genNode(node, context) {
+  if (isString(node)) {
+    context.push(node)
+    return
+  }
+  if (isSymbol(node)) {
+    context.push(context.helper(node))
+    return
+  }
+  // 根据 node 节点类型不同，调用不同的生成函数
+  switch (node.type) {
+    case NodeTypes.ELEMENT:
+    case NodeTypes.IF:
+    case NodeTypes.FOR:
+      genNode(node.codegenNode!, context)
+      break
+    case NodeTypes.TEXT:
+      genText(node, context)
+      break
+    case NodeTypes.SIMPLE_EXPRESSION:
+      genExpression(node, context)
+      break
+    case NodeTypes.INTERPOLATION:
+      genInterpolation(node, context)
+      break
+    case NodeTypes.TEXT_CALL:
+      genNode(node.codegenNode, context)
+      break
+    case NodeTypes.COMPOUND_EXPRESSION:
+      genCompoundExpression(node, context)
+      break
+    case NodeTypes.COMMENT:
+      genComment(node, context)
+      break
+    case NodeTypes.VNODE_CALL:
+      genVNodeCall(node, context)
+      break
+
+    case NodeTypes.JS_CALL_EXPRESSION:
+      genCallExpression(node, context)
+      break
+    case NodeTypes.JS_OBJECT_EXPRESSION:
+      genObjectExpression(node, context)
+      break
+    case NodeTypes.JS_ARRAY_EXPRESSION:
+      genArrayExpression(node, context)
+      break
+    case NodeTypes.JS_FUNCTION_EXPRESSION:
+      genFunctionExpression(node, context)
+      break
+    case NodeTypes.JS_CONDITIONAL_EXPRESSION:
+      genConditionalExpression(node, context)
+      break
+    case NodeTypes.JS_CACHE_EXPRESSION:
+      genCacheExpression(node, context)
+      break
+    case NodeTypes.JS_BLOCK_STATEMENT:
+      genNodeList(node.body, context, true, false)
+      break
+
+    /* istanbul ignore next */
+    case NodeTypes.IF_BRANCH:
+      // noop
+      break
+    default:
+  }
+}
+~~~
+根据上一小节的 `demo`
+~~~HTML
+<template>
+  <p>hello world</p>
+  <p>{{ msg }}</p>
+</template>
+~~~
+我们经过 `transform` 后得到的 `AST` 内容大致如下：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/2493875141.png)
+
+其中 `hoists` 内容中存储的是 `<p>hello world</p>` 节点的信息，其中 `type = 13` 表示的是 `VNODE_CALL` 类型，进入 `genVNodeCall` 函数中：
+
+~~~ts
+function genVNodeCall(node, context) {
+  const { push, helper, pure } = context
+  const {
+    tag,
+    props,
+    children,
+    patchFlag,
+    dynamicProps,
+    directives,
+    isBlock,
+    disableTracking,
+    isComponent
+  } = node
+  if (directives) {
+    push(helper(WITH_DIRECTIVES) + `(`)
+  }
+  if (isBlock) {
+    push(`(${helper(OPEN_BLOCK)}(${disableTracking ? `true` : ``}), `)
+  }
+  if (pure) {
+    push(PURE_ANNOTATION)
+  }
+  const callHelper = isBlock
+    ? getVNodeBlockHelper(context.inSSR, isComponent)
+    : getVNodeHelper(context.inSSR, isComponent)
+  push(helper(callHelper) + `(`, node)
+  genNodeList(
+    genNullableArgs([tag, props, children, patchFlag, dynamicProps]),
+    context
+  )
+  push(`)`)
+  if (isBlock) {
+    push(`)`)
+  }
+  if (directives) {
+    push(`, `)
+    genNode(directives, context)
+    push(`)`)
+  }
+}
+~~~
+在执行 `genVNodeCall` 函数时，因为 `directives` 不存在，`isBlock = false` 此时我们生成的代码内容如下
+~~~ts
+import { createElementVNode as _createElementVNode, toDisplayString as _toDisplayString, Fragment as _Fragment, openBlock as _openBlock, createElementBlock as _createElementBlock } from "vue"
+
+const _hoisted_1 = /*#__PURE__*/_createElementVNode("p", null, "hello world", -1 /* HOISTED */)
+~~~
+`genModulePreamble` 函数的最后，执行 `push('export')` 完成 `genModulePreamble` 的所有逻辑，得到以下内容：
+~~~ts
+import { createElementVNode as _createElementVNode, toDisplayString as _toDisplayString, Fragment as _Fragment, openBlock as _openBlock, createElementBlock as _createElementBlock } from "vue"
+
+const _hoisted_1 = /*#__PURE__*/_createElementVNode("p", null, "hello world", -1 /* HOISTED */)
+
+export
+~~~
+然后再看一下 `genFunctionPreamble` 函数，该函数的功能和 `genModulePreamble` 类似，就不再赘述，直接来看一下生成的结果：
+~~~ts
+const _Vue = Vue
+const { createElementVNode: _createElementVNode } = _Vue
+
+const _hoisted_1 = /*#__PURE__*/_createElementVNode("p", null, "hello world", -1 /* HOISTED */)
+
+return
+~~~
+要注意以上代码仅仅是代码前置部分，还没有开始解析其他资源和节点，所以仅仅是到了 `export` 或者 `return` 就结束了。
+
+### 3. 生成渲染函数
+~~~ts
+// 进入 render 函数构造
+const functionName = `render`
+const args = ['_ctx', '_cache']
+
+const signature = args.join(', ')
+
+push(`function ${functionName}(${signature}) {`)
+
+indent()
+~~~
+这些代码还是比较好理解的，核心也是在通过 `push` 函数，继续生成 `code` 字符串，看一下经过这个步骤后，我们的代码字符串变成的内容：
+~~~ts
+import { createElementVNode as _createElementVNode, toDisplayString as _toDisplayString, Fragment as _Fragment, openBlock as _openBlock, createElementBlock as _createElementBlock } from "vue"
+
+const _hoisted_1 = /*#__PURE__*/_createElementVNode("p", null, "hello world", -1 /* HOISTED */)
+
+export function render(_ctx, _cache) {
+~~~
+到这里，后面的内容也就不言而喻了，就是生成 `render` 函数的主题内容代码，我们先忽略对 `components`、`directives`、`temps` 代码块的生成，有兴趣的可以在源码里面调试打印。
+
+我们知道之前的 `transform` 在处理节点内容时，会生成 `codegenNode` 对象，这个对象就是在这里被使用转换成代码字符串的：
+~~~ts
+if (ast.codegenNode) {
+  genNode(ast.codegenNode, context)
+} else {
+  push(`null`)
+}
+~~~
+上面的例子中，我们生产的模版节点的 `codegenNode` 内容如下：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/3462545452.png)
+
+其中 `type = 13` 表示的是 `VNODE_CALL` 类型，也进入 `genVNodeCall` 函数中，这里需要注意的是，因为我们 `template` 下包含了 `2` 个同级的标签，所以在 `transform` 阶段会创建一个 `patchFlag = STABLE_FRAGMENT` 这样一个根 `fragment` 的 `ast` 节点来包含 `2` 个 `p` 标签节点。
+
+针对我们上面的示例，`directives` 没有，`isBlock` 是 `true`。那么经过 `genVNodeCall` 后生成的代码如下：
+~~~ts
+import { createElementVNode as _createElementVNode, toDisplayString as _toDisplayString, Fragment as _Fragment, openBlock as _openBlock, createElementBlock as _createElementBlock } from "vue"
+
+const _hoisted_1 = /*#__PURE__*/_createElementVNode("p", null, "hello world", -1 /* HOISTED */)
+
+export function render(_ctx, _cache) {
+  return (_openBlock(), _createElementBlock(_Fragment, null, [
+    _hoisted_1,
+    _createElementVNode("p", null, _toDisplayString(msg), 1 /* TEXT */)
+  ], 64 /* STABLE_FRAGMENT */))
+~~~
+那么至此，根节点 `vnode` 树的表达式就创建好了。我们再回到 `generate` 函数，`generate` 函数的最后就是添加右括号 `}` 来闭合渲染函数，最终生成如下代码：
+~~~ts
+import { createElementVNode as _createElementVNode, toDisplayString as _toDisplayString, Fragment as _Fragment, openBlock as _openBlock, createElementBlock as _createElementBlock } from "vue"
+
+const _hoisted_1 = /*#__PURE__*/_createElementVNode("p", null, "hello world", -1 /* HOISTED */)
+
+export function render(_ctx, _cache) {
+  return (_openBlock(), _createElementBlock(_Fragment, null, [
+    _hoisted_1,
+    _createElementVNode("p", null, _toDisplayString(msg), 1 /* TEXT */)
+  ], 64 /* STABLE_FRAGMENT */))
+}
+~~~
+通过上述流程我们大致清楚了 `generate` 是 `compile` 阶段的最后一步，它的作用是将 `transform` 转换后的 `AST` 生成对应的可执行代码，从而在之后 `Runtime` 的 `Render` 阶段时，就可以通过可执行代码生成对应的 `VNode Tree`，然后最终映射为真实的 `DOM Tree` 在页面上。其中我们也省略了一些细节的介绍，但整体流程还是很容易理解的。
+
+## 编译器:编译过程中的优化细节
+
+
 
 
 
