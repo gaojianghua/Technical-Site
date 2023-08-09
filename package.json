@@ -2,6 +2,7 @@
   "name": "technical-site",
   "version": "1.0.0",
   "main": "index.js",
+  "type": "module",
   "license": "MIT",
   "scripts": {
     "dev": "vitepress dev docs",
@@ -9,8 +10,9 @@
     "serve": "vitepress serve docs --port 5555"
   },
   "devDependencies": {
-    "vitepress": "^1.0.0-alpha.4",
-    "vue": "^3.2.37",
-    "vuepress-plugin-sitemap": "^2.3.1"
+    "flexsearch": "^0.7.31",
+    "vitepress": "^1.0.0-rc.4",
+    "vitepress-plugin-search": "^1.0.4-alpha.20",
+    "vue": "^3.3.4"
   }
 }

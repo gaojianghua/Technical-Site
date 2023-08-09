@@ -4096,12 +4096,12 @@ function parseInterpolation(context, mode) {
 
 ![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/4204263875.png)
 
-可以看到，`parseInterpolation` 函数本质就是通过插值的开始标签 `{{` 和结束标签 `}}` 找到插值的内容 `content`。然后再计算插值的起始位置，接着就是前进代码到插值结束分隔符后，表示插值部分代码处理完毕，可以继续解析后续代码了。
+可以看到，`parseInterpolation` 函数本质就是通过插值的开始标签 <code v-pre>{{</code> 和结束标签 <code v-pre>}}</code> 找到插值的内容 `content`。然后再计算插值的起始位置，接着就是前进代码到插值结束分隔符后，表示插值部分代码处理完毕，可以继续解析后续代码了。
 
 最后返回一个描述插值节点的 `AST` 对象，其中，`loc` 记录了插值的代码开头和结束的位置信息，`type` 表示当前节点的类型，`content` 表示当前节点的内容信息。
 
 #### 2. 解析文本
-针对源代码起点位置的字符不是 `<` 或者 `{{` 时，则当做是文本节点处理，调用 `parseText` 函数：
+针对源代码起点位置的字符不是 `<` 或者 <code v-pre>{{</code> 时，则当做是文本节点处理，调用 `parseText` 函数：
 ~~~ts
 function parseText(context, mode) {
   // 文本结束符
@@ -4127,7 +4127,7 @@ function parseText(context, mode) {
   }
 }
 ~~~
-`parseText` 函数整体功能还是比较简单的，如果一段文本，在 `CDATA` 模式下，当遇到 `]]>` 即为结束位置，否则，都是在遇到 `<` 或者插值分隔符 `{{` 结束。所以通过遍历这些结束符，匹配并找到文本结束的位置。
+`parseText` 函数整体功能还是比较简单的，如果一段文本，在 `CDATA` 模式下，当遇到 `]]>` 即为结束位置，否则，都是在遇到 `<` 或者插值分隔符 <code v-pre>{{</code> 结束。所以通过遍历这些结束符，匹配并找到文本结束的位置。
 
 找到文本结束位置后，就可以通过 `parseTextData` 函数来获取到文本的内容并前进到文本内容后。
 
@@ -4195,7 +4195,7 @@ function parseElement(context, ancestors) {
 function parseTag(context, type, parent) {
   const start = getCursor(context)
   // 匹配标签文本结束的位置
-  const match = /^</?([a-z][^\t\r\n\f />]*)/i.exec(context.source)!
+  const match = /^<\/?([a-z][^\t\r\n\f />]*)/i.exec(context.source)!
   const tag = match[1]
   const ns = context.options.getNamespace(tag, parent)
   // 前进代码到标签文本结束位置
@@ -4259,7 +4259,7 @@ function parseTag(context, type, parent) {
 }
 ~~~
 `parseTag` 函数首先会匹配标签的文本的节点信息，比如 `<div class="test">{{ msg }}</div>` 得到的 `match` 信息如下：
-~~~
+~~~js
 [
   '<div',
   'div', 
@@ -4340,13 +4340,13 @@ function parseTag(context, type, parent) {
 ~~~
 #### 插值标签解析
 然后再进入 `parseChildren` 流程，此时的 `source` 内容如下：
-~~~
+~~~html
   {{ msg }}
   <p>这是一段文本</p>
 </div>
 ~~~
-此时的开始标签是 `{{` 所以进入插值解析的函数 `parseInterpolation`，该函数执行完成后得到的 `source` 结果如下：
-~~~
+此时的开始标签是 <code v-pre>{{</code> 所以进入插值解析的函数 `parseInterpolation`，该函数执行完成后得到的 `source` 结果如下：
+~~~html
   <p>这是一段文本</p>
 </div>
 ~~~
@@ -4354,7 +4354,7 @@ function parseTag(context, type, parent) {
 
 #### p 标签解析
 在完成，插值节点解析后，在 `parseChildren` 内存在一个 `while` 判断：`while (!isEnd(context, mode, ancestors))`，因为还未到达闭合标签的位置，所以接着进入 `p` 标签的解析 `parseElement`。解析完成后得到 `source` 内容如下：
-~~~
+~~~html
   这是一段文本</p>
 </div>
 ~~~
@@ -4362,13 +4362,13 @@ function parseTag(context, type, parent) {
 
 #### 解析文本节点
 然后遇到的了文本开头的内容，会进入 `parseText` 文本解析的流程，完成 `parseText` 后，得到的 `source` 内容如下：
-~~~
+~~~html
 </p>
 </div>
 ~~~
 #### 解析闭合标签
 此时 `while` 退出循环，进入 `parseTag` 继续解析闭合标签，首先是 `</p>` 标签，因为不是自闭和标签，则继续更新 `content` 后，然后更新标签节点的代码位置，最后得到的 `source` 如下：
-~~~
+~~~html
 </div>
 ~~~
 最后再继续解析闭合标签 `</div>` 更新 `content` 和标签节点`div`的代码位置，直到结束。
@@ -5312,7 +5312,7 @@ function genNode(node, context) {
 }
 ~~~
 根据上一小节的 `demo`
-~~~HTML
+~~~html
 <template>
   <p>hello world</p>
   <p>{{ msg }}</p>
@@ -5455,15 +5455,76 @@ export function render(_ctx, _cache) {
 通过上述流程我们大致清楚了 `generate` 是 `compile` 阶段的最后一步，它的作用是将 `transform` 转换后的 `AST` 生成对应的可执行代码，从而在之后 `Runtime` 的 `Render` 阶段时，就可以通过可执行代码生成对应的 `VNode Tree`，然后最终映射为真实的 `DOM Tree` 在页面上。其中我们也省略了一些细节的介绍，但整体流程还是很容易理解的。
 
 ## 编译器:编译过程中的优化细节
+在开启本章之前，我们先来思考一个问题，假设有以下模板：
+~~~html
+<template>
+  <p>hello world</p>
+  <p>{{ msg }}</p>
+</template>>
+~~~
+其中一个 `p` 标签的节点是一个静态的节点，第二个 `p` 标签的节点是一个动态的节点，如果当 `msg` 的值发生了变化，那么理论上肉眼可见最优的更新方案应该是只做第二个动态节点的 `diff`，而无需进行第一个 `p` 标签节点的 `diff`。
 
+如果熟悉 `Vue 2.x` 的小伙伴可能会知道，在 `Vue 2.x` 版本中在编译过程中有一个叫做 `optimize` 的阶段，会进行标记静态根节点的操作，被标记为静态根节点的节点，一方面会生成一个 `staticRenderFns`，首次渲染会以这个静态根节点 `vnode` 进行缓存，后续渲染会直接取缓存中的，从而避免重复渲染；另一方面生成的 `vnode` 会带有 `isStatic = true` 的属性，将会在 `diff` 过程中被跳过。但 `Vue 2.x` 对静态节点进行缓存就是一种空间换时间的优化策略，为了避免过度优化，在 `Vue 2.x` 中，识别静态根节点是需要满足：
+- 子节点是静态节点；
+- 子节点不是只有一个静态文本节点的节点。
 
+所以，上面的示例第一个 `p` 标签在 `Vue 2.x` 中不会被判定位静态根节点，也就无法进行优化。
 
+>关于 `Vue 2.x` 如何做的编译时优化，这里只是简单进行了介绍，想了解更多的小伙伴可以参考这里：[入口开始，解读 Vue2 源码（七）—— `$mount` 内部实现 --- `compile optimize`标记节点](https://github.com/muwoo/blogs/blob/master/src/Vue/8.md)。
 
+那么 `Vue 3` 呢？还是和 `Vue 2` 一样吗？答案显然是否定的，首先我们前面介绍了对于静态的节点，`Vue 3` 首先会进行静态提升，也就是相当于缓存了静态节点的 `vnode`，那 `diff` 过程呢？会跳过吗？本小节我们来一探究竟。
 
-
-
-
-
+### PatchFlags
+首先，我们需要认识一个 `PatchFlags` 这个属性，它是一个枚举类型，里面是一些二进制操作的值，用来标记在节点的 `patch` 类型。具体的枚举内容如下：
+~~~ts
+export const enum PatchFlags {
+  // 动态文本的元素
+  TEXT = 1,
+  
+  // 动态 class 的元素
+  CLASS = 1 << 1,
+  
+  // 动态 style 的元素
+  STYLE = 1 << 2,
+  
+  // 动态 props 的元素
+  PROPS = 1 << 3,
+  
+  // 动态 props 和有 key 值绑定的元素
+  FULL_PROPS = 1 << 4,
+  
+  // 有事件绑定的元素
+  HYDRATE_EVENTS = 1 << 5,
+  
+  // children 顺序确定的 fragment
+  STABLE_FRAGMENT = 1 << 6,
+  
+  // children 中有带有 key 的节点的 fragment
+  KEYED_FRAGMENT = 1 << 7,
+  
+  // 没有 key 的 children 的 fragment
+  UNKEYED_FRAGMENT = 1 << 8,
+  
+  // 带有 ref、指令的元素
+  NEED_PATCH = 1 << 9,
+  
+  // 动态的插槽
+  DYNAMIC_SLOTS = 1 << 10,
+  
+  // 静态节点
+  HOISTED = -1,
+  
+  // 不是 render 函数生成的元素，如 renderSlot
+  BAIL = -2,
+}
+~~~
+这些二进制的值是通过左移操作符 `<<` 生成的：
+~~~ts
+TEXT = 0000000001; 
+CLASS = 0000000010; 
+STYLE = 0000000100;
+~~~
+这里通过二进制来表示 `PatchFlags` 可以方便我们做很多属性的判断，比如 `TEXT | STYLE` 来得到 `0000000101`，表示 `patchFlag` 既有 `TEXT` 属性也有 `STYLE` 属性，当需要进行判断有没有 `STYLE` 属性时，只需要 `FLAG & STYLE > 0`就行。
 
 
 

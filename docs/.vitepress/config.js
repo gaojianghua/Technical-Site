@@ -1,4 +1,14 @@
-export default {
+import { SearchPlugin } from "vitepress-plugin-search";
+import { defineConfig} from 'vitepress'
+
+let options = {
+    previewLength: 62,
+    buttonLabel: "Search",
+    placeholder: "Search docs",
+    allow: [],
+    ignore: [],
+};
+export default  defineConfig({
     lang: 'zh-CN',
     title: 'Wolffy',
     base: '/docs/',
@@ -6,6 +16,7 @@ export default {
         '技术博客--前端后端运维知识点收录: Vue, React, Taro, ReactNative, Webpack, Vite, UniApp, 小程序, H5, Docker, GitGoLang, Node, Nest, Mysql, Redis, 数据结构, 算法',
     lastUpdated: true,
     ignoreDeadLinks: true,
+    plugins: [SearchPlugin(options)],
     head: [
         ['link', { rel: 'icon', href: 'https://gaojianghua.oss-cn-hangzhou.aliyuncs.com/home/wolffy.ico' }],
         ['meta', { property: 'og:type', content: 'website' }],
@@ -45,7 +56,7 @@ export default {
             indexName: 'vitepress',
         },
     }
-};
+});
 
 function sidebarGuide() {
     const menus = [
