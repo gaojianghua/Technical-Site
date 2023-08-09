@@ -1,5 +1,5 @@
 <p align="center">
-    <img alt="logo" src="https://gaojianghua.oss-cn-hangzhou.aliyuncs.com/home/wolffy.png" width="120" height="120" style="margin-bottom: 10px;">
+    <img alt="logo" src="https://gaojianghua.oss-cn-hangzhou.aliyuncs.com/logo.png" width="94.48" height="120" style="margin-bottom: 10px;">
 </p>
 <h3 align="center" style="margin: 30px 0 30px;font-weight: bold;font-size:40px;">Technical Site</h3>
 <h3 align="center">个人技术文档 积累记录学习笔记</h3>
