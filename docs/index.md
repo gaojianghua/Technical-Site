@@ -6,7 +6,7 @@ h1: wolffy
 hero:
   name: Mr. Gao's Document
   text: 高先生的笔记文档
-  tagline: 我自横刀向天笑 去留肝胆两昆仑
+  tagline: 天行健  君子以自强不息  地势坤  君子以厚德载物
   actions:
     - theme: brand
       text: 快速开始
@@ -20,6 +20,9 @@ hero:
     - theme: alt
       text: 服务官网
       link: https://gaojianghua.cn
+  image:
+    src: https://gaojianghua.oss-cn-hangzhou.aliyuncs.com/logo.png
+    alt: Wolffy
 head:
   - - meta
     - name: keywords
@@ -47,3 +50,24 @@ features:
     title: 全面覆盖
     details: 文档涵盖前后端多种领域知识点, 跨界知识点
 ---
+<style>
+:root {
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: -webkit-linear-gradient(120deg, #bd34fe 30%, #41d1ff);
+
+  --vp-home-hero-image-background-image: linear-gradient(-45deg, #bd34fe 50%, #47caff 50%);
+  --vp-home-hero-image-filter: blur(40px);
+}
+
+@media (min-width: 640px) {
+  :root {
+    --vp-home-hero-image-filter: blur(56px);
+  }
+}
+
+@media (min-width: 960px) {
+  :root {
+    --vp-home-hero-image-filter: blur(72px);
+  }
+}
+</style>

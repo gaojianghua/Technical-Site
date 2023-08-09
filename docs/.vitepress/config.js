@@ -15,16 +15,25 @@ export default  defineConfig({
     description:
         '技术博客--前端后端运维知识点收录: Vue, React, Taro, ReactNative, Webpack, Vite, UniApp, 小程序, H5, Docker, GitGoLang, Node, Nest, Mysql, Redis, 数据结构, 算法',
     lastUpdated: true,
+    cleanUrls: true,
     ignoreDeadLinks: true,
     plugins: [SearchPlugin(options)],
+    sitemap: {
+        hostname: 'https://gaojianghua.cn/docs/',
+        transformItems(items) {
+            return items.filter((item) => !item.url.includes('migration'))
+        }
+    },
     head: [
         ['link', { rel: 'icon', href: 'https://gaojianghua.oss-cn-hangzhou.aliyuncs.com/home/wolffy.ico' }],
         ['meta', { property: 'og:type', content: 'website' }],
         ['meta', { property: 'og:title', content: '高江华' }],
+        ['meta', { name: 'og:locale', content: 'cn' }],
+        ['meta', { name: 'og:site_name', content: 'Wolffy' }],
     ],
     themeConfig: {
         siteTitle: 'Wolffy',
-        logo: 'https://gaojianghua.oss-cn-hangzhou.aliyuncs.com/home/wolffy.png',
+        logo: { src: 'https://gaojianghua.oss-cn-hangzhou.aliyuncs.com/logo.png', width: 20, height: 25.46 },
         sidebar: {
             '/guide/': sidebarGuide(),
         },
@@ -54,6 +63,14 @@ export default  defineConfig({
             appId: '8J64VVRP8K',
             apiKey: 'a18e2f4cc5665f6602c5631fd868adfd',
             indexName: 'vitepress',
+        },
+        search: {
+            provider: 'algolia',
+            options: {
+                appId: '8J64VVRP8K',
+                apiKey: 'a18e2f4cc5665f6602c5631fd868adfd',
+                indexName: 'vitepress'
+            }
         },
     }
 });
