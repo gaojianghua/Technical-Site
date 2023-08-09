@@ -25,7 +25,7 @@ export default  defineConfig({
         }
     },
     head: [
-        ['link', { rel: 'icon', href: 'https://gaojianghua.oss-cn-hangzhou.aliyuncs.com/home/wolffy.ico' }],
+        ['link', { rel: 'icon', href: 'https://gaojianghua.oss-cn-hangzhou.aliyuncs.com/logo.ico'}],
         ['meta', { property: 'og:type', content: 'website' }],
         ['meta', { property: 'og:title', content: '高江华' }],
         ['meta', { name: 'og:locale', content: 'cn' }],
@@ -33,7 +33,7 @@ export default  defineConfig({
     ],
     themeConfig: {
         siteTitle: 'Wolffy',
-        logo: { src: 'https://gaojianghua.oss-cn-hangzhou.aliyuncs.com/logo.png', width: 20, height: 25.46 },
+        logo: { src: 'https://gaojianghua.oss-cn-hangzhou.aliyuncs.com/logo.png', width: 24, height: 24 },
         sidebar: {
             '/guide/': sidebarGuide(),
         },
