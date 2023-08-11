@@ -8,7 +8,9 @@
    <br>
    <br>
    Vue 3 相对于 Vue 2 使用 monorepo 的方式进行包管理，使用 monorepo 的管理方式，使得 Vue 3 源码模块职责显得特别地清晰明了，每个包独立负责一块核心功能的实现，方便开发和测试。
-   >比如，compiler-core 专职负责与平台无关层的渲染器底层，对外提供统一调用函数，内部通过完整的测试用例保障功能的稳定性。而 compiler-dom 和 compiler-ssr 则依托于 compiler-core 分别实现浏览器和服务端侧的渲染器上层逻辑，模块核心职责清晰明了，提高了整体程序运行的健壮性！
+   ::: info
+   比如，compiler-core 专职负责与平台无关层的渲染器底层，对外提供统一调用函数，内部通过完整的测试用例保障功能的稳定性。而 compiler-dom 和 compiler-ssr 则依托于 compiler-core 分别实现浏览器和服务端侧的渲染器上层逻辑，模块核心职责清晰明了，提高了整体程序运行的健壮性！
+   :::
 2. 引入 Composition API
    <br>
    <br>
@@ -16,7 +18,9 @@
    <br>
    <br>
    组合式 API (Composition API) 是一系列 API 的集合，使我们可以使用函数而不是声明选项的方式书写 Vue 组件。
-   >但 Composition API 也并不是“银弹”，它也有自己适合的场景，所以 Vue 3 也是在实现层面做到了兼容 Options API 的写法。相对而言，Composition API 更适用于大型的项目，因为大型项目可能会产生大量状态逻辑的维护，甚至跨组件的逻辑复用；而对于中小型项目来说，Options API 可以在你写代码时减少思考组织状态逻辑的方式，也是一种不错的选择。
+   ::: info
+   但 Composition API 也并不是“银弹”，它也有自己适合的场景，所以 Vue 3 也是在实现层面做到了兼容 Options API 的写法。相对而言，Composition API 更适用于大型的项目，因为大型项目可能会产生大量状态逻辑的维护，甚至跨组件的逻辑复用；而对于中小型项目来说，Options API 可以在你写代码时减少思考组织状态逻辑的方式，也是一种不错的选择。
+   :::
 3. 运作机制的变化
    <br>
    <br>
@@ -28,8 +32,9 @@
    * 另外，针对响应式依赖收集的内容，在 Vue 2.x 版本中是收集了 Watcher，而到了 Vue 3 中则成了 effect。
    <br>
    <br>
-
+   ::: tip
    除了上面所说的这些变化外，Vue 3 不管是在编译时、还是在运行时都做了大量的性能优化。例如，在编译时，Vue 3 通过标记 /*#__PURE__*/ 来为打包工具提供良好的 Tree-Shaking 机制，通过 静态提升 机制，避免了大量静态节点的重复渲染执行；在运行时，又通过批量队列更新机制优化了更新性能，通过 PatchFlags 和 dynamicChildren 进行了 diff 的靶向更新
+   :::
 
 ## 源码调试
 - 克隆 [Vue3 源码](https://github.com/vuejs/core)
@@ -5525,6 +5530,272 @@ CLASS = 0000000010;
 STYLE = 0000000100;
 ~~~
 这里通过二进制来表示 `PatchFlags` 可以方便我们做很多属性的判断，比如 `TEXT | STYLE` 来得到 `0000000101`，表示 `patchFlag` 既有 `TEXT` 属性也有 `STYLE` 属性，当需要进行判断有没有 `STYLE` 属性时，只需要 `FLAG & STYLE > 0`就行。
+
+### 什么时候生成的？
+在搞清楚 `patchFlags` 的一些定义和使用基础后，那它是什么时候被赋值到 `vnode` 节点上的呢？前言中的模板字符串在 `compiler` 阶段会被转成一个 `render` 函数的字符串代码：
+~~~ts
+import { createElementVNode as _createElementVNode, toDisplayString as _toDisplayString, Fragment as _Fragment, openBlock as _openBlock, createElementBlock as _createElementBlock } from "vue"
+
+const _hoisted_1 = /*#__PURE__*/_createElementVNode("p", null, "hello world", -1 /* HOISTED */)
+
+export function render(_ctx, _cache) {
+  return (_openBlock(), _createElementBlock(_Fragment, null, [
+    _hoisted_1,
+    _createElementVNode("p", null, _toDisplayString(msg), 1 /* TEXT */)
+  ], 64 /* STABLE_FRAGMENT */))
+}
+~~~
+这里可以看出，`render` 函数内是通过 `createElementVNode` 方法来创建 `vnode` 的，该函数的第四个参数就代表着 `patchFlag`。对于我们上面的示例，其中 `<p>hello world</p>` 是 `hoisted`，对应的 `patchFlag = -1`，`<p>{{ msg }}</p>` 是动态文字节点，对应的 `patchFlag = 1`。
+
+### 有什么用？
+接下来看看其实际使用案例，还是拿之前的 `patchElement` 函数来说：
+~~~ts
+const patchElement = (n1, n2, parentComponent, parentSuspense, isSVG, slotScopeIds, optimized) => {
+  let { patchFlag, dynamicChildren, dirs } = n2
+  // 如果 patchFlag 不存在，那么就设置成 FULL_PROPS，意味着要全量 props 比对
+  patchFlag |= n1.patchFlag & PatchFlags.FULL_PROPS
+  const oldProps = n1.props || EMPTY_OBJ
+  const newProps = n2.props || EMPTY_OBJ
+
+  const areChildrenSVG = isSVG && n2.type !== 'foreignObject'
+  if (dynamicChildren) {
+    patchBlockChildren(
+      n1.dynamicChildren!,
+      dynamicChildren,
+      el,
+      parentComponent,
+      parentSuspense,
+      areChildrenSVG,
+      slotScopeIds
+    )
+  } else if (!optimized) {
+    // full diff
+    patchChildren(
+      n1,
+      n2,
+      el,
+      null,
+      parentComponent,
+      parentSuspense,
+      areChildrenSVG,
+      slotScopeIds,
+      false
+    )
+  }
+
+  if (patchFlag > 0) {
+    if (patchFlag & PatchFlags.FULL_PROPS) {
+      // 如果元素的 props 中含有动态的 key，则需要全量比较
+      patchProps(
+        el,
+        n2,
+        oldProps,
+        newProps,
+        parentComponent,
+        parentSuspense,
+        isSVG
+      )
+    } else {
+      // class
+      if (patchFlag & PatchFlags.CLASS) {
+        if (oldProps.class !== newProps.class) {
+          hostPatchProp(el, 'class', null, newProps.class, isSVG)
+        }
+      }
+      // style
+      if (patchFlag & PatchFlags.STYLE) {
+        hostPatchProp(el, 'style', oldProps.style, newProps.style, isSVG)
+      }
+
+      // props
+      if (patchFlag & PatchFlags.PROPS) {
+        const propsToUpdate = n2.dynamicProps!
+        for (let i = 0; i < propsToUpdate.length; i++) {
+          const key = propsToUpdate[i]
+          const prev = oldProps[key]
+          const next = newProps[key]
+          // #1471 force patch value
+          if (next !== prev || key === 'value') {
+            hostPatchProp(
+              el,
+              key,
+              prev,
+              next,
+              isSVG,
+              n1.children as VNode[],
+              parentComponent,
+              parentSuspense,
+              unmountChildren
+            )
+          }
+        }
+      }
+    }
+
+    // text
+    if (patchFlag & PatchFlags.TEXT) {
+      if (n1.children !== n2.children) {
+        hostSetElementText(el, n2.children as string)
+      }
+    }
+  } else if (!optimized && dynamicChildren == null) {
+    patchProps(
+      el,
+      n2,
+      oldProps,
+      newProps,
+      parentComponent,
+      parentSuspense,
+      isSVG
+    )
+  }
+}
+~~~
+这里涉及到两个比较重点的事儿，一个是和 `dynamicChildren` 相关，另一个是和动态 `props` 相关。我们先看和动态 `props` 相关的内容。
+
+之前的章节我们跳过了对 `PatchFlags` 内容的理解，到了这里，我们通过代码可以知道 `Vue` 在更新子节点时，首先也是利用 `patchFlag` 的能力，对子节点进行分类做出不同的处理，比如针对以下例子：
+~~~vue
+<template>
+  <div :class="classNames" id='test'>
+    hello world
+  </div> 
+</template>
+~~~
+得到的编译结果：
+~~~ts
+import { normalizeClass as _normalizeClass, openBlock as _openBlock, createElementBlock as _createElementBlock } from "vue"
+
+export function render(_ctx, _cache) {
+  return (_openBlock(), _createElementBlock("div", {
+    class: _normalizeClass(classNames),
+    id: "test"
+  }, " hello world ", 2 /* CLASS */))
+}
+~~~
+此时 `patchFlag & PatchFlags.CLASS > 0` 则在 `diff` 过程中，需要进行 `class` 属性的 `diff`， 从而减少了对 `id` 属性的不必要 `diff`，提升了 `props diff` 过程中的性能。
+
+### dynamicChildren
+另外，我们注意到，在编译后的 `render` 函数中会有一个 `_openBlock()` 函数的执行，我们来一起看一下其实现：
+~~~ts
+export const blockStack = []
+export let currentBlock = null
+
+export function openBlock(disableTracking = false) {
+  blockStack.push((currentBlock = disableTracking ? null : []))
+}
+~~~
+`openBlock` 实现比较通俗易懂，就是向 `blockStack` 中 push `currentBlock`。其中 `currentBlock` 是一个数组，用于存储动态节点。`blockStack` 则是存储 `currentBlock` 的一个 `Block tree`。
+
+然后我们接着看 `createElementBlock` 的实现：
+~~~ts
+export function createElementBlock(type, props, children, patchFlag, dynamicProps, shapeFlag) {
+  return setupBlock(
+    createBaseVNode(
+      type,
+      props,
+      children,
+      patchFlag,
+      dynamicProps,
+      shapeFlag,
+      true /* isBlock */
+    )
+  )
+}
+
+function createBaseVNode(type, props = null, children = null, patchFlag = 0, dynamicProps = null, shapeFlag = type === Fragment ? 0 : ShapeFlags.ELEMENT, isBlockNode = false, needFullChildrenNormalization = false) {
+  // ...
+  // 添加动态 vnode 节点到 currentBlock 中
+  if (
+    isBlockTreeEnabled > 0 &&
+    !isBlockNode &&
+    currentBlock &&
+    (vnode.patchFlag > 0 || shapeFlag & ShapeFlags.COMPONENT) &&
+    vnode.patchFlag !== PatchFlags.HYDRATE_EVENTS
+  ) {
+    currentBlock.push(vnode)
+  }
+  
+  return vnode
+}
+
+function setupBlock(vnode) {
+  // 在 vnode 上保留当前 Block 收集的动态子节点
+  vnode.dynamicChildren =
+    isBlockTreeEnabled > 0 ? currentBlock || (EMPTY_ARR) : null
+  // 当前 Block 恢复到父 Block
+  closeBlock()
+  // 节点本身作为父 Block 收集的子节点
+  if (isBlockTreeEnabled > 0 && currentBlock) {
+    currentBlock.push(vnode)
+  }
+  return vnode
+}
+~~~
+`createElementBlock` 内部首先通过 `createBaseVNode` 创建 `vnode` 节点，在创建的过程中，会根据 `patchFlag` 的值进行判断是否是动态节点，如果发现 `vnode` 是一个动态节点，那么会被添加到 `currentBlock` 当中，然后在执行 `setupBlock` 函数的时候，将 `currentBlock` 赋值给 `vnode.dynamicChildren` 属性。
+
+我们前面看 `patchElement` 的时候，有注意到函数体内部会进行是否有 `dynamicChildren` 属性进行不同的逻辑执行，前面的章节，我们只介绍了 `patchChildren` 完整的子节点 `diff` 算法，当 `dynamicChildren` 存在时，这里只会进行 `patchBlockChildren` 的动态节点 `diff`：
+~~~ts
+const patchBlockChildren = (oldChildren, newChildren, fallbackContainer, parentComponent, parentSuspense, isSVG) => {
+  for (let i = 0; i < newChildren.length; i++) {
+    const oldVNode = oldChildren[i]
+    const newVNode = newChildren[i]
+    // 确定待更新节点的容器
+    const container =
+      // 对于 Fragment，我们需要提供正确的父容器
+      oldVNode.type === Fragment ||
+      // 在不同节点的情况下，将有一个替换节点，我们也需要正确的父容器
+      !isSameVNodeType(oldVNode, newVNode) ||
+      // 组件的情况，我们也需要提供一个父容器
+      oldVNode.shapeFlag & 6 /* COMPONENT */
+        ? hostParentNode(oldVNode.el)
+        :
+        // 在其他情况下，父容器实际上并没有被使用，所以这里只传递 Block 元素即可
+        fallbackContainer
+    patch(oldVNode, newVNode, container, null, parentComponent, parentSuspense, isSVG, true)
+  }
+}
+~~~
+`patchBlockChildren` 的实现很简单，遍历新的动态子节点数组，拿到对应的新旧动态子节点，并执行 `patch` 更新子节点即可。
+
+这样一来，更新的复杂度就变成和动态节点的数量正相关，而不与模板大小正相关。这也是 `Vue 3` 做的一个重要的编译时优化的一部分。
+
+### 总结
+有了上面的一些介绍，我们还是回到开头的例子中：
+~~~vue
+<template>
+  <p>hello world</p>
+  <p>{{ msg }}</p>
+</template>
+~~~
+转成 `vnode` 后的结果大致为：
+~~~ts
+const vnode = {
+  type: Symbol(Fragment),
+  children: [
+    { type: 'p', children: 'hello world' },
+    { type: 'p', children: ctx.msg, patchFlag: 1 /* 动态的 text */ },
+  ],
+  dynamicChildren: [
+    { type: 'p', children: ctx.msg, patchFlag: 1 /* 动态的 text */ },
+  ]
+}
+~~~
+此时组件内存在了一个静态的节点 `<p>hello world</p>`，在传统的 `diff` 算法里，还是需要对该静态节点进行不必要的 `diff`。所以 `Vue3` 先通过 `patchFlag` 来标记动态节点 `<p>{{ msg }}</p>`， 然后配合 `dynamicChildren` 将动态节点进行收集，从而完成在 `diff` 阶段只做靶向更新的目的。
+
+## 内置组件：Transition 的实现
+`Vue` 内置了 `Trasition` 组件可以帮助我们快速简单的实现基于状态变换的动画效果。该组件支持了 `CSS 过渡动画`、`CSS 动画`、`Javascript 钩子` 几种模式，接下来我们将逐步介绍这几种模式的实现原理。
+
+### 基于 CSS 的过渡效果
+
+
+
+
+
+
+
+
+
+
 
 
 

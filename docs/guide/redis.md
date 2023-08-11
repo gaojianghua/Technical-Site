@@ -727,10 +727,6 @@ auto-aof-rewrite-min-size 64mb
 auto-aof-rewrite-percentage 100
 ~~~
 
-
-
-
-
 ### 总结
 
 |    命令    |  RDB   |     AOF      |
@@ -741,7 +737,11 @@ auto-aof-rewrite-percentage 100
 | 数据安全性 | 丢数据 | 根据策略决定 |
 |    轻重    |   重   |      轻      |
 
+**RDB（Redis Database）**：RDB是Redis默认的持久化方式。它通过将Redis的内存数据快照保存到磁盘上的二进制文件中来实现持久化。RDB的优点是快速和紧凑，适合用于备份和恢复数据。RDB的缺点是在发生故障时可能会丢失一部分数据，因为RDB是定期进行持久化的，而不是实时的。
 
+**AOF（Append Only File）**：AOF是另一种持久化方式，它通过将Redis的写操作追加到文件末尾来记录数据的变化。AOF的优点是可以提供更好的数据安全性，因为它记录了每个写操作，可以在发生故障时进行恢复。AOF的缺点是相对于RDB来说，文件体积较大，恢复数据的速度较慢。
+
+在实际应用中，可以根据需求选择适合的落盘方案。**如果对数据的安全性要求较高，可以选择AOF方式；如果对数据的实时性要求较高，可以选择RDB方式。另外，也可以同时使用RDB和AOF两种方式，以提供更好的数据保护和恢复能力。**
 
 ## 常见问题
 
@@ -779,75 +779,47 @@ info:latest_fork_usec
 ### 子进程
 
 1. CPU
-
    - 开销: RDB和AOF文件生成, 属于CPU密集型
-
    - 不做CPU绑定, 不和CPU密集型应用部署在一起
 
 2. 内存
-
    - 开销: fork内存开销, copy-on-write
    - 优化: echo never > /sys/kernel/mm/transparent_hugepage/enabled
 
 3. 硬盘
-
    - 开销: AOF和RDB文件写入, 可以结合iostat, iotop分析
-
    - 优化: 
      1. 不要和高硬盘负载服务部署在一起: 存储服务, 消息队列等
      2. no-appendfsync-on-rewrite yes : AOF重写期间不要做AOF文件追加操作
      3. 根据写入量决定磁盘类型: 例如ssd
      4. 单机多实例持久化文件目录可以考虑分盘
-
-
-
 ### AOF追加阻塞
-
 - 如果AOF文件fsync同步时间大于2s，Redis主进程就会阻塞；
-
-
 - 如果AOF文件fsync同步时间小于2s，Redis主进程就会返回；
-
-
 - 其实这样做的目的是为了保证文件安全性的一种策略。
-
-
- 产生的问题：
-
+产生的问题：
 1. fsync大于2s时候，会阻塞redis主进程，我们都知道redis主进程是用来执行redis命令的，是不能阻塞的。
-
 2. 虽然每秒everysec刷盘策略，但是实际上不是丢失1s数据，实际有可能丢失2s数据。
-
-
-
 ## 主从复制
-
 - 数据副本
 - 扩展读性能
 - 一个master可以有多个slave
 - 一个slave只能有一个master
 - 数据流向是单向的, master到slave
-
 ~~~shell
 slaveof 192.168.0.5 6379
 # 复制主节点192.168.0.5 6379到当前从机上(异步执行)
 slaveof no one
 # 取消复制, 不允许复制
 ~~~
-
 配置
-
 ~~~shell
 slaveof ip port
 # 指定主节点IP和端口
 slave-read-only yes
 # 指定当前从节点只做读操作
 ~~~
-
-
-
 全量复制开销
-
 1. bgsave时间
 2. RDB文件网络传输时间
 3. 从节点清空数据时间
