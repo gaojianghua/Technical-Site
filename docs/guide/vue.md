@@ -5782,7 +5782,7 @@ const vnode = {
 ~~~
 此时组件内存在了一个静态的节点 `<p>hello world</p>`，在传统的 `diff` 算法里，还是需要对该静态节点进行不必要的 `diff`。所以 `Vue3` 先通过 `patchFlag` 来标记动态节点 `<p>{{ msg }}</p>`， 然后配合 `dynamicChildren` 将动态节点进行收集，从而完成在 `diff` 阶段只做靶向更新的目的。
 
-## 内置组件：Transition 的实现
+## 内置组件:Transition 的实现
 `Vue` 内置了 `Trasition` 组件可以帮助我们快速简单的实现基于状态变换的动画效果。该组件支持了 `CSS 过渡动画`、`CSS 动画`、`Javascript 钩子` 几种模式，接下来我们将逐步介绍这几种模式的实现原理。
 
 ### 基于 CSS 的过渡效果
@@ -6008,6 +6008,888 @@ const makeEnterHook = (isAppear) => {
 ~~~
 **2. hooks 何时执行？**
 前面我们提到 `hooks` 将会在特定时间执行，用来对 `class` 进行增加或删除。比如 `enter-from` 至 `enter-to` 阶段的过渡或者动画效果的 `class` 被添加到 `DOM` 元素上。考虑到 `Vue` 在 `patch` 阶段已经有生成对应的 `DOM` （只不过还没有被真实的挂载到页面上而已）。所以我们只需要在 `patch` 阶段做对应的 `class` 增删即可。
+
+比如进入阶段的钩子函数，将会在 mountElement 中被调用：
+~~~ts
+// 挂载元素节点
+const mountElement = (vnode,...args) => {
+  let el;
+  let vnodeHook;
+  const { type, props, shapeFlag, transition, patchFlag, dirs } = vnode;
+  // ...
+  if (needCallTransitionHooks*) {
+    // 执行 beforeEnter 钩子
+    transition.beforeEnter(el);
+  }
+  // ...
+  if ((vnodeHook = props && props.onVnodeMounted) || needCallTransitionHooks || dirs) {
+      // post 各种钩子 至后置执行任务池
+      queuePostRenderEffect(() => { 
+        // 执行 enter 钩子
+        needCallTransitionHooks && transition.enter(el); 
+      }, parentSuspense);
+  }
+};
+~~~
+离开阶段的钩子函数，在 remove 节点的时候被调用：
+~~~ts
+// 移除 Vnode
+const remove = vnode => {
+  const { type, el, anchor, transition } = vnode;
+  // ...
+
+  const performRemove = () => {
+    hostRemove(el);
+    if (transition && !transition.persisted && transition.afterLeave) {
+      // 执行 afterLeave 钩子
+      transition.afterLeave();
+    }
+  };
+
+  if (vnode.shapeFlag & 1 ShapeFlags.ELEMENT && transition && !transition.persisted) {
+    const { leave, delayLeave } = transition;
+    // 执行 leave 钩子
+    const performLeave = () => leave(el, performRemove);
+    if (delayLeave) {
+       // 执行 delayLeave 钩子
+      delayLeave(vnode.el, performRemove, performLeave);
+    }
+    else {
+      performLeave();
+    }
+  }
+};
+~~~
+状态流转图：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/e286d7a4e5294b2c995b164d9dc102e8~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+
+### JavaScript 钩子
+`<Transition>` 组件在动画过渡的各个阶段定义了很多钩子函数，我们可以通过在钩子函数内部自定义实现各种动画效果。
+~~~vue
+<Transition
+  @before-enter="onBeforeEnter"
+  @enter="onEnter"
+  @after-enter="onAfterEnter"
+  @enter-cancelled="onEnterCancelled"
+  @before-leave="onBeforeLeave"
+  @leave="onLeave"
+  @after-leave="onAfterLeave"
+  @leave-cancelled="onLeaveCancelled"
+>
+  <!-- ... -->
+</Transition>
+~~~
+前面其实已经稍微提及到了部分钩子函数，比如 `onEnter` ，这些钩子函数在源码中会被合并到 `Transiton` 下子节点的 `transition` 属性上。这块的实现主要是通过 `setTransitionHooks` 函数来实现的：
+~~~ts
+const BaseTransitionImpl = {
+  name: `BaseTransition`,
+
+  props: {
+    // ...
+  },
+
+  setup(props, { slots }) {
+    return () => {
+      // 获取进入状态的调用函数
+      const enterHooks = resolveTransitionHooks(
+        innerChild,
+        rawProps,
+        state,
+        instance
+      )
+      
+      // 为子节点添加进入 hooks 属性
+      setTransitionHooks(innerChild, enterHooks)
+  
+      // ...
+      // 返回子节点
+      return child
+    }
+  }
+}
+
+// 为 vnode 添加 transition 属性
+function setTransitionHooks(vnode, hooks) {
+  // ...
+  vnode.transition = hooks
+}
+~~~
+其中 `hooks` 包含了哪些内容呢？ `hooks` 其实是通过 `resolveTransitionHooks` 函数调用生成的：
+~~~ts
+export function resolveTransitionHooks(vnode, props, state, instance) {
+  // 传入的各个钩子函数
+  const {
+    appear,
+    mode,
+    persisted = false,
+    onBeforeEnter,
+    onEnter,
+    onAfterEnter,
+    onEnterCancelled,
+    onBeforeLeave,
+    onLeave,
+    onAfterLeave,
+    onLeaveCancelled,
+    onBeforeAppear,
+    onAppear,
+    onAfterAppear,
+    onAppearCancelled
+  } = props
+  
+  // 定义调用钩子函数的方法
+  const callHook = (hook, args) => {
+    hook &&
+      callWithAsyncErrorHandling(
+        hook,
+        instance,
+        ErrorCodes.TRANSITION_HOOK,
+        args
+      )
+  }
+  // 钩子函数定义
+  const hooks = {
+    mode,
+    persisted,
+    beforeEnter(el) {
+      let hook = onBeforeEnter
+      // ...
+      // 执行 onBeforeEnter
+      callHook(hook, [el])
+    },
+
+    enter(el) {
+      let hook = onEnter
+      // ...
+      // 执行 onEnter
+      callAsyncHook(hook, [el, done])
+    },
+
+    leave(el, remove) {
+      // ...
+      // 执行 onBeforeLeave
+      callHook(onBeforeLeave, [el])
+      const done = (el._leaveCb = (cancelled?) => {
+        // ...
+        // 执行 onLeave
+        callAsyncHook(onLeave, [el, done])
+      })
+    },
+
+    clone(vnode) {
+      return resolveTransitionHooks(vnode, props, state, instance)
+    }
+  }
+
+  return hooks
+}
+~~~
+一个最基础的 `hooks` 主要包含 `beforeEnter、enter、leave` 这几个阶段，将会在 `patch` 的环节中被执行，执行的逻辑就是 `Vue` 官网上描述的逻辑。
+
+另外，值得注意的是，除了这几个关键阶段之外，`Transiton` 还支持一个 `mode` 来指定动画的过渡时机，举个例子，如果 `mode === 'out-in'`，先执行离开动画，然后在其完成之后再执行元素的进入动画。那么这个时候就需要延迟渲染进入动画，则会为 `leavingHooks` 额外添加一个新的钩子：`afterLeave`，该钩子将会在离开后执行，表示着离开后再更新 `DOM`。
+~~~ts
+const BaseTransitionImpl = {
+  setup() {
+    // ...
+    if (mode === 'out-in') {
+      state.isLeaving = true
+      // 返回空的占位符节点，当离开过渡结束后，重新渲染组件
+      leavingHooks.afterLeave = () => {
+        state.isLeaving = false
+        instance.update()
+      }
+      return emptyPlaceholder(child)
+    }
+  }
+}
+~~~
+总结 `Transition` 内置组件的实现原理：
+1. `Transition` 组件本身是一个无状态组件，内部本身不渲染任何额外的 DOM 元素，`Transition` 渲染的是组件嵌套的第一个子元素节点。
+2. 如果子元素是应用了 `CSS` 过渡或动画，`Transition` 组件会在子元素节点渲染适当时机，动态为子元素节点增加或删除对应的 `class`。
+3. 如果有为 `Transition` 定义一些钩子函数，那么这些钩子函数会被合入到子节点的关键生命周期 `beforeEnter、enter、leave` 中调用执行，通过 `setTransitionHooks` 被设置到子节点的 `transition` 属性中。
+
+
+## 内置组件:KeepAlive 保活的原理
+`Vue` 内置了 `KeepAlive` 组件，帮助我们实现缓存多个组件实例切换时，完成对卸载组件实例的缓存，从而使得组件实例在来会切换时不会被重复创建，又是一个空间换时间的典型例子。在介绍源码之前，我们先来了解一下 `KeppAlive` 使用的基础示例：
+~~~vue
+<template>
+  <KeepAlive> 
+    <component :is="activeComponent" /> 
+  </KeepAlive>
+</template>
+~~~
+当动态组件在随着 `activeComponent` 变化时，如果没有 `KeepAlive` 做缓存，那么组件在来回切换时就会进行重复的实例化，这里就是通过 `KeepAlive` 实现了对不活跃组件的缓存。
+
+这里需要思考几个问题：
+- **组件是如何被缓存的，以及是如何被重新激活的？**
+- **既然缓存可以提高组件渲染的性能，那么是不是缓存的越多越好呢？**
+- **如果不是越多越好，那么如何合理的丢弃多余的缓存呢？**
+
+接下来我们通过对源码的分析，一步步找到答案。先找到定义 `KeppAlive` 组件的地方，然后看一下其大致内容：
+~~~ts
+const KeepAliveImpl = {
+  // 组件名称
+  name: `KeepAlive`,
+  // 区别于其他组件的标记
+  __isKeepAlive: true,
+  // 组件的 props 定义
+  props: {
+    include: [String, RegExp, Array],
+    exclude: [String, RegExp, Array],
+    max: [String, Number]
+  },
+  setup(props, {slots}) {
+    // ...
+    // setup 返回一个函数
+    return () => {
+      // ...
+    }
+  }
+}
+~~~
+可以看到，`KeepAlive` 组件中，通过 `__isKeepAlive` 属性来完成对这个内置组件的特殊标记，这样外部可以通过 `isKeepAlive` 函数来做区分：
+~~~ts
+const isKeepAlive = vnode => vnode.type.__isKeepAlive
+~~~
+紧接着定义了 `KeepAlive` 的一些 `props`：
+1. `include` 表示包含哪些组件可被缓存
+2. `exclude` 表示排除那些组件
+3. `max` 则表示最大的缓存数
+
+后面我们将可以详细的看到这些 `props` 是如何被发挥作用的。
+
+最后实现了一个 `setup` 函数，该函数返回了一个函数，我们前面提到 `setup` 返回函数的话，那么这个函数将会被当做节点 `render` 函数。了解了 `KeepAlive` 的整体骨架后，我们先来看看这个 `render` 函数具体做了哪些事情。
+
+### KeepAlive 的 render 函数
+先来看看 `render` 函数的源码实现：
+~~~ts
+const KeepAliveImpl = {
+  // ...
+  setup(props, { slot }) {
+    // ...
+    return () => {
+      // 记录需要被缓存的 key
+      pendingCacheKey = null
+      // ...
+      // 获取子节点
+      const children = slots.default()
+      const rawVNode = children[0]
+      if (children.length > 1) {
+        // 子节点数量大于 1 个，不会进行缓存，直接返回
+        current = null
+        return children
+      } else if (
+        !isVNode(rawVNode) ||
+        (!(rawVNode.shapeFlag & ShapeFlags.STATEFUL_COMPONENT) &&
+          !(rawVNode.shapeFlag & ShapeFlags.SUSPENSE))
+      ) {
+        current = null
+        return rawVNode
+      }
+      // suspense 特殊处理，正常节点就是返回节点 vnode
+      let vnode = getInnerChild(rawVNode)
+      const comp = vnode.type
+    
+      // 获取 Component.name 值
+      const name = getComponentName(isAsyncWrapper(vnode) ? vnode.type.__asyncResolved || {} : comp)
+      // 获取 props 中的属性
+      const { include, exclude, max } = props
+      // 如果组件 name 不在 include 中或者存在于 exclude 中，则直接返回
+      if (
+        (include && (!name || !matches(include, name))) ||
+        (exclude && name && matches(exclude, name))
+      ) {
+        current = vnode
+        return rawVNode
+      }
+      
+      // 缓存相关，定义缓存 key
+      const key = vnode.key == null ? comp : vnode.key
+      // 从缓存中取值
+      const cachedVNode = cache.get(key)
+    
+      // clone vnode，因为需要重用
+      if (vnode.el) {
+        vnode = cloneVNode(vnode)
+        if (rawVNode.shapeFlag & ShapeFlags.SUSPENSE) {
+          rawVNode.ssContent = vnode
+        }
+      }
+      // 给 pendingCacheKey 赋值，将在 beforeMount/beforeUpdate 中被使用
+      pendingCacheKey = key
+      // 如果存在缓存的 vnode 元素
+      if (cachedVNode) {
+        // 复制挂载状态
+        // 复制 DOM
+        vnode.el = cachedVNode.el
+        // 复制 component
+        vnode.component = cachedVNode.component
+        
+        // 增加 shapeFlag 类型 COMPONENT_KEPT_ALIVE
+        vnode.shapeFlag |= ShapeFlags.COMPONENT_KEPT_ALIVE
+        // 把缓存的 key 移动到到队首
+        keys.delete(key)
+        keys.add(key)
+      } else {
+        // 如果缓存不存在，则添加缓存
+        keys.add(key)
+        // 如果超出了最大的限制，则移除最早被缓存的值
+        if (max && keys.size > parseInt(max as string, 10)) {
+          pruneCacheEntry(keys.values().next().value)
+        }
+      }
+      // 增加 shapeFlag 类型 COMPONENT_SHOULD_KEEP_ALIVE，避免被卸载
+      vnode.shapeFlag |= ShapeFlags.COMPONENT_SHOULD_KEEP_ALIVE
+    
+      current = vnode
+      // 返回 vnode 节点
+      return isSuspense(rawVNode.type) ? rawVNode : vnode
+    }
+  }
+}
+~~~
+可以看到返回的这个 `render` 函数执行的结果就是返回被 `KeepAlive` 包裹的子节点的 `vnode` 只不过在返回子节点的过程中做了很多处理而已，如果子节点数量大于一个，那么将不会被 `keepAlive`，直接返回子节点的 `vnode`，如果组件 `name` 不在用户定义的 `include` 中或者存在于 `exclude` 中，也会直接返回子节点的 `vnode`。
+
+### 缓存设计
+接着来看后续的缓存步骤，首先定义了一个 `pendingCacheKey` 变量，用来作为 `cache` 的缓存 `key`。对于初始化的 `KeepAlive` 组件的时候，此时还没有缓存，那么只会讲 `key` 添加到 `keys` 这样一个 `Set` 的数据结构中，在组件 `onMounted` 和 `onUpdated` 钩子中进行缓存组件的 `vnode` 收集，因为这个时候收集到的 `vnode` 节点是稳定不会变的缓存。
+~~~ts
+const cacheSubtree = () => {
+  if (pendingCacheKey != null) {
+    // 以 pendingCacheKey 作为key 进行缓存收集
+    cache.set(pendingCacheKey, getInnerChild(instance.subTree))
+  }
+}
+
+onMounted(cacheSubtree)
+onUpdated(cacheSubtree)
+~~~
+另外，注意到 `props` 中还有一个 max 变量用来标记最大的缓存数量，这个缓存策略就是类似于 [LRU 缓存](https://en.wikipedia.org/wiki/Cache_replacement_policies#Least_recently_used_(LRU)) 的方式实现的。在缓存重新被激活时，之前缓存的 `key` 会被重新添加到队首，标记为最近的一次缓存，如果缓存的实例数量即将超过指定的那个最大数量，则最久没有被访问的缓存实例将被销毁，以便为新的实例腾出空间。
+
+最后，当缓存的节点被重新激活时，则会将缓存中的节点的 `el` 属性赋值给新的 `vnode` 节点，从而减少了再进行 `patch` 生成 `DOM` 的过程，这里也说明了 `KeepAlive` 核心目的就是缓存 `DOM` 元素。
+
+### 激活态设计
+上述源码中，当组件被添加到 `KeepAlive` 缓存池中时，也会为 `vnode` 节点的 `shapeFlag` 添加两额外的两个属性，分别是 `COMPONENT_KEPT_ALIVE` 和 `COMPONENT_SHOULD_KEEP_ALIVE`。我们先说 `COMPONENT_KEPT_ALIVE` 这个属性，当一个节点被标记为 `COMPONENT_KEPT_ALIVE` 时，会在 `processComponent` 时进行特殊处理：
+~~~ts
+const processComponent = (...) => {
+  if (n1 == null) {
+    // 处理 KeepAlive 组件
+    if (n2.shapeFlag & ShapeFlags.COMPONENT_KEPT_ALIVE) {
+      // 执行 activate 钩子
+      ;(parentComponent!.ctx as KeepAliveContext).activate(
+        n2,
+        container,
+        anchor,
+        isSVG,
+        optimized
+      )
+    } else {
+      mountComponent(
+        n2,
+        container,
+        anchor,
+        parentComponent,
+        parentSuspense,
+        isSVG,
+        optimized
+      )
+    }
+  }
+  else {
+    // 更新组件
+  }
+}
+~~~
+可以看到，在 `processComponent` 阶段如果是 `keepAlive` 的组件，在挂载过程中，不会执行执行 `mountComponent` 的逻辑，因为已经缓存好了，所以只需要再次调用 `activate` 激活就好了。接下来看看这个激活函数做了哪些事儿：
+~~~ts
+const KeepAliveImpl = {
+  // ...
+  setup(props, { slot }) {
+    sharedContext.activate = (vnode, container, anchor, isSVG, optimized) => {
+      // 获取组件实例
+      const instance = vnode.component!
+      // 将缓存的组件挂载到容器中
+      move(vnode, container, anchor, MoveType.ENTER, parentSuspense)
+      // 如果 props 有变动，还是需要对 props 进行 patch
+      patch(
+        instance.vnode,
+        vnode,
+        container,
+        anchor,
+        instance,
+        parentSuspense,
+        isSVG,
+        vnode.slotScopeIds,
+        optimized
+      )
+      // 执行组件的钩子函数
+      queuePostRenderEffect(() => {
+        instance.isDeactivated = false
+        // 执行 onActivated 钩子
+        if (instance.a) {
+          invokeArrayFns(instance.a)
+        }
+        // 执行 onVnodeMounted 钩子
+        const vnodeHook = vnode.props && vnode.props.onVnodeMounted
+        if (vnodeHook) {
+          invokeVNodeHook(vnodeHook, instance.parent, vnode)
+        }
+      }, parentSuspense)
+    }
+    // ...
+  }
+}
+~~~
+可以直观的看到 `activate` 激活函数，核心就是通过 `move` 方法，将缓存中的 `vnode` 节点直接挂载到容器中，同时为了防止 `props` 变化导致组件变化，也会执行 `patch` 方法来更新组件，注意此时的 `patch` 函数的调用是会传入新老子节点的，所以只会进行 `diff` 而不会进行重新创建。
+
+当这一切都执行完成后，最后再通过 `queuePostRenderEffect` 函数，将用户定义的 `onActivated` 钩子放到状态更新流程后执行。
+
+### 卸载态设计
+接下来我们再看另一个标记态：`COMPONENT_SHOULD_KEEP_ALIVE`，我们看一下组件的卸载函数 `unmount` 的设计：
+~~~ts
+const unmount = (vnode, parentComponent, parentSuspense, doRemove = false) => {
+  // ...
+  const { shapeFlag  } = vnode
+  if (shapeFlag & ShapeFlags.COMPONENT_SHOULD_KEEP_ALIVE) {
+    ;(parentComponent!.ctx as KeepAliveContext).deactivate(vnode)
+    return
+  }
+  // ...
+}
+~~~
+可以看到，如果 `shapeFlag` 上存在 `COMPONENT_SHOULD_KEEP_ALIVE` 属性的话，那么将会执行 `ctx.deactivate` 方法，我们再来看一下 `deactivate` 函数的定义：
+~~~ts
+const KeepAliveImpl = {
+  // ...
+  setup(props, { slot }) {
+    // 创建一个隐藏容器
+    const storageContainer = createElement('div')
+
+    sharedContext.deactivate = (vnode: VNode) => {
+      // 获取组件实例
+      const instance = vnode.component!
+      // 将组件移动到隐藏容器中
+      move(vnode, storageContainer, null, MoveType.LEAVE, parentSuspense)
+      // 执行组件的钩子函数
+      queuePostRenderEffect(() => {
+        // 执行组件的 onDeactivated 钩子
+        if (instance.da) {
+          invokeArrayFns(instance.da)
+        }
+        // 执行 onVnodeUnmounted
+        const vnodeHook = vnode.props && vnode.props.onVnodeUnmounted
+        if (vnodeHook) {
+          invokeVNodeHook(vnodeHook, instance.parent, vnode)
+        }
+        instance.isDeactivated = true
+      }, parentSuspense)
+    }
+    // ...
+  }
+}
+~~~
+卸载态函数 `deactivate` 核心工作就是将页面中的 `DOM` 移动到一个隐藏不可见的容器 `storageContainer` 当中，这样页面中的元素就被移除了。当这一切都执行完成后，最后再通过 `queuePostRenderEffect` 函数，将用户定义的 `onDeactivated` 钩子放到状态更新流程后执行。
+
+::: tip
+解答开头的三个问题：
+1. 组件是通过类似于 `LRU` 的缓存机制来缓存的，并为缓存的组件 `vnode` 的 `shapeFlag` 属性打上 `COMPONENT_KEPT_ALIVE` 属性，当组件在 `processComponent` 挂载时，如果存在 `COMPONENT_KEPT_ALIVE` 属性，则会执行激活函数，激活函数内执行具体的缓存节点挂载逻辑。
+2. 缓存不是越多越好，因为所有的缓存节点都会被存在 `cache` 中，如果过多，则会增加内存负担。
+3. 丢弃的方式就是在缓存重新被激活时，之前缓存的 `key` 会被重新添加到队首，标记为最近的一次缓存，如果缓存的实例数量即将超过指定的那个最大数量，则最久没有被访问的缓存实例将被丢弃。
+:::
+
+
+## 内置组件:Teleport 是如何实现选择性挂载的
+`Teleport` 内置组件的功能是可以将一个组件内部的一部分 `vnode` 元素 “**传送**” 到该组件的 `DOM` 结构外层的位置去挂载。那什么情况下可能会用到该组件呢？如果开发过组件库的小伙伴可能深有体会，当我们开发全局 `Dialog` 组件来说，我们希望 `Dialog` 的组件可以渲染到全局 `<body>` 标签上，这个时候我们写的 `Dialog` 组件的源代码可能是这样的：
+~~~vue
+<template>
+  <div>
+    <!-- 这里是 dialog 组件的容器逻辑 -->
+  </div>
+</template>
+<script>
+  export default {
+    mounted() {
+      // 在 dom 被挂载完成后，再转移到 body 上
+      document.body.appendChild(this.$el);
+    },
+    destroyed() {
+      // 在组件被销毁之前，移除 DOM
+      this.$el.parentNode.removeChild(this.$el);
+    }
+  }
+</script>
+~~~
+这么做确实可是实现挂载到特定容器中，但这样一方面让 `Dialog` 组件内部需要维护复杂的 `DOM` 节点转换的逻辑，另一方面导致了浏览器需要进行 `2` 次刷新操作，一次初始化挂载，一次迁移。
+
+所以 `Vue 3` 很贴心的为我们了提供了 `Teleport` 组件，帮助我们以简便的方式高性能的完成节点的转移工作:
+~~~vue
+<Teleport to="body">
+  <div class="modal">
+    <p>Hello from the modal!</p>
+  </div>
+</Teleport>
+~~~
+接下来我们将一起探秘 `Teleport` 组件是如何实现 “传送” 挂载的。
+
+### Teleport 的挂载
+先来看看 `Teleport` 组件的源码定义：
+~~~ts
+export const TeleportImpl = {
+  // 组件标记
+  __isTeleport: true,
+  
+  process(...) { 
+    // ... 
+    // 初始化的逻辑
+    if (n1 === null) {
+      // ...
+    } else {
+      // ...
+      // 更新逻辑
+    }
+  },
+  
+  // 卸载的逻辑
+  remove(...) {
+    // ...
+  },
+
+  // 移动的逻辑
+  move: moveTeleport,
+  // ...
+}
+~~~
+接下来，我们看一下这个内部组件是如何实现组件挂载的，这块的逻辑集中在组件的 `process` 函数中，`process` 函数是在渲染器 `renderer` 的 `patch` 函数中被调用的，在前面渲染器章节中，我们提到过 patch 函数内部会根据 `vnode` 的 `type` 和 `shapeFlag` 的类型调用不同的处理函数，而 `<Teleport>` 组件的 `process` 正是在这里被判断调用的：
+~~~ts
+const patch = (n1, n2, container, anchor, ...) => {
+  // ...
+  const { type, ref, shapeFlag } = n2
+  switch (type) {
+    // 根据 type 类型处理
+    case Text:
+      // 对文本节点的处理
+      processText(n1, n2, container, anchor)
+      break
+    // 这里省略了一些其他节点处理，比如注释、Fragment 节点等等
+    // ...
+    default:
+      // 根据 shapeFlag 来处理
+      // ...
+      else if (shapeFlag & ShapeFlags.TELEPORT) {
+        // 对 Teleport 节点进行处理
+        type.process(
+          n1,
+          n2,
+          container,
+          anchor,
+          parentComponent,
+          parentSuspense,
+          isSVG,
+          slotScopeIds,
+          optimized,
+          internals
+        );
+      }
+  }
+}
+~~~
+然后一起来看看 `process` 中是如何完成对 `Teleport` 中的节点进行挂载的，这里我们先只关注挂载逻辑，对于更新逻辑后面再介绍：
+~~~ts
+export const TeleportImpl = {
+  // 组件标记
+  __isTeleport: true,
+  
+  process(n1, n2, container, anchor, parentComponent, parentSuspense, isSVG, slotScopeIds, optimized, internals) {
+    // 从内在对象上结构关键功能函数
+    const {
+      mc: mountChildren,
+      pc: patchChildren,
+      pbc: patchBlockChildren,
+      o: {insert, querySelector, createText, createComment}
+    } = internals
+    
+    // 是否禁用
+    const disabled = isTeleportDisabled(n2.props)
+    let {shapeFlag, children, dynamicChildren} = n2
+    // 初始化的逻辑
+    if (n1 == null) {
+      // 向主视图中插入锚点
+      const placeholder = (n2.el = __DEV__
+        ? createComment('teleport start')
+        : createText(''))
+      const mainAnchor = (n2.anchor = __DEV__
+        ? createComment('teleport end')
+        : createText(''))
+      insert(placeholder, container, anchor)
+      insert(mainAnchor, container, anchor)
+      // 获取需要挂载的位置元素，如果目标元素不存在于DOM中，则返回 null
+      const target = (n2.target = resolveTarget(n2.props, querySelector))
+      // 目标挂载节点的锚点
+      const targetAnchor = (n2.targetAnchor = createText(''))
+      // 如果存在目标元素
+      if (target) {
+        // 将锚点插入到目标元素当中
+        insert(targetAnchor, target)
+        isSVG = isSVG || isTargetSVG(target)
+      }
+      
+      const mount = (container: RendererElement, anchor: RendererNode) => {
+        // teleport 子节点需要是个数组
+        // 挂载子节点
+        if (shapeFlag & ShapeFlags.ARRAY_CHILDREN) {
+          mountChildren(
+            children,
+            container,
+            anchor,
+            parentComponent,
+            parentSuspense,
+            isSVG,
+            slotScopeIds,
+            optimized
+          )
+        }
+      }
+      // 如果禁用 teleport 则直接挂载到当前渲染节点中
+      if (disabled) {
+        mount(container, mainAnchor)
+      } else if (target) {
+        // 否则，以 targetAnchor 为参照物进行挂载
+        mount(target, targetAnchor)
+      }
+    } else {
+      // 进入更新逻辑
+    }
+  },
+}
+~~~
+这里，我们先不着急着看源码，我们先看看一个 `teleport` 节点在开发环境会被渲染成什么样子：
+~~~vue
+<template>
+  <Teleport to="body">
+    <div class="modal">
+      <p>Hello from the modal!</p>
+    </div>
+  </Teleport>
+</template>
+~~~
+上面模版的渲染结果如下：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/085dc3ff6e4542e19324b723d9d51c5b~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+可以看到，已经被渲染到 `body` 元素当中，除了这个变化外，之前的容器中，还多了两个额外的注释符：
+~~~html
+<!--teleport start-->
+<!--teleport end-->
+~~~
+这下我们再来看看源码，或许就能更好的理解这些变化了。首先，在初始化中，会先创建两个占位符，分别是 `placeholder` 和 `mainAnchor` 然后再讲这两个占位符挂载到组件容器中，这两个占位符也就是上文中的注释节点。
+
+接着又创建了一个目标节点的占位符 `targetAnchor` 这个则会被挂载到目标容器中，只不过这里是个文本节点，所以在 `DOM` 上没有体现出来，我们把这里稍微改一下：
+~~~ts
+const targetAnchor = (n2.targetAnchor = createComment('teleport target'))
+~~~
+这样再看一下 `DOM` 的渲染结果：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/bb70396b873b42deae16088c43b4a009~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+最后再根据 `disabled` 这个 `props` 属性来判断当前的节点需要采用哪种方式渲染，如果 `disabled = true` 则会以 `mainAnchor` 为参考节点进行挂载，也就是挂载到主容器中，否则会以 `targetAnchor` 为参考节点进行挂载，挂载到目标元素容器中。至此，完成节点的初始化挂载逻辑。
+
+### Teleport 的更新
+如果 `Teleport` 组件需要进行更新，则会进入更新的逻辑：
+~~~ts
+export const TeleportImpl = {
+  // 组件标记
+  __isTeleport: true,
+  
+  process(n1, n2, container, anchor, parentComponent, parentSuspense, isSVG, slotScopeIds, optimized, internals) {
+    // 从内在对象上结构关键功能函数
+    const {
+      mc: mountChildren,
+      pc: patchChildren,
+      pbc: patchBlockChildren,
+      o: {insert, querySelector, createText, createComment}
+    } = internals
+    
+    // 是否禁用
+    const disabled = isTeleportDisabled(n2.props)
+    let {shapeFlag, children, dynamicChildren} = n2
+    // 初始化的逻辑
+    if (n1 == null) {
+      // ...
+    } else {
+      // 从老节点上获取相关参照系等属性
+      n2.el = n1.el
+      const mainAnchor = (n2.anchor = n1.anchor)!
+      const target = (n2.target = n1.target)!
+      const targetAnchor = (n2.targetAnchor = n1.targetAnchor)!
+      // 之前是不是禁用态  
+      const wasDisabled = isTeleportDisabled(n1.props)
+      // 当前的渲染容器
+      const currentContainer = wasDisabled ? container : target
+      // 参照节点
+      const currentAnchor = wasDisabled ? mainAnchor : targetAnchor
+      isSVG = isSVG || isTargetSVG(target)
+      // 通过 dynamicChildren 更新节点
+      if (dynamicChildren) {
+        // fast path when the teleport happens to be a block root
+        patchBlockChildren(
+          n1.dynamicChildren!,
+          dynamicChildren,
+          currentContainer,
+          parentComponent,
+          parentSuspense,
+          isSVG,
+          slotScopeIds
+        )
+        traverseStaticChildren(n1, n2, true)
+      } else if (!optimized) {
+        // 全量更新
+        patchChildren(
+          n1,
+          n2,
+          currentContainer,
+          currentAnchor,
+          parentComponent,
+          parentSuspense,
+          isSVG,
+          slotScopeIds,
+          false
+        )
+      }
+  
+      if (disabled) {
+        if (!wasDisabled) {
+          // enabled -> disabled
+          // 移动回主容器
+          moveTeleport(
+            n2,
+            container,
+            mainAnchor,
+            internals,
+            TeleportMoveTypes.TOGGLE
+          )
+        }
+      } else {
+        // 目标元素被改变
+        if ((n2.props && n2.props.to) !== (n1.props && n1.props.to)) {
+          // 获取新的目标元素
+          const nextTarget = (n2.target = resolveTarget(
+            n2.props,
+            querySelector
+          ))
+          // 移动到新的元素当中
+          if (nextTarget) {
+            moveTeleport(
+              n2,
+              nextTarget,
+              null,
+              internals,
+              TeleportMoveTypes.TARGET_CHANGE
+            )
+          }
+        } else if (wasDisabled) {
+          // disabled -> enabled
+          // 移动到目标元素中
+          moveTeleport(
+            n2,
+            target,
+            targetAnchor,
+            internals,
+            TeleportMoveTypes.TOGGLE
+          )
+        }
+      }
+    }
+  },
+}
+~~~
+代码量虽然挺多的，但所做的事情是特别明确的，首先 `Teleprot` 组件的更新需要和普通节点更新一样进行子节点的 `diff`。然后会判断 `Teleport` 组件的 `props` 是否有变更，主要就是 `disabled` 和 `to` 这两个参数。
+
+如果 `disabled` 变化，无非就是从 可用 `->` 不可用 或者从 不可用 `->` 可用。从 可用 `->`不可用 就是将原来挂在在 `target` 容器中的节点重新移动到主容器中，而从 不可用 `->` 可用 就是将主容器中的节点再挂载到 `target` 中。
+
+如果 `to` 这个参数变化了，那么就需要重新寻找目标节点，再进行挂载。
+
+### Teleport 的移除
+当组件卸载时，我们需要移除 `Teleport` 组件，一起再看看卸载重对于 `Teleport` 组件的处理：
+~~~ts
+const unmount = (vnode, parentComponent, parentSuspense, doRemove, optiomized) => {
+  // ...
+  
+  if (shapeFlag & ShapeFlags.TELEPORT) {
+    vnode.type.remove(
+      vnode,
+      parentComponent,
+      parentSuspense,
+      optimized,
+      internals,
+      doRemove
+    )
+  }
+  // ...
+}
+~~~
+`unmount` 卸载函数对于 `Teleport` 组件的处理就是直接调用 `remove` 方法：
+~~~ts
+export const TeleportImpl = {
+  // 组件标记
+  __isTeleport: true,
+  remove(vnode, parentComponent, parentSuspense, optimized, { um: unmount, o: { remove: hostRemove } }, doRemove) {
+    const { shapeFlag, children, anchor, targetAnchor, target, props } = vnode
+    // 如果存在 target，移除 targetAnchor
+    if (target) {
+      hostRemove(targetAnchor!)
+    }
+    
+    // 在未禁用状态下，需要卸载 teleport 的子元素
+    if (doRemove || !isTeleportDisabled(props)) {
+      hostRemove(anchor!)
+      if (shapeFlag & ShapeFlags.ARRAY_CHILDREN) {
+        for (let i = 0; i < children.length; i++) {
+          const child = children[i]
+          unmount(
+            child,
+            parentComponent,
+            parentSuspense,
+            true,
+            !!child.dynamicChildren
+          )
+        }
+      }
+    }
+  }
+}
+~~~
+`remove` 方法的操作，看起来也比较好理解，首先先移除掉 `targetAnchor` 锚点内容，然后再调用 `unmount` 函数挨个卸载子组件，从而完成卸载功能。
+
+::: tip
+`Teleport` 相比于之前的那种挂载方式他的性能优势就在于 `Teleport` 节点的挂载是在 `patch` 阶段进行的，也就是在 `patch` 阶段就确定了需要挂载到哪里，而不会出现先挂在到主容器再迁移到目标容器的情况。
+:::
+
+## 内置组件:Suspense 原理与异步
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
