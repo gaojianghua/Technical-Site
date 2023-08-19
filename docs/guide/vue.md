@@ -7,33 +7,39 @@
 1. 源码组织上的变化
    <br>
    <br>
-   Vue 3 相对于 Vue 2 使用 monorepo 的方式进行包管理，使用 monorepo 的管理方式，使得 Vue 3 源码模块职责显得特别地清晰明了，每个包独立负责一块核心功能的实现，方便开发和测试。
+   `Vue 3` 相对于 `Vue 2` 使用 `monorepo` 的方式进行包管理，使用 `monorepo` 的管理方式，使得 `Vue 3` 源码模块职责显得特别地清晰明了，每个包独立负责一块核心功能的实现，方便开发和测试。
    ::: info
-   比如，compiler-core 专职负责与平台无关层的渲染器底层，对外提供统一调用函数，内部通过完整的测试用例保障功能的稳定性。而 compiler-dom 和 compiler-ssr 则依托于 compiler-core 分别实现浏览器和服务端侧的渲染器上层逻辑，模块核心职责清晰明了，提高了整体程序运行的健壮性！
+   比如，`compiler-core` 专职负责与平台无关层的渲染器底层，对外提供统一调用函数，内部通过完整的测试用例保障功能的稳定性。而 `compiler-dom` 和 `compiler-ssr` 则依托于 `compiler-core` 分别实现浏览器和服务端侧的渲染器上层逻辑，模块核心职责清晰明了，提高了整体程序运行的健壮性！
    :::
-2. 引入 Composition API
+2. 引入 `Composition API`
    <br>
    <br>
-   在 Vue 2.7 之前，我们去开发 Vue 应用，都是通过 data、computed、methods……这样的选项分类的方式来实现一个组件的开发。其实这样对于没有大量状态逻辑维护、复用的组件来说，是比较直观的组织方式，但是一旦遇到需要大量维护、复用状态的组件来说，这无疑增加了维护的成本和风险。
+   在 `Vue 2.7` 之前，我们去开发 `Vue` 应用，都是通过 `data、computed、methods……`这样的选项分类的方式来实现一个组件的开发。其实这样对于没有大量状态逻辑维护、复用的组件来说，是比较直观的组织方式，但是一旦遇到需要大量维护、复用状态的组件来说，这无疑增加了维护的成本和风险。
    <br>
    <br>
-   组合式 API (Composition API) 是一系列 API 的集合，使我们可以使用函数而不是声明选项的方式书写 Vue 组件。
+   组合式 `API (Composition API)` 是一系列 `API` 的集合，使我们可以使用函数而不是声明选项的方式书写 `Vue` 组件。
    ::: info
-   但 Composition API 也并不是“银弹”，它也有自己适合的场景，所以 Vue 3 也是在实现层面做到了兼容 Options API 的写法。相对而言，Composition API 更适用于大型的项目，因为大型项目可能会产生大量状态逻辑的维护，甚至跨组件的逻辑复用；而对于中小型项目来说，Options API 可以在你写代码时减少思考组织状态逻辑的方式，也是一种不错的选择。
+   但 `Composition API` 也并不是“银弹”，它也有自己适合的场景，所以 `Vue 3` 也是在实现层面做到了兼容 `Options API` 的写法。相对而言，`Composition API` 更适用于大型的项目，因为大型项目可能会产生大量状态逻辑的维护，甚至跨组件的逻辑复用；而对于中小型项目来说，`Options API` 可以在你写代码时减少思考组织状态逻辑的方式，也是一种不错的选择。
    :::
 3. 运作机制的变化
+   
+   熟悉 `Vue 2` 源码的同学大致清楚 `Vue 2` 的核心运作机制可以抽象为下图所示的样子：
+
+   ![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/fa72bab154fd45a7b793d6f33aaa3043~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
    <br>
    <br>
-   Vue 3 则在底层实现中，摒弃了 Vue 2 的部分实现，采用全新的响应式模型进行重写:
+   `Vue 3` 则在底层实现中，摒弃了 `Vue 2` 的部分实现，**采用全新的响应式模型进行重写**:
+
+   ![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/4b410850bd4d4e2198e62e4c38bf8b92~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
    <br>
    <br>
-   * 首先，之前通过 new Vue() 来创建 Vue 对象的方式已经变成了 createApp；
-   * 其次，在响应式部分也由原来的 Object.defineProperty 改成了现在的 Proxy API 实现；
-   * 另外，针对响应式依赖收集的内容，在 Vue 2.x 版本中是收集了 Watcher，而到了 Vue 3 中则成了 effect。
+   * 首先，之前通过 `new Vue()` 来创建 Vue 对象的方式已经变成了 `createApp`；
+   * 其次，在响应式部分也由原来的 `Object.defineProperty` 改成了现在的 `Proxy API` 实现；
+   * 另外，针对响应式依赖收集的内容，在 `Vue 2.x` 版本中是收集了 Watcher，而到了 `Vue 3` 中则成了 `effect`。
    <br>
    <br>
    ::: tip
-   除了上面所说的这些变化外，Vue 3 不管是在编译时、还是在运行时都做了大量的性能优化。例如，在编译时，Vue 3 通过标记 /*#__PURE__*/ 来为打包工具提供良好的 Tree-Shaking 机制，通过 静态提升 机制，避免了大量静态节点的重复渲染执行；在运行时，又通过批量队列更新机制优化了更新性能，通过 PatchFlags 和 dynamicChildren 进行了 diff 的靶向更新
+   除了上面所说的这些变化外，`Vue 3` 不管是在编译时、还是在运行时都做了大量的性能优化。例如，在编译时，`Vue 3` 通过标记 /*#__PURE__*/ 来为打包工具提供良好的 `Tree-Shaking` 机制，通过 静态提升 机制，避免了大量静态节点的重复渲染执行；在运行时，又通过批量队列更新机制优化了更新性能，通过 `PatchFlags` 和 `dynamicChildren` 进行了 `diff` 的靶向更新
    :::
 
 ## 源码调试
@@ -7844,64 +7850,370 @@ export function emit(instance, event, ...rawArgs) {
 在组件元素上，则是通过组件内部自定义值接受和事件派发机制完成对数据的更新操作。
 
 ## 特殊元素&指令:slot 插槽元素是如何实现的
+`Vue` 提供了一个 `<slot>` 插槽的内置特殊元素，用来实现为子组件传递一些模板片段，然后由子组件完成对这些模版的渲染工作。一个简单的例子，这里有一个父组件，写入了一段插槽模版内容：
+~~~vue
+<ChildComponent>
+  <!-- 插槽内容 -->
+  hello world
+</ChildComponent>
+~~~
+在子组件 `<ChildComponent>` 中则通过 `<slot>` 元素来实现对插槽内容的出口渲染：
+~~~vue
+<div>
+  <!-- 插槽出口 -->
+  <slot></slot>
+</div>
+~~~
+`<slot>` 元素是一个插槽出口 (`slot outlet`)，标示了父元素提供的插槽内容 (`slot content`) 将在哪里被渲染。
 
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/8979e66c0c914abc9a97c92c228393fd~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
 
+### 插槽内容渲染
+一个组件如果携带一些插槽内容，那么这个组件在渲染的时候，会有哪些变化。先来看一个较为常规的 `<slot>` 插槽内容用法：
+~~~vue
+<ChildComponent>
+  <template #header>header</template>
+  <template #content>content</template>
+  <template #footer>footer</template>
+</ChildComponent>
+~~~
+经过编译器转换后，生成的渲染函数如下：
+~~~ts
+import { createTextVNode as _createTextVNode, resolveComponent as _resolveComponent, withCtx as _withCtx, openBlock as _openBlock, createBlock as _createBlock } from "vue"
 
+export function render(_ctx, _cache, $props, $setup, $data, $options) {
+  const _component_ChildComponent = _resolveComponent("ChildComponent")
 
+  return (_openBlock(), _createBlock(_component_ChildComponent, null, {
+    header: _withCtx(() => [
+      _createTextVNode("header")
+    ]),
+    content: _withCtx(() => [
+      _createTextVNode("content")
+    ]),
+    footer: _withCtx(() => [
+      _createTextVNode("footer")
+    ]),
+    _: 1 /* STABLE */
+  }))
+}
+~~~
+可以看到，`createBlock` 的第三个参数 `children` 相对于普通父子节点来说，由一个数组变成一个对象的形式，这个对象包含了以插槽内容名称命名的函数，以及一个 `_` 属性，这个属性的含义是 `slotFlag`。
 
+下面我们再详细看一下 `createBlock` 这个函数的实现，前面的章节中，我们提到 `createBlock` 函数本质就是调用了 `createVNode` 函数创建 `vnode` 节点，不过会增加一些和编译时优化相关的属性 `dynamicChildren` 罢了。那么核心看一下在创建 `vnode` 的时候产生的一些变化：
+~~~ts
+function _createVNode(type, props, children, patchFlag, dynamicProps = null, isBlockNode = false) {
+  // ...
+  if (isVNode(type)) {
+    // clone vnode
+    const cloned = cloneVNode(type, props, true /* mergeRef: true */)
+    if (children) {
+      // 标准化子节点
+      normalizeChildren(cloned, children)
+    }
+    return cloned
+  }
+  // ...
+}
+~~~
+`createVNode` 函数在执行的时候，针对 `vnode` 节点如果存在子节点的话，会调用 `normalizeChildren` 函数：
+~~~ts
+export function normalizeChildren(vnode, children) {
+  let type = 0
+  const { shapeFlag } = vnode
+  if (children == null) {
+    children = null
+  } else if (isArray(children)) {
+    //  子节点是数组的情况
+    type = ShapeFlags.ARRAY_CHILDREN
+  } else if (typeof children === 'object') {
+    // 针对 children 是对象的处理内容
+    // 对于 ELEMENT 或者 TELEPORT slot 的处理
+    if (shapeFlag & (ShapeFlags.ELEMENT | ShapeFlags.TELEPORT)) {
+      const slot = (children as any).default
+      if (slot) {
+        slot._c && (slot._d = false)
+        normalizeChildren(vnode, slot())
+        slot._c && (slot._d = true)
+      }
+      return
+    } else {
+      // 标记子节点类型为 SLOTS_CHILDREN
+      type = ShapeFlags.SLOTS_CHILDREN
+      const slotFlag = (children as RawSlots)._
+      if (!slotFlag && !(InternalObjectKey in children!)) {
+        // 如果 slots 还没有被标准化，添加上下文实例
+        ;(children as RawSlots)._ctx = currentRenderingInstance
+      } else if (slotFlag === SlotFlags.FORWARDED && currentRenderingInstance) {
+        // 处理 slotFlag 为 FORWARDED 的情况
+        // 处理 STABLE slot
+        if (
+          (currentRenderingInstance.slots as RawSlots)._ === SlotFlags.STABLE
+        ) {
+          ;(children as RawSlots)._ = SlotFlags.STABLE
+        } else {
+          // 添加 DYNAMIC slot
+          ;(children as RawSlots)._ = SlotFlags.DYNAMIC
+          vnode.patchFlag |= PatchFlags.DYNAMIC_SLOTS
+        }
+      }
+    }
+  }
+  // ...
+  vnode.children = children
+  vnode.shapeFlag |= type
+}
+~~~
+这里我们只需要关注，如果传入的子节点类型是个 `Object` 的情况下，会为 `vnode.shapeFlag` 属性添加 `SLOTS_CHILDREN` 类型。那这个 `shapeFlag` 在哪里会被用到了？再回到我们之前的组件挂载过程中的 `setupComponent` 函数中：
+~~~ts
+export function setupComponent(instance) {
+  // 1. 处理 props
+  // 取出存在 vnode 里面的 props
+  const { props, children } = instance.vnode;
+  initProps(instance, props);
+  // 2. 处理 slots
+  initSlots(instance, children);
 
+  // 3. 调用 setup 并处理 setupResult
+  setupStatefulComponent(instance);
+}
+~~~
+这里我们重点看一下是如何处理 `slots` 的：
+~~~ts
+export const initSlots = (instance, children) => {
+  // shapeFlag 有 SLOTS_CHILDREN 类型
+  if (instance.vnode.shapeFlag & ShapeFlags.SLOTS_CHILDREN) {
+    // 对于我们的示例中，slotFlag 类型是 STABLE
+    const type = (children as RawSlots)._
+    if (type) {
+      // 用户可以使用 this.$slots 来获取 slots 对象的浅拷贝内部实例上的 slots
+      // 所以这里应该避免 proxy 对象污染
+      // 为 instance slots 属性赋值 children
+      instance.slots = toRaw(children)
+      // 标记不可枚举
+      def(children, '_', type)
+    }
+    // ...
+  } else {
+    instance.slots = {}
+    // ...
+  }
+  def(instance.slots, InternalObjectKey, 1)
+}
+~~~
+针对我们上面的示例，首先 `slots` 渲染的 `slotFlag` 类型为 `STABLE`，所以这里的 `initSlot` 所做的操作就是为 `instance.slots` 赋值为 `toRaw(children)`。
 
+到这里，我们可以认为，对于一个组件中如果包含 `slot` 内容，那么这个组件实例在被渲染的时候，这些内容将会被添加到当前组件实例的 `instance.slots` 属性上：
+~~~ts
+// ChildComponent 组件实例
+{
+  type: {
+    name: "ChildComponent",
+    render: render(_ctx, _cache) { ... },
+    // ...
+  },
+  slots: {
+    header: _withCtx(() => [
+      _createTextVNode("header")
+    ]),
+    content: _withCtx(() => [
+      _createTextVNode("content")
+    ]),
+    footer: _withCtx(() => [
+      _createTextVNode("footer")
+    ]),
+  },
+  vnode: {...}
+  // ...
+}
+~~~
+::: tip
+注意，slots 是被挂载到了子组件实例 ChildComponent 中，而非父组件中。
+:::
+### 插槽出口渲染
+插槽除了有内容外，还需要制定对象的出口，我们再一起看一下上述示例中对应的出口内容：
+~~~vue
+<div>
+  <slot name="header"></slot>
+  <slot name="content"></slot>
+  <slot name="footer"></slot>
+</div>
+~~~
+上面的模版会被编译器编译成如下渲染函数：
+~~~ts
+import { renderSlot as _renderSlot, openBlock as _openBlock, createElementBlock as _createElementBlock } from "vue"
 
+export function render(_ctx, _cache, $props, $setup, $data, $options) {
+  return (_openBlock(), _createElementBlock("div", null, [
+    _renderSlot(_ctx.$slots, "header"),
+    _renderSlot(_ctx.$slots, "content"),
+    _renderSlot(_ctx.$slots, "footer")
+  ]))
+}
+~~~
+可以看到，带有 `<slot>` 内容的元素，会被 `renderSlot` 函数进行包裹，一起来看一下这个函数的实现：
+~~~ts
+export function renderSlot(slots, name, props, fallback, noSlotted) {
+  // ...
+  // 根据 name 获取 slot 内容
+  let slot = slots[name]
+  openBlock()
+  const validSlotContent = slot && ensureValidVNode(slot(props))
+  // 创建 slot vnode
+  const rendered = createBlock(
+    Fragment,
+    {
+      key:
+        props.key ||
+        (validSlotContent && (validSlotContent as any).key) ||
+        `_${name}`
+    },
+    validSlotContent || (fallback ? fallback() : []),
+    validSlotContent && (slots as RawSlots)._ === SlotFlags.STABLE
+      ? PatchFlags.STABLE_FRAGMENT
+      : PatchFlags.BAIL
+  )
+  // ...
+  // 返回 slot vnode
+  return rendered
+}
+~~~
+可以看到，`renderSlot` 函数核心功能就是根据 `slot` 的 `name` 属性去子组件实例上的 `slots` 中查找对应的执行函数，然后创建一个以 `slot` 为子节点的 `Fragment` 类型的 `vnode` 节点。
 
+上述 `slot` 容器中的内容是通过 `withCtx(...)` 函数进行封装执行的，那么这个函数的作用是什么呢？先来看一下这个函数的实现：
+~~~ts
+export function withCtx(fn, ctx= currentRenderingInstance, isNonScopedSlot) {
+  // ...
+  const renderFnWithContext: ContextualRenderFn = (...args: any[]) => {
+    if (renderFnWithContext._d) {
+      setBlockTracking(-1)
+    }
+    // 暂存子组件实例
+    const prevInstance = setCurrentRenderingInstance(ctx)
+    let res
+    try {
+      // 运行创建 vnode 的函数
+      res = fn(...args)
+    } finally {
+      // 重置回子组件实例
+      setCurrentRenderingInstance(prevInstance)
+    }
+    return res
+  }
+  // ...
+  return renderFnWithContext
+}
+~~~
+`withCtx` 函数巧妙的利用了闭包的特性，在运行父组件的时候，通过 `withCtx` 保存了父组件的实例到 `currentRenderingInstance` 变量上，然后在子组件执行 `renderFnWithContext` 函数时，先恢复父组件的实例上下文，再执行生成 `vnode` 函数，执行完成后，再重置回子组件的实例。这样做的好处是在做 `<slot>` 渲染内容的时候，让 `slot` 的内容可以访问到父组件的实例，因为 `slot` 内容本身也是在父组件中定义的，只是被渲染到了指定的子组件中而已。
 
+### Dynamic Slots
+什么是 `dynamic slots` ? 我们之前还有一种动态类型叫做 `dynamic children` 在 `DOM` 更新时做靶向更新。而 `dynamic slots` 则是用于判断 `slot` 内容是否需要更新。
 
+那么 `Vue 3` 会为哪些组价添加 `dynamic slots` 属性呢？
 
+`Vue 3` 中，对于动态的插槽名、条件判断、循环等场景的 `<slot>`，则会被标记为 `dynamic slots`，拿动态的插槽名举例：
+~~~vue
+<child-component>
+  <template #[dynamicSlotName]>header</template>
+</child-component>
+~~~
+则会被渲染成：
+~~~ts
+import { createTextVNode as _createTextVNode, resolveComponent as _resolveComponent, withCtx as _withCtx, openBlock as _openBlock, createBlock as _createBlock } from "vue"
 
+export function render(_ctx, _cache, $props, $setup, $data, $options) {
+  const _component_child_component = _resolveComponent("child-component")
 
+  return (_openBlock(), _createBlock(_component_child_component, null, {
+    [_ctx.dynamicSlotName]: _withCtx(() => [
+      _createTextVNode("header")
+    ]),
+    _: 2 /* DYNAMIC */
+  }, 1024 /* DYNAMIC_SLOTS */))
+}
+~~~
+可以看到，对于动态的插槽名，组件渲染函数会为 `patchFlag` 标记为 `DYNAMIC_SLOTS`。在执行组件更新时，则会根据这个标记来判断当前组件是否需要更新：
+~~~ts
+const updateComponent = (n1, n2, vnode) => {
+  if (shouldUpdateComponent(n1, n2, optimized)) {
+    // ...
+    //  执行更新逻辑
+  }
+}
 
+function shouldUpdateComponent(prevVNode, nextVNode, optimized) {
+  // ...
+  const { props: nextProps, children: nextChildren, patchFlag } = nextVNode
+  // patchFlag 是 DYNAMIC_SLOTS 的情况，shouldUpdateComponent 返回 true
+  if (optimized && patchFlag >= 0) {
+    if (patchFlag & PatchFlags.DYNAMIC_SLOTS) {
+      return true
+    }
+  }
+}
+~~~
+### 总结
+`<slot>` 内置元素的实现原理，本质上就是父组件在渲染的时候，如果遇到了 `<slot>` 内容，则会暂时将其缓存到组件实例上，然后在组件实例化的过程中，从父组件中取出对应的 `slots` 按照名称进行渲染到指定位置。
 
+同时配合 `PatchFlags` 属性，可以做到只有在 `DYNAMIC_SLOTS` 的情况下，才去更新含有 `slot` 的组件，减少了不必要的渲染性能负担。
 
+## 再回首看 Vue 3 设计
+前面的章节，我们分别学完了 渲染器、响应式原理、编译器、内置组件、特殊元素&指令 这五大部分的内容，也大致清楚了各个部分的设计细节和原理，现在，让我们再把这些知识串联，回顾课程开篇中的那张核心运行机制图：
 
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/4b410850bd4d4e2198e62e4c38bf8b92~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
 
+相信这个时候我们再看这张图，相对而言理解起来就比较容易了。那么让我们再来宏观的梳理一遍整体的运作流程吧：
 
+### 1. 渲染器
+我们通常在使用 `Vue.js` 的时候，最开始的入口使用大多数场景如下：
+~~~ts
+import { createApp } from 'vue'
+import App from './App.vue'
 
+createApp(App).mount('#app')
+~~~
+我们通过 `createApp` 的方式创建了一个渲染器对象 `renderer`，所谓渲染器，就是是用来执行渲染任务的，另外也能够进行框架跨平台能力的渲染任务，而这里我们讨论的是渲染器针对于浏览器端渲染成真实 `DOM` 的场景。
 
+渲染器在初始化挂载阶段，通过渲染器内部的 `patch` 函数进行初始化挂载任务。将编译器输出的 `render` 函数执行后生成 `vnode` 节点，然后再将 `vnode` 渲染成真实的 `DOM` 挂载到指定容器中。
 
+渲染器在更新阶段，则会根据编译器中输出的标记 `PatchFlags` 和 `dynamicChildren` 在 `patch` 时做到靶向更新。
 
+### 2. 编译器
+编译器的作用简单概括就是将源代码 `A` 转换成目标代码 `B`。`Vue.js` 的源代码就是我们写的 `template` 函数，编译器的目标代码就是渲染函数：
 
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/4f117f1e4ba14881b011a6d16bcacc72~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
 
+编译器的核心流程经历了：
+1. `parse`：接收字符串模板作为参数，并将解析后得到的 模版 `AST` 作为返回值返回。
+2. `transform`：接受 模板 `AST` 做为参数，语义化转换为 `JavaScript AST` 并返回。
+3. `generate`：接受 `JavaScript AST` 生成渲染函数并返回。
 
+### 3. 响应式
+响应式是 `Vue.js` 的核心部分，简而言之，响应式就是为了实现对需要侦测的状态数据进行监听，当状态数据变化时反馈给与状态数据相关的副作用函数重新执行。
 
+`Vue 3` 通过 `proxy API` 完成了对响应式状态数据的定义，当在副作用函数中访问响应式数据时，进行副作用函数的收集（这里的副作用函数也可以是渲染函数）。当触发响应式状态数据更新时，再重新执行副作用函数。
 
+针对于渲染函数（`render`）这种副作用函数而言，在重新执行的时候，则会比对新老的 `vnode` 节点情况进行选择性更新（`diff`）。
+~~~ts
+const render = (vnode, container) => {
+  if (vnode == null) {
+    // 销毁组件
+    if (container._vnode) {
+      unmount(container._vnode, null, null, true)
+    }
+  } else {
+    // 创建或者更新组件
+    patch(container._vnode || null, vnode, container)
+  }
+  // 缓存 vnode 节点，表示已经渲染
+  container._vnode = vnode
+}
+~~~
 
+### 4. 性能优化
+另外值得一提的是，`Vue 3` 不管是在编译时还是在运行时都做了大量的性能优化。例如在编译时，`Vue 3` 通过标记 `/*#__PURE__*/` 来为打包工具提供良好的 `Tree-Shaking` 机制，通过 静态提升 机制，避免了大量静态节点的重复渲染执行；在运行时又通过批量队列更新机制优化了更新性能，通过 `PatchFlags` 和 `dynamicChildren` 进行了 `diff` 的靶向更新...
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+通过这些精细的设计，我们可以在不了解 `Vue.js` 运行原理的基础上，写出性能卓越的前端代码，降低了开发者的心智负担。
 
 ## Vue2原理
 - snabbdom
