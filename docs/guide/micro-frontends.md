@@ -2906,10 +2906,397 @@ console.log(`server start at http://${host}:${port.micro}/`);
 ::: tip
 温馨提示：`Chrome` 中的标签页和内部的 `iframe` 应用、两个不同的标签页应用可能会处于同一个 `Renderer` 进程。
 :::
+在 `Chrome` 的 `Blink` 渲染引擎中可以通过嵌入 `V8` 来实现 `JS` 代码的解释和执行，因此我们也可以通过类似的方式嵌入 `V8` 来验证上述观点。`V8` 官方提供了 `C++` 的嵌入文档 [Getting started with embedding V8](https://v8.dev/docs/embed)，可以通过官方提供的示例进行简单改造，从而实现如下功能：
+- 在同一个 `JS` 上下文中执行两个不同的 `JS` 文件，查看内部的同名全局变量执行情况
+- 在不同的 `JS` 上下文中执行 `JS` 文件，查看内部的同名全局变量执行情况
+::: tip
+温馨提示：如果你对 `C++` 编译不熟悉， 可以先阅读`原理进阶：V8 的嵌入实践`， 重点讲解了 `C++` 的编译工具、多文件开发、`V8` 静态库的编译制作、`V8` 动态库的下载使用等。
+:::
+官方示例 `hello-world.cc` 将需要执行的 `JavaScript` 固定在 `C++` 代码中，因此每次修改 `JavaScript` 都需要重新编译成可执行的二进制文件。这里对官方示例进行更改，设计一个可以读取 `JS` 文件的 `C++` 代码，将 `JavaScript` 从 `C++` 编译中释放出来：
 
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/80ed26cd7ad6493aa04e61787367b69e~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
 
+在 `main.cpp` 中读取外部的 `JS` 文件进行解释执行，项目的示例结构如下所示：
+~~~shell
+├── v8                              # 库源码
+│   ├── inclide/                    # 头文件
+│   │   ├── libplatform/                         
+│   │   │   └── libplatform.h        
+│   │   └── v8.h                                                
+│   └── lib/                        # 动态库
+│       ├── libv8.dylib         
+│       └── libv8_libplatform.dylib                
+├── utils                           # 工具目录
+│   ├── file.cpp        
+│   ├── file.h
+│   └── utils.h                                                                        
+├── micro1.js                       # js 文件
+├── micro2.js                       # js 文件
+└── main.cpp                        # 应用源码
+~~~
+::: tip
+温馨提示：示例源码可以从 `embed-v8` 的 [demo/v8-context](https://github.com/ziyi2/embed-v8/tree/demo/v8-context) 分支获取。由于 `Mac` 存在不同的 `CPU` 架构，建议通过 `Homebrew` 重新下载 `V8` 动态库进行测试，具体可以查看仓库的 `README.md` 说明文件。
+:::
+`utils` 目录下会实现一个读取 `JS` 文件的工具方法，`utils.h` 是总声明头文件，在 `main.cpp` 中需要引入它，有点类似于 `Web` 前端的某个目录下有一个总的 `index.js` 导出了内部的所有模块：
+~~~c++
+// utils.h
+#ifndef INCLUDE_UTILS_H_
+#define INCLUDE_UTILS_H_
 
+#include "file.h"
 
+# endif
+
+// file.h
+#ifndef INCLUDE_FILE_H_
+#define INCLUDE_FILE_H_
+
+char* readJavaScriptFile(const char* name);
+
+#endif
+~~~
+`file.h` 声明的 `API` 在 `file.cpp` 中实现，主要用于读取 `JavaScript` 文件的字符串内容：
+~~~c++
+#include <iostream>
+#include <fstream>
+#include "file.h"
+
+using namespace std;
+
+// C++ 读写示例：https://cplusplus.com/doc/tutorial/files/
+// 查看最后一个示例 Binary files
+
+char* readJavaScriptFile(const char* fileName) {
+    
+    char* code;
+
+    // 创建一个 ifstream，并打开名为 fileName 的文件
+    // fileName 可以是 string 类型，也可以是一个指向字符串存储地址的指针
+
+    // ios::in：打开文件用于读取
+    // ios::ate：文件打开后定位到文件末尾
+    // 这里的 | 是一个位运算符，表明上述两个操作都要执行
+    ifstream file(fileName, ios::in|ios::ate);
+
+    if(file.is_open()) {
+        // 由于打开时定位到末尾，因此可以直接获取文件大小
+        streampos size = file.tellg();
+        // 开辟和文件大小一致的字符串数组空间，从而可以有足够的空间存放文件的字符串内容
+        code = new char[size];
+        // 重新定位到文件开头
+        file.seekg (0, ios::beg);
+        // 读取文件的全部内容（通过 size 指定读取的文件大小）
+        file.read (code, size);
+        // 关闭文件
+        file.close();
+    }
+    
+    
+    return code;
+}
+~~~
+将 `main.cpp` 中的官方示例进行改造，主要实现如下功能：
+- 创建一个 `V8` 上下文，读取并执行 `micro1.js` 和 `micro2.js`
+- 创建两个 `V8` 上下文，分别执行 `micro1.js` 和 `micro2.js`
+
+~~~c++
+// 包含库的头文件，使用 <>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// 包含自定义的头文件，用 ""
+#include "libplatform/libplatform.h"
+#include "v8.h"
+
+// 引入自定义的 utils.h 头文件
+#include "utils.h"
+
+int main(int argc, char* argv[]) {
+  // Initialize V8.
+  v8::V8::InitializeICUDefaultLocation(argv[0]);
+  v8::V8::InitializeExternalStartupData(argv[0]);
+  std::unique_ptr<v8::Platform> platform = v8::platform::NewDefaultPlatform();
+  v8::V8::InitializePlatform(platform.get());
+  v8::V8::Initialize();
+
+  // Create a new Isolate and make it the current one.
+  v8::Isolate::CreateParams create_params;
+  create_params.array_buffer_allocator =
+      v8::ArrayBuffer::Allocator::NewDefaultAllocator();
+  v8::Isolate* isolate = v8::Isolate::New(create_params);
+  {
+    v8::Isolate::Scope isolate_scope(isolate);
+
+    // Create a stack-allocated handle scope.
+    v8::HandleScope handle_scope(isolate);
+
+    /**
+     1. 创建一个上下文，执行 micro1.js 和 micro2.js
+    */
+
+    {
+
+      // Create a new context.
+      // 创建一个上下文
+      v8::Local<v8::Context> context = v8::Context::New(isolate);
+
+      // Enter the context for compiling and running the script.
+      // 进入该上下文执行 JS 代码
+      v8::Context::Scope context_scope(context);
+
+      {
+        // 读取当前 main.cpp 同级目录下的 micro1.js 文件
+        const char* code = readJavaScriptFile("micro1.js");
+
+        // Create a string containing the JavaScript source code.
+        v8::Local<v8::String> source =
+            v8::String::NewFromUtf8(isolate, code).ToLocalChecked();
+
+        // Compile the source code.
+        v8::Local<v8::Script> script =
+            v8::Script::Compile(context, source).ToLocalChecked();
+
+        // Run the script to get the result.
+        v8::Local<v8::Value> result = script->Run(context).ToLocalChecked();
+
+        // Convert the result to an UTF8 string and print it.
+        v8::String::Utf8Value utf8(isolate, result);
+        printf("%s\n", *utf8);
+      }
+
+      {
+        // 读取当前 main.cpp 同级目录下的 micro2.js 文件
+        const char* code = readJavaScriptFile("micro2.js");
+
+        // Create a string containing the JavaScript source code.
+        v8::Local<v8::String> source =
+            v8::String::NewFromUtf8(isolate, code).ToLocalChecked();
+
+        // Compile the source code.
+        v8::Local<v8::Script> script =
+            v8::Script::Compile(context, source).ToLocalChecked();
+
+        // Run the script to get the result.
+        v8::Local<v8::Value> result = script->Run(context).ToLocalChecked();
+
+        // Convert the result to an UTF8 string and print it.
+        v8::String::Utf8Value utf8(isolate, result);
+        printf("%s\n", *utf8);
+      }
+    }
+    
+    /**
+     2. 创建两个上下文，分别执行 micro1.js 和 micro2.js
+    */
+
+    {
+      // Create a new context.
+      // 创建一个新的上下文
+      v8::Local<v8::Context> context = v8::Context::New(isolate);
+
+      // Enter the context for compiling and running the hello world script.
+      // 进入新的上下文执行 JS 代码
+      v8::Context::Scope context_scope(context);
+
+      // 读取当前 main.cpp 同级目录下的 micro1.js 文件
+      const char* code = readJavaScriptFile("micro1.js");
+
+      // Create a string containing the JavaScript source code.
+      v8::Local<v8::String> source =
+          v8::String::NewFromUtf8(isolate, code).ToLocalChecked();
+
+      // Compile the source code.
+      v8::Local<v8::Script> script =
+          v8::Script::Compile(context, source).ToLocalChecked();
+
+      // Run the script to get the result.
+      v8::Local<v8::Value> result = script->Run(context).ToLocalChecked();
+
+      // Convert the result to an UTF8 string and print it.
+      v8::String::Utf8Value utf8(isolate, result);
+      printf("%s\n", *utf8);
+    }
+
+    {
+      // Create a new context.
+      // 创建一个新的上下文
+      v8::Local<v8::Context> context = v8::Context::New(isolate);
+
+      // Enter the context for compiling and running the hello world script.
+      // 进入新的上下文执行 JS 代码
+      v8::Context::Scope context_scope(context);
+
+      // 读取当前 main.cpp 同级目录下的 micro2.js 文件
+      const char* code = readJavaScriptFile("micro2.js");
+
+      // Create a string containing the JavaScript source code.
+      v8::Local<v8::String> source =
+          v8::String::NewFromUtf8(isolate, code).ToLocalChecked();
+
+      // Compile the source code.
+      v8::Local<v8::Script> script =
+          v8::Script::Compile(context, source).ToLocalChecked();
+
+      // Run the script to get the result.
+      v8::Local<v8::Value> result = script->Run(context).ToLocalChecked();
+
+      // Convert the result to an UTF8 string and print it.
+      v8::String::Utf8Value utf8(isolate, result);
+      printf("%s\n", *utf8);
+    }
+  }
+
+  // Dispose the isolate and tear down V8.
+  isolate->Dispose();
+  v8::V8::Dispose();
+  v8::V8::DisposePlatform();
+  delete create_params.array_buffer_allocator;
+  return 0;
+}
+~~~
+其中 `micro1.js` 和 `micro2.js` 和命名冲突测试中的微应用示例相似，具体代码如下所示：
+~~~c++
+// micro1.js
+var count = 0;
+++ count;
+
+// micro2.js
+var count;
+++ count;
+~~~
+在 `main.cpp` 中，我们首先创建一个执行上下文，将 `micro1.js` 和 `micro2.js` 都执行一遍，接着我们又各自创建新的执行上下文，分别将 `micro1.js` 和 `micro2.js` 单独执行一遍，查看执行结果：
+~~~shell
+# 执行
+cmake .
+# 打印
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /Users/zhuxiankang/Desktop/Github/embed-v8
+# 执行
+make
+# 打印
+[ 33%] Building CXX object CMakeFiles/main.dir/main.cpp.o
+[ 66%] Building CXX object CMakeFiles/main.dir/utils/file.cpp.o
+[100%] Linking CXX executable main
+[100%] Built target main
+# main 可执行文件生成后，执行
+./main
+
+# 同一个执行上下文执行两个 JS 文件
+# micro1.js
+1
+# micro2.js：重复声明的 count 变量无效，直接在 micro1.js 声明的变量上进行 + 1 处理
+2
+
+# 不同的执行上下文分别执行 JS 文件
+# micro1.js
+1
+# micro2.js：不受到 micro1.js 的变量影响
+NaN
+~~~
+::: tip
+温馨提示：在执行之前需要先编译生成 `main` 可执行文件，查看示例代码的 `README.md`，提供了两种不同的编译方式，方式一使用 `g++` 进行编译，是一种相对原始的编译方式，也是 `V8` 官方使用的方式（你可以简单理解为在 `TypeScript` 中直接使用 `tsc` 进行编译），方式二使用 `CMake` 多文件配置的编译方式（你可以简单理解为使用 `Webpack` 进行编译）。
+:::
+从上述打印结果可以发现：
+- 如果两个 `JS` 文件在相同的全局执行上下文，声明的全局属性会产生覆盖
+- 如果两个 `JS` 文件在不同的全局执行上下文，声明的全局属性互不干扰
+
+如果把上述示例中的 `var` 改为 `let` 进行声明处理：
+~~~ts
+// micro1.js
+let count = 0;
+++ count;
+
+// micro2.js
+let count;
+++ count;
+~~~
+此时重新编译后进行执行，可以发现在同一个执行上下文的 `micro2.js` 会报错：
+~~~shell
+# 执行
+./main
+
+# 同一个执行上下文执行两个 JS 文件
+# micro1.js
+1
+# micro2.js
+<unknown>:0: Uncaught SyntaxError: Identifier 'count' has already been declared
+
+#
+# Fatal error in v8::ToLocalChecked
+# Empty MaybeLocal
+#
+
+zsh: trace trap  ./main
+~~~
+::: tip
+温馨提示：可以在 `Chrome` 浏览器中进行测试，会发现同一个执行上下文中行为和嵌入的 `V8` 代码运行一致。
+:::
+相信很多同学经常会听到全局执行上下文这个概念，在 `V8` 中执行上下文用于隔离不相关的 `JavaScript` 应用，并且这些应用可以处于同一个 `V8` 的 `Isolate` 实例中。那为什么需要在 `V8` 中建立上下文的概念呢？是因为在 `JavaScript` 中提供了很多[内置的工具方法以及对象](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects)，这些内置对象可以通过 `JavaScript` 运行时进行更改（例如通过原型链进行覆盖，或者声明了一个同名的全局属性），如果两个不相关的 `JavaScript` 应用同时修改了某个全局对象的同名属性，那么很容易产生意想不到的 `Bug`（例如在上述命名冲突的示例中都声明了全局属性 `count`），通过创建不同的全局执行上下文可以解决该问题，这也是不同的 Web 应用可以进行 `JS` 隔离的主要原因。举个例子：
+~~~html
+<!-- main.html -->
+<html>
+
+<body>
+    <iframe src="iframe.html"></iframe>
+    <script>
+        // 当前全局上下文为 main.html 对应的 Context
+        var a = 1;
+        var iframe = document.querySelector("iframe");
+        iframe.onload = function () {
+            // 执行 iframe.contentWindow.func 时在全局上下文栈中 push iframe.html 对应的 Context  
+            // 当前全局上下文为 iframe.html 对应的 Context
+            iframe.contentWindow.func();
+            // 执行后在全局上下文栈中 pop iframe.html 对应的 Context  
+            // 当前全局上下文为 main.html 对应的 Context
+            console.log('main a: ', a); // main a:  1
+        }
+    </script>
+</body>
+
+</html>
+
+<!-- iframe.html -->
+<script>
+    // 当前全局上下文为 iframe.html 对应的 Context
+    var a = 2;
+    function func() {
+        console.log('iframe a:', a); // iframe a: 2
+    }
+</script>
+~~~
+::: tip
+温馨提示：参考官方的 [V8 / Contexts](https://v8.dev/docs/embed#contexts) 进行阅读会更加有体感，本质上是 `JS` 全局执行上下文栈的 `PUSH` 和 `POP` 处理。需要注意，上述示例代码因为 `iframe` 和所在 `Web` 应用同源，因此会处于同一个 `Renderer` 进程的同一个主线程，并且会处于同一个 `V8` 的 `Isolate` 实例。
+:::
+在 `JavaScript` 代码层面感知不到 `Context` 在全局上下文栈中的切换情况，事实上在执行 `main.html` 中的 `JavaScript` 代码时可以简单理解为底层的 `C++` 做了如下操作：
+~~~c++
+// 在 V8 的隔离实例中创建一个 main.html 对应的上下文
+v8::Local<v8::Context> main = v8::Context::New(isolate);
+// 在 V8 的隔离实例中创建一个 iframe.html 对应的上下文
+v8::Local<v8::Context> iframe = v8::Context::New(isolate);
+
+// 进入 main.html 的 上下文
+v8::Context::Scope context_scope(main);
+
+// 编译和执行 main.html 对应的 script 
+// ...
+// 当执行 iframe.contentWindow.func 时，C++ 中的 V8 会对 contentWindow 属性进行拦截 
+// 类似于 Vue 中的数据劫持
+
+// 拦截属性后进行 Context 切换，切换到 iframe.html 对应的 Context
+// Context 是一个栈式结构的存储方式，此时栈顶是 iframe.html 对应的 Context
+
+v8::Context::Scope context_scope(iframe);
+
+// iframe.contentWindow 执行完毕后，将 iframe.html 对应的 Context 推出栈顶
+// 此时栈顶是 main.html 对应的 Context
+~~~
+::: tip
+温馨提示：关于 `V8` 中 `C++` 代码对 `JavaScript` 属性拦截的操作可以查看 `Interceptors`。想详细了解更多关于 `Web` 应用的全局上下文隔离细节，可以阅读课程`原理进阶：V8 的概念说明`。
+:::
+
+### 微应用的 JS 隔离思想
 
 
 
