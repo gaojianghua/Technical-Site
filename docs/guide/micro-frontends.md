@@ -3297,14 +3297,36 @@ v8::Context::Scope context_scope(iframe);
 :::
 
 ### 微应用的 JS 隔离思想
+通过 `V8` 隔离的演示说明，可以发现在 `iframe` 方案中，由于 `V8 Context` 的不同，可以做到标签页应用和 `iframe` 应用之间的全局执行上下文隔离，而之前所说的 `NPM` 方案、动态 `Script` 方案以及 `Web Components` 方案，由于各个聚合的微应用处于同一个 `Renderer` 进程的主渲染线程，并且处于同一个 `V8 Isolate` 实例下的同一个 `Context` 中，因此无法通过浏览器的默认能力实现全局执行上下文的隔离。
+
+事实上，`V8` 在运行时隔离方面，主要包括了 `Isolate` 隔离和 `Context` 隔离。
+1. `Isolate` 在安全上用于物理空间的隔离，可以防止跨站攻击，有自己的堆内存和垃圾回收器等资源，不同的 `Isolate` 之间的内存和资源相互隔离，它们之间无法共享数据，是非常安全可靠的隔离。
+2. 而 `Context` 隔离是指在同一个 `Isolate` 实例中，可以创建不同的 `Context`，这些 `Context` 有自己的全局变量、函数和对象等，默认情况下不同 `Context` 对应的 `JavaScript` 全局上下文无法访问其他全局上下文。
+
+::: tip
+需要注意，浏览器目前没有提供 `Web API` 来直接创建新的 `Isolate` 或者 `Context` 隔离 `JavaScript` 运行环境，因此在 SPA 应用中没有直接进行 `JavaScript` 隔离的手段。
+:::
+
+在浏览器中可以通过一些额外功能来实现 `JS` 的隔离运行，例如：
+- 使用 `WebAssembly` 进行隔离，`WebAssembly` 会被限制运行在一个安全的沙箱执行环境中
+- 使用 `Web Worker` 进行隔离，每个 `Worker` 有自己独立的 `Isolate` 实例
+- 创建 `iframe` 进行 `Isolate` 或者 `Context` （同一个 `Renderer` 进程）隔离
+
+上述所列举的隔离手段，本质上是利用了浏览器自身的功能特性间接来实现 `JS` 的运行环境隔离。由于是通过浏览器功能间接实现 `JS` 隔离，会受到功能本身的环境特性约束，例如在 `WebAssembly` 运行时不能直接调用 `Web API`，而 `Web Worker` 运行时只能使用部分 `Web API（XMLHttpRequest 和 Web Workers API）`。微应用的 `JS` 本身是为了在 `Renderer` 进程的主线程的 `V8 Isolate` 实例中运行，需要具备完整的 `Web API` 调用能力，这使得 `Web` 微应用需要被隔离的 `JS` 很难运行在这些受到约束的环境中。
+
+当然社区也给出了一些不完美的隔离方案，例如：
+- 如果需要使用 `WebAssembly` 进行隔离，需要进行 `Web API` 的桥接和隔离工作，并且为了可以将三方的 `JS` 运行在 `WebAssembly` 的隔离环境中，需要在该环境中提供解释执行 `JS` 的引擎，例如 `QuickJS`、`Duktape`
+- 如果需要使用 `Web Worker` 进行隔离，需要实现 `Web` 应用所在的 `Renderer` 执行环境和 `Web Worker` 环境的异步通信能力，从而解决无法在 `Web Worker` 环境中调用完整的 `Web API` 短板，例如 `react-worker-dom`
+
+::: tip
+由于微前端中的微应用需要具备 `Renderer` 进程 `UI` 主线程的全部运行环境，因此在后续课程中会重点讲解使用 `iframe` 进行 `JS` 隔离的方案，除此之外，也会在框架源码分析的课程中简单讲解社区框架中的 `JS` 不完全隔离方案（在同一个 `Context` 中通过 `JS` 特性实现隔离）。
+:::
 
 
+## 框架原理:iframe 隔离
+在 `V8` 隔离中我们知道了 `Isolate` 以及 `Context` 的概念，这也是 `V8` 实现 `JS` 执行上下文隔离的重要能力。接下来我们主要了解如何利用 `iframe` 实现在 `SPA` 模式下的 `Context` 隔离思路，从而帮助大家更好的理解 `JS` 隔离。
 
-
-
-
-
-
+### 隔离思路
 
 
 
