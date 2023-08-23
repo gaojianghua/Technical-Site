@@ -3327,10 +3327,783 @@ v8::Context::Scope context_scope(iframe);
 在 `V8` 隔离中我们知道了 `Isolate` 以及 `Context` 的概念，这也是 `V8` 实现 `JS` 执行上下文隔离的重要能力。接下来我们主要了解如何利用 `iframe` 实现在 `SPA` 模式下的 `Context` 隔离思路，从而帮助大家更好的理解 `JS` 隔离。
 
 ### 隔离思路
+在动态 `Script` 方案中，我们发现在同一个全局执行上下文加载不同微应用的 `JS` 进行执行时，由于没有隔离措施，很容易导致微应用产生 `JS` 运行时冲突。
 
+在 `V8` 的隔离中我们了解到可以通过创建不同的 `Isolate` 或者 `Context` 对 `JS` 代码进行上下文隔离处理，但是这种能力没有直接开放给浏览器，因此我们无法直接利用 `Web API` 在动态 `Script` 方案中实现微应用的 `JS` 隔离。
 
+同时我们了解到在浏览器中创建 `iframe` 时会创建相应的全局执行上下文栈，用于切换主应用和 `iframe` 应用的全局执行上下文环境，因此可以通过在应用框架中创建空白的 `iframe` 来隔离微应用的 `JS` 运行环境。
 
+为此，我们大致可以做如下几个阶段的隔离尝试：
+- 阶段一：加载空白的 `iframe` 应用，例如 `src="about:blank"`，生成新的微应用执行环境
+  - 解决全局执行上下文隔离问题
+  - 解决加载 `iframe` 的白屏体验问题
 
+- 阶段二：加载同源的 `iframe` 应用，返回空的内容，生成新的微应用执行环境
+  - 解决全局执行上下文隔离问题
+  - 解决加载 `iframe` 的白屏体验问题
+  - 解决数据状态同步问题
+  - 解决前进后退问题
+
+接下来将实现上述两个阶段的隔离能力。
+
+### 阶段一：空白页隔离
+在动态 `Script` 方案中，微应用的 `JS` 运行在主应用的 `Renderer UI` 线程中（通过 `Script` 标签进行加载执行），这会导致微应用和主应用共享**一个 JS 执行环境**而产生**全局属性冲突**。
+
+为了解决冲突问题，当时采用了立即执行的匿名函数来创建各自执行的作用域，但是没有在本质上隔离全局执行上下文（**例如原型链**），接下来我们重新设计一个 `iframe` 隔离方案，使微应用和主应用彼此可以真正隔离 `JS` 的运行环境。具体方案如下所示：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/d172ebbed9464e49a1d7f2c39f5e935a~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+大致实现的思路如下所示：
+- 通过请求获取后端的微应用列表数据，动态创建主导航
+- 根据导航切换微应用，切换时会跨域请求微应用 `JS` 的文本内容并进行缓存处理
+- 微应用的 `JS` 会在 `iframe` 环境中通过 `Script` 标签进行隔离执行
+
+导航的两个按钮（微应用导航）根据后端数据动态渲染，点击按钮后会跨域请求微应用的 `JS` 静态资源并创建空白的 `iframe` 进行隔离执行
+
+文件的结构目录如下所示：
+~~~shell
+├── public                  # 托管的静态资源目录
+│   ├── main/               # 主应用资源目录                        
+│   │   └── index.html                                        
+│   └── micro/              # 微应用资源目录
+│        ├── micro1.js        
+│        └── micro2.js      
+├── config.js               # 公共配置
+├── main-server.js          # 主应用服务
+└── micro-server.js         # 微应用服务
+~~~
+`iframe` 隔离中获取微应用 `JS` 进行执行的方式和动态 `Script` 的方案存在差异
+- 在动态 `Script` 的方案中利用浏览器内置的 `<script>` 标签进行请求和执行，天然支持跨域。
+- 而在 `iframe` 隔离中需要通过 `Ajax` 的形式获取 `JS` 文件进行手动隔离执行。
+  
+由于微应用和主应用跨域，因此需要微应用的服务支持跨域请求，具体如下所示：
+~~~ts
+// micro-server.js
+import express from "express";
+import morgan from "morgan";
+import path from "path";
+import config from "./config.js";
+const app = express();
+
+const { port, host } = config;
+
+// 打印请求日志
+app.use(morgan("dev"));
+
+// 设置支持跨域请求头（也可以使用 cors 中间件）
+// 这里设置了所有请求的跨域支持，也可以单独对 express.static 设置跨域响应头
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", '*');
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.header("Allow", "GET, POST, OPTIONS");
+  next();
+});
+
+app.use(
+  express.static(path.join("public", "micro"))
+);
+
+// 启动 Node 服务
+app.listen(port.micro, host);
+console.log(`server start at http://${host}:${port.main}/`);
+~~~
+在动态 `Script` 的微应用设计中，必须通过立即执行的匿名函数进行作用域隔离，为了验证 `iframe` 隔离的效果，这里把立即执行的匿名函数去除：
+~~~ts
+// public/micro/micro1.js
+let root;
+root = document.createElement("h1");
+root.textContent = "微应用1";
+document.body.appendChild(root);
+
+// public/micro/micro2.js
+let root;
+root = document.createElement("h1");
+root.textContent = "微应用2";
+document.body.appendChild(root);
+~~~
+如果是在动态 `Script` 的方案下，上述 `micro1.js` 和 `micro2.js` 由于都是在主应用的全局执行上下文中执行，会产生属性命令冲突。这里通过空白的 `iframe` 来建立完整的隔离执行环境，具体实现如下所示：
+~~~html
+<!-- public/main/index.html -->
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Document</title>
+  </head>
+
+  <body>
+    <h1>Hello，Sandbox Script!</h1>
+
+    <!-- 主应用导航 -->
+    <div id="nav"></div>
+
+    <!-- 主应用内容区 -->
+    <div id="container"></div>
+
+    <script type="text/javascript">
+      // 隔离类
+      class MicroAppSandbox {
+        // 配置信息
+        options = null;
+        // iframe 实例
+        iframe = null;
+        // iframe 的 Window 实例
+        iframeWindow = null;
+        // 是否执行过 JS
+        exec = false;
+
+        constructor(options) {
+          this.options = options;
+          // 创建 iframe 时浏览器会创建新的全局执行上下文，用于隔离主应用的全局执行上下文
+          this.iframe = this.createIframe();
+          this.iframeWindow = this.iframe.contentWindow;
+        }
+
+        createIframe() {
+          const { rootElm, id, url } = this.options;
+          const iframe = window.document.createElement("iframe");
+          // 创建一个空白的 iframe
+          const attrs = {
+            src: "about:blank",
+            "app-id": id,
+            "app-src": url,
+            style: "border:none;width:100%;height:100%;",
+          };
+          Object.keys(attrs).forEach((name) => {
+            iframe.setAttribute(name, attrs[name]);
+          });
+          rootElm?.appendChild(iframe);
+          return iframe;
+        }
+
+        // 激活
+        active() {
+          this.iframe.style.display = "block";
+          // 如果已经通过 Script 加载并执行过 JS，则无需重新加载处理
+          if(this.exec) return;
+          this.exec = true;
+          const scriptElement = this.iframeWindow.document.createElement('script');
+          scriptElement.textContent = this.options.scriptText;
+          this.iframeWindow.document.head.appendChild(scriptElement);
+        }
+
+        // 失活
+        // INFO: JS 加载以后无法通过移除 Script 标签去除执行状态
+        // INFO: 因此这里不是指代失活 JS，如果是真正想要失活 JS，需要销毁 iframe 后重新加载 Script
+        inactive() {
+          this.iframe.style.display = "none";
+        }
+
+        // 销毁隔离实例
+        destroy() {
+          this.options = null;
+          this.exec = false;
+          if(this.iframe) {
+            this.iframe.parentNode?.removeChild(this.iframe);
+          }
+          this.iframe = null;
+        }
+      }
+
+      // 微应用管理
+      class MicroApp {
+        // 缓存微应用的脚本文本（这里假设只有一个执行脚本）
+        scriptText = "";
+        // 隔离实例
+        sandbox = null;
+        // 微应用挂载的根节点
+        rootElm = null;
+
+        constructor(rootElm, app) {
+          this.rootElm = rootElm;
+          this.app = app;
+        }
+
+        // 获取 JS 文本（微应用服务需要支持跨域请求获取 JS 文件）
+        async fetchScript(src) {
+          try {
+            const res = await window.fetch(src);
+            return await res.text();
+          } catch (err) {
+            console.error(err);
+          }
+        }
+
+        // 激活
+        async active() {
+          // 缓存资源处理
+          if (!this.scriptText) {
+            this.scriptText = await this.fetchScript(this.app.script);
+          }
+
+          // 如果没有创建隔离实例，则实时创建
+          // 需要注意只给激活的微应用创建 iframe 隔离，因为创建 iframe 会产生内存损耗
+          if (!this.sandbox) {
+            this.sandbox = new MicroAppSandbox({
+              rootElm: this.rootElm,
+              scriptText: this.scriptText,
+              url: this.app.script,
+              id: this.app.id,
+            });
+          }
+
+          this.sandbox.active();
+        }
+
+        // 失活
+        inactive() {
+          this.sandbox?.inactive();
+        }
+      }
+
+      // 微前端管理
+      class MicroApps {
+        // 微应用实例映射表
+        appsMap = new Map();
+        // 微应用挂载的根节点信息
+        rootElm = null;
+
+        constructor(rootElm, apps) {
+          this.rootElm = rootElm;
+          this.setAppMaps(apps);
+        }
+
+        setAppMaps(apps) {
+          apps.forEach((app) => {
+            this.appsMap.set(app.id, new MicroApp(this.rootElm, app));
+          });
+        }
+
+        // TODO: prefetch 微应用
+        prefetchApps() {}
+
+        // 激活微应用
+        activeApp(id) {
+          const app = this.appsMap.get(id);
+          app?.active();
+        }
+
+        // 失活微应用
+        inactiveApp(id) {
+          const app = this.appsMap.get(id);
+          app?.inactive();
+        }
+      }
+
+      // 主应用管理
+      class MainApp {
+        microApps = [];
+        microAppsManager = null;
+
+        constructor() {
+          this.init();
+        }
+
+        async init() {
+          this.microApps = await this.fetchMicroApps();
+          this.createNav();
+          this.navClickListener();
+          this.hashChangeListener();
+          // 创建微前端管理实例
+          this.microAppsManager = new MicroApps(
+            document.getElementById("container"),
+            this.microApps
+          );
+        }
+
+        // 从主应用服务器获请求微应用列表信息
+        async fetchMicroApps() {
+          try {
+            const res = await window.fetch("/microapps", {
+              method: "post",
+            });
+            return await res.json();
+          } catch (err) {
+            console.error(err);
+          }
+        }
+
+        // 根据微应用列表创建主导航
+        createNav(microApps) {
+          const fragment = new DocumentFragment();
+          this.microApps?.forEach((microApp) => {
+            // TODO: APP 数据规范检测 (例如是否有 script）
+            const button = document.createElement("button");
+            button.textContent = microApp.name;
+            button.id = microApp.id;
+            fragment.appendChild(button);
+          });
+          nav.appendChild(fragment);
+        }
+
+        // 导航点击的监听事件
+        navClickListener() {
+          const nav = document.getElementById("nav");
+          nav.addEventListener("click", (e) => {
+            // 并不是只有 button 可以触发导航变更，例如 a 标签也可以，因此这里不直接处理微应用切换，只是改变 Hash 地址
+            // 不会触发刷新，类似于框架的 Hash 路由
+            window.location.hash = event?.target?.id;
+          });
+        }
+
+        // hash 路由变化的监听事件
+        hashChangeListener() {
+          // 监听 Hash 路由的变化，切换微应用（这里设定一个时刻只能切换一个微应用）
+          window.addEventListener("hashchange", () => {
+            this.microApps?.forEach(async ({ id }) => {
+              id === window.location.hash.replace("#", "")
+                ? this.microAppsManager.activeApp(id)
+                : this.microAppsManager.inactiveApp(id);
+            });
+          });
+        }
+      }
+
+      new MainApp();
+    </script>
+  </body>
+</html>
+~~~
+上述示例中主要设计了几个类，具体的功能如下所示：
+- **MainApp**：负责管理主应用，包括获取微应用列表、创建微应用的导航、切换微应用
+- **MicroApps**：负责维护微应用列表，包括预加载、添加和删除微应用等
+- **MicroApp**：负责维护微应用，包括请求和缓存静态资源、激活微应用、状态管理等
+- **MicroAppSandbox**：负责维护微应用隔离，包括创建、激活和销毁隔离实例等
+
+**使用该隔离方案不仅仅可以解决动态 Script 方案无法解决的全局执行上下文隔离问题（包括 CSS 隔离），还可以通过空闲时间预获取微应用的静态资源来加速 iframe 内容的渲染，从而解决原生 iframe 产生的白屏体验问题。** 除此之外，使用 `src=about:blank` 会使当前 `iframe` 继承父浏览上下文的源，从而会遵循同源策略：
+~~~ts
+// iframe src: about:blank 
+// 嵌入一个遵从同源策略的空白页：https://developer.mozilla.org/zh-CN/docs/Web/HTML/Element/iframe
+// 源的继承：在页面中通过 about:blank 或 javascript: URL 执行的脚本会继承打开该 URL 的文档的源，因为这些类型的 URL 没有包含源服务器的相关信息：https://developer.mozilla.org/zh-CN/docs/Web/Security/Same-origin_policy#%E6%BA%90%E7%9A%84%E7%BB%A7%E6%89%BF
+console.log(window.document.domain === window.parent.document.domain);  // true
+~~~
+因此在 `iframe` 中可以像动态 `Script` 脚本一样发起 `Ajax` 请求，例如：
+~~~ts
+// 可以请求主应用服务所在的接口，因为继承了主应用的源
+var oReq = new XMLHttpRequest();
+oReq.addEventListener("load", reqListener);
+oReq.open("POST", "/microapps");
+oReq.send();
+function reqListener() {
+  console.log(this.responseText);
+}
+~~~
+需要注意，将 `iframe` 设置成 `src=about:blank` 会产生一些限制，例如在 `Vue` 中使用 `Vue-Router` 时底层框架源码会用到 `history.pushState` 或者 `history.replaceState`，此时会因为 `about:blank` 而导致 `iframe` 无法正常运行，例如：
+~~~ts
+// 在微应用的 micro1.js 中运行如下代码会 产生 history 报错
+window.history.pushState({ key: "hello" }, "", "/test");
+~~~
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/3546608134.png)
+
+使用 `history` 更改 `URL` 时可以保持页面无刷（不会发起服务请求，除非手动刷新页面），但是必须使新的 `URL` 和当前 `URL` 同源，否则就会抛出上述异常。此时很多同学可能会联想到 `SPA` 应用的路由，在 `Vue` 或者 `React` 框架中，路由可以分为 `hash` 模式或者 `history` `模式，hash` 模式本质使用 `window.location.hash` 进行处理，而 `history` 模式本质使用 `history.pushState` 或者 `history.replaceState` 进行处理。如果使用路由模式在空白的 `iframe` 中运行，会使得框架出错。
+
+### 阶段二：同源 iframe 隔离
+使用 `about:blank` 会导致 `history` 无法正常工作，因此可以在空白页的基础上进行改造，例如在主应用的服务中提供一个空白的 `HTML` 页面，可用于 `iframe` 的请求加载，从而保持和主应用完全同域。具体方案如下所示：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/0feba6f1a3774b78a539d440f5c0ed67~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+大致实现的思路如下所示：
+- 通过请求获取后端的微应用列表数据，动态创建主导航
+- 根据导航切换微应用，切换时会跨域请求微应用 `JS` 的文本内容并进行缓存处理
+- 切换微应用的同时创建一个同域的 `iframe` 应用，请求主应用下空白的 `HTML` 进行渲染
+- `DOM` 渲染完成后，微应用的 `JS` 会在 `iframe` 环境中通过 `Script` 标签进行隔离执行
+
+导航的两个按钮（微应用导航）根据后端数据动态渲染，点击按钮后会跨域请求微应用的 `JS` 静态资源并创建同域的 `iframe` 进行隔离执行
+
+文件的结构目录如下所示：
+~~~shell
+├── public                  # 托管的静态资源目录
+│   ├── main/               # 主应用资源目录      
+│   │   ├── blank.html      # 用于 iframe 应用进行空白页渲染                          
+│   │   └── index.html                                        
+│   └── micro/              # 微应用资源目录
+│        ├── micro1.js        
+│        └── micro2.js      
+├── config.js               # 公共配置
+├── main-server.js          # 主应用服务
+└── micro-server.js         # 微应用服务
+~~~
+相对于空白页隔离，`iframe` 同源隔离需要在主应用中提供一个空白的 `HTML` 页面，从而可以使 `iframe` 和主应用完全同域，具体的改动主要是 `MicroAppSandbox` 类：
+~~~ts
+  // 隔离类
+  class MicroAppSandbox {
+    // 配置信息
+    options = null;
+    // iframe 实例
+    iframe = null;
+    // iframe 的 Window 实例
+    iframeWindow = null;
+    // 是否执行过 JS
+    exec = false;
+    // iframe 加载延迟执行标识
+    iframeLoadDeferred = null;
+
+    constructor(options) {
+      this.options = options;
+      // 创建 iframe 时浏览器会创建新的全局执行上下文，用于隔离主应用的全局执行上下文
+      this.iframe = this.createIframe();
+      this.iframeWindow = this.iframe.contentWindow;
+      this.iframeLoadDeferred = this.deferred();
+      this.iframeWindow.onload = () => {
+        // 用于等待 iframe 加载完成
+        this.iframeLoadDeferred.resolve();
+      };
+    }
+
+    deferred() {
+      const deferred = Object.create({});
+      deferred.promise = new Promise((resolve, reject) => {
+        deferred.resolve = resolve;
+        deferred.reject = reject;
+      });
+      return deferred;
+    }
+
+    createIframe() {
+      const { rootElm, id, url } = this.options;
+      const iframe = window.document.createElement("iframe");
+      const attrs = {
+        // 请求主应用服务下的 blank.html（保持和主应用同源）
+        src: "blank.html",
+        "app-id": id,
+        "app-src": url,
+        style: "border:none;width:100%;height:100%;",
+      };
+      Object.keys(attrs).forEach((name) => {
+        iframe.setAttribute(name, attrs[name]);
+      });
+      rootElm?.appendChild(iframe);
+      return iframe;
+    }
+
+    // 激活
+    async active() {
+      this.iframe.style.display = "block";
+      // 如果已经通过 Script 加载并执行过 JS，则无需重新加载处理
+      if (this.exec) return;
+      // 延迟等待 iframe 加载完成（这里会有 HTML 请求的性能损耗，可以进行优化处理）
+      await this.iframeLoadDeferred.promise;
+      this.exec = true;
+      const scriptElement =
+        this.iframeWindow.document.createElement("script");
+      scriptElement.textContent = this.options.scriptText;
+      this.iframeWindow.document.head.appendChild(scriptElement);
+    }
+
+    // 失活
+    // INFO: JS 加载以后无法通过移除 Script 标签去除执行状态
+    // INFO: 因此这里不是指代失活 JS，如果是真正想要失活 JS，需要销毁 iframe 后重新加载 Script
+    inactive() {
+      this.iframe.style.display = "none";
+    }
+
+    // 销毁
+    destroy() {
+      this.options = null;
+      this.exec = false;
+      if (this.iframe) {
+        this.iframe.parentNode?.removeChild(this.iframe);
+      }
+      this.iframe = null;
+      this.iframeWindow = null;
+    }
+  }
+~~~
+此时由于和主应用完全同源，在微应用的 `Vue` 或者 `React` 中使用路由调用 `history` 不会存在异常问题，并且浏览器的前进和后退按钮都可以正常工作。
+
+至此 `iframe` 隔离的基本功能已经完成，需要注意该隔离示例只是用于理解隔离的简单示例，真正在生产环境使用时，还需要考虑如下设计：
+- 主应用刷新时，`iframe` 微应用无法保持自身 `URL` 的状态
+- 主应用和 `iframe` 微应用处于不同的浏览上下文，无法使 `iframe` 中的模态框 `Modal` 相对于主应用居中
+- 主子应用的通信处理以及持久化数据的隔离处理
+- 解决主应用空白 `HTML` 请求的性能优化处理（例如 `GET` 请求空内容、请求渲染时中断请求等）
+
+::: tip
+温馨提示：关于模态框居中的问题，如果主应用本身只是一层壳子，只包含了应用顶部和左侧菜单信息，微应用渲染的区域占据了主要的空间，那么模态框居中的问题可以被忽略。当然，如果要使的微应用中的模态框完全居中，可以在微应用中对模态框的位置进行调整，从而适配成相对于主应用进行居中展示。
+:::
+需要注意，采用 `iframe` 隔离和之前讲解的 `iframe` 方案是有差异的，具体优势在于：
+- 可以持续优化白屏体验
+- 可以实现 URL 状态同步
+- 可以额外处理浏览上下文隔离
+- 同域带来的便利性（应用免登、数据共享、通信等）
+
+感兴趣的同学可以在隔离示例的基础上进行设计，上述未完成的设计可以根据业务的需求进行不同方案的设计考虑。以模态框无法居中的情况为例，可以在已有模态框组件的基础上进行再次封装，从而使其可以适配隔离方案相对于主应用居中。当然如果想要真正实现天然居中，也可以考虑在 `iframe` 外进行 `DOM` 渲染（感兴趣的同学可以思考一下大致的实现思路），从而保持和主应用完全一致的 `DOM` 环境，当然此种方案还需要额外考虑 `CSS` 的隔离问题，如果不是为了实现非常通用的微前端框架，个人觉得会有一些得不偿失的感觉。
+
+## 框架原理：iframe + Proxy 隔离
+上一节我们了解了 `src = about:blank` 的 `iframe` 隔离和同源的 `iframe` 隔离，后者需要服务端提供空白页或者服务接口才能实现，并且请求本身也会产生性能损耗，如果能够解决前者隔离的 `history` 运行问题，那么可以减少服务接口和网络请求，从而达到隔离效果。本课程会重点讲解如何解决 `src = about:blank` 的 `iframe` 隔离的运行问题。
+
+### 隔离思路
+在 `iframe` 中可以创建新的全局执行上下文从而和主应用彻底隔离，因此我们可以将 `iframe` 创建的 `window` 对象作为微应用的全局对象，从而实现应用之间 `JS` 的彻底隔离，但是在之前的 `iframe` 隔离设计中还存在以下问题没有解决：
+- `src = about:blank` 的 `iframe` 隔离的 `history` 无法正常工作，框架的路由功能丢失
+- 虽然 `DOM` 环境天然隔离，却无法使得 `iframe` 中的 `Modal` 相对于主应用居中
+- 主应用和微应用的 `URL` 状态没有同步
+
+同源的 `iframe` 方案虽然能解决 `history` 运行的问题，但是需要主应用额外提供服务接口，对于框架设计而言并不是特别通用（如果业务本身能够支持，那么这种方案是非常不错的选择）。我们可以换个方式思考一下，是否可以将 `src = about:blank` 的 `iframe` 隔离的 `history` 使用主应用的 `history` 代替运行，这样带来的好处如下：
+- 不同微应用可以拥有各自 `iframe` 对应的全局上下文执行环境，可以实现 `JS` 的彻底隔离
+- 使用主应用的 `history`，`iframe` 可以设置成 `src = about:blank`，不会产生运行时错误
+- 使用主应用的 `history，未来可以处理主应用和微应用的历史会话同步问题`
+
+为了实现上述思路，可以使用 `Proxy` 对 `iframe` 的 `window` 对象进行拦截处理，如下所示：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/69730bd61316495ab5c9b511c2c1425d~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+::: tip
+温馨提示：真正要实现会话同步还需要考虑主子应用之间的路由冲突问题。
+
+除此之外，如果要实现 `iframe` 中的模态框相对于主应用进行居中，可以在设计时将微应用的 `document` 代理成主应用 `document`，并且将需要渲染的微应用内容放在主应用的 `DOM` 环境中。当然这种方式解除了 `iframe` 中 `DOM` 天然隔离的限制，并且可以使得微应用任意修改主应用的 `DOM` 环境，而且还需要额外处理 `DOM` 的副作用（例如移除微应用时需要清空相应的 `DOM` 事件）以及 `CSS` 隔离问题，如果考虑不够完善，很容易产生意想不到的 `Bug`。
+:::
+为了实现该代理功能，接下来需要额外了解一些 `JavaScript` 的语言特性，从而帮助大家更好的理解方案设计。
+
+### Proxy 代理
+`Proxy` 可以对需要访问的对象进行拦截，并可以通过拦截函数对返回值进行修改，这种特性可以使我们在微应用中访问 `window` 对象的属性时，返回定制化的属性值，例如：
+~~~ts
+const iframe = document.createElement("iframe");
+// 设置成 about:blank 后和主应用同源
+iframe.src = "about:blank";
+// 这里只用于演示 JS 运行，暂时不考虑加载微应用的 DOM，可以隐藏 iframe 处理
+iframe.style = "display: none";
+document.body.appendChild(iframe);
+
+// iframe.contentWindow： iframe 的 window 对象
+iframe.contentWindow.proxy = new Proxy(iframe.contentWindow, {
+  get: (target, prop) => {
+    console.log("[proxy get 执行] 拦截的 prop: ", prop);
+    // 访问微应用的 window.history 时，返回主应用的 history
+    if (prop === "history") {
+      return window[prop];
+    }
+    // target 是被代理的 iframe.contentWindow
+    // 除了 history，其余都返回 iframe 上 window 的属性值
+    return target[prop];
+  },
+
+  set: (target, prop, value) => {
+    console.log("[proxy set 执行] 拦截的 prop: ", prop);
+    target[prop] = value;
+  },
+});
+
+function execMicroCode() {
+  // microCode 可以视为通过请求获取的微应用的 JS 脚本文本（不包括立即执行的匿名函数）
+  // 在微应用中执行的 window，就是主应用中执行的 iframe.contentWindow
+  // window.proxy 指的是已经设置了代理的 iframe.contentWindow.proxy
+  const microCode = `(function(window){
+
+  // 在立即执行的匿名函数中 window.proxy 作为形参被传入
+  // 内部使用的 window 本质上是 iframe.contentWindow 的代理对象
+  // 任何 window 属性访问和设置都会触发 Proxy 的 get 和 set 拦截行为
+  
+  // 访问 window.a 触发 Proxy 的 get，本质上读取的是 iframe.contentWindow 的 a 属性值
+  // 打印信息 
+  // [proxy get 执行] 拦截的 prop:  a
+  // [微应用执行] window.a:  undefined
+  console.log('[微应用执行] window.a: ', window.a);
+  
+  // 访问 window.history 触发 Proxy 的 get，本质上读取的是主应用的 history 对象
+  // 访问 window.parent 触发 Proxy 的 get，本质上读取的是微应用的 iframe.contentWindow.parent 对象
+  // 打印信息 
+  // [proxy get 执行] 拦截的 prop:  history
+  // [proxy get 执行] 拦截的 prop:  parent
+  // [微应用执行] 是否是主应用的 history： true
+  console.log('[微应用执行] 是否是主应用的 history：', window.history === window.parent.history);
+  
+  // 访问 window.history 触发 Proxy 的 get，本质上读取的是主应用的 history 对象
+  // 打印信息 
+  // [proxy get 执行] 拦截的 prop:  history
+  window.history.pushState({}, '', '/micro');
+  
+  // 设置 window.a 触发 Proxy 的 set，本质上设置的是 iframe.contentWindow 的 a 属性值
+  // 打印信息 
+  // [proxy set 执行] 拦截的 prop:  a
+  window.a = 2;
+  
+  // 访问 window.a 触发 Proxy 的 get，本质上读取的是 iframe.contentWindow 的 a 属性值
+  // 打印信息 
+  // [proxy get 执行] 拦截的 prop:  a
+  // [微应用执行] window.a:  2
+  console.log('[微应用执行] window.a: ', window.a);
+
+})(window.proxy)`;
+
+  const scriptElement =
+    iframe.contentWindow.document.createElement("script");
+  scriptElement.textContent = microCode;
+  // 添加内嵌的 script 元素时会自动触发 JS 的解析和执行
+  iframe.contentWindow.document.head.appendChild(scriptElement);
+}
+
+// 主应用的 window.a 设置为 1
+window.a = 1;
+
+// 执行微应用的代码，此时微应用中的 window 使用了 iframe 的 window 进行代理，不会受到主应用的 window 影响
+execMicroCode();
+
+// 主应用的 window 不会受到微应用的影响，输出为 1
+// 控制台打印信息 [主应用执行] window.a:  1
+console.log('[主应用执行] window.a: ', window.a);
+~~~
+::: tip
+温馨提示：这里立即执行的匿名函数本质上不是为了隔离微应用的执行作用域，因为微应用都运行在 `iframe` 中，已经天然做到了完全隔离，这里的作用是为了通过传入形参的方式改变内部使用的 `window` 变量。
+:::
+从下图打印的信息可以可以发现， `history` 被正确的进行了代理，并且主应用和微应用由于使用了不同的全局执行上下文，形成了非常彻底的隔离效果：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/b64128270d304e23800ab34d34a3e63b~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+::: tip
+温馨提示：从红框部分可以发现，尽管 `iframe` 设置成了 `src=about:blank`，但是由于微应用使用了主应用的 `history` 执行，使得主应用的 `URL` 发生了变化。这里只是演示了主子应用共用 `history` 的情况，真正在设计时还需要考虑处理主子应用以及子应用之间在使用 `Vue` 或者 `React` 框架时的路由嵌套以及冲突问题。
+:::
+在 `iframe` 隔离中我们知道设置 `src=about:blank` 会使得 `history` 无法正常工作，例如修改上述示例：
+~~~ts
+function execMicroCode() {
+  
+  const microCode = `(function(window){
+
+      // 省略微应用执行的代码
+
+   // window 指的是 iframe.contentWindow，注意传入的参数不是 winwow.proxy
+   })(window)`;
+}
+~~~
+如果不使用 `Proxy` 进行代理，那么 `window.history` 访问的是 `iframe` 的 `history`，此时页面会无法正常工作：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/7f18c1c432524e9c999735931325c9d2~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+需要注意以下场景无法被 `Proxy` 的 `set` 拦截，通过 `get` 拦截获取属性值时部分场景无法达到预期的效果：
+~~~ts
+function execMicroCode() {
+    
+  // 注意传入了第二个参数 contentWindow，这是没有被代理的 iframe 的 window 对象
+  const microCode = `(function(window, contentWindow){
+
+    // 没有触发 Proxy 的 set 函数，由于在立即执行的匿名函数中执行 var，此时不是全局变量
+    var a = 2;
+    
+    // 触发 Proxy 的 get
+    // 打印信息 
+    // [proxy get 执行] 拦截的 prop:  a
+    // [微应用执行] window.a:  undefined
+    console.log('[微应用执行] window.a: ', window.a);
+    
+    // 没有触发 Proxy 的 set 函数，因为 this 指代的是没有被代理的 iframe 的 window 对象
+    this.a = 2;
+    
+    // 打印信息 
+    // [proxy get 执行] 拦截的 prop:  parent
+    // [微应用执行] this 是否是主应用的 window:  false
+    console.log('[微应用执行] this 是否是主应用的 window: ', this === window.parent);
+    
+    // 打印信息 
+    // [微应用执行] this 是否是子应用的 window:  true
+    console.log('[微应用执行] this 是否是子应用的 window: ', this === contentWindow);
+    
+    // 打印信息 
+    // [proxy get 执行] 拦截的 prop:  a
+    // [微应用执行] window.a:  2
+    console.log('[微应用执行] window.a: ', window.a);
+    
+    // 没有触发 Proxy 的 set 函数，因为属性挂载在没有被代理的 iframe 的 window 对象
+    b = 2;
+    
+    // 打印信息 
+    // [proxy get 执行] 拦截的 prop:  b
+    // [微应用执行] window.b:  2
+    console.log('[微应用执行] window.b: ', window.b);
+    
+    })(window.proxy, window)`;
+
+  const scriptElement =
+    iframe.contentWindow.document.createElement("script");
+  scriptElement.textContent = microCode;
+  // 添加内嵌的 script 元素时会自动触发 JS 的解析和执行
+  iframe.contentWindow.document.head.appendChild(scriptElement);
+}
+
+// 省略其余代码
+
+// 控制台打印信息 [主应用执行] window.a:  1
+console.log('[主应用执行] window.a: ', window.a);
+// 控制台打印信息 [主应用执行] window.b:  undefined
+console.log('[主应用执行] window.b: ', window.b);
+~~~
+从下图打印的信息可以可以发现， 在立即执行匿名函数中的 `var` 声明没有被拦截，这和微应用独立运行的结果不一致。而 `this` 赋值和未限定标识符变量时，可以正确设置 `window` 属性，但是没有通过 `Proxy` 代理，因为赋值行为不是发生在代理的 `window` 对象上，而是发生在没有被代理的 `window` 对象上：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/64cbfa652ecc404fbc06c5a0c980a50b~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+如果希望 `this` 也可以受到 `Proxy` 代理的管控，那么可以重新绑定 `this` 的指向：
+~~~ts
+function execMicroCode() {
+    
+    // 注意传入了第二个参数 contentWindow，这是没有被代理的 iframe 的 window 对象
+    const microCode = `(function(window, contentWindow){
+      
+      // 打印信息 
+      // [proxy set 执行] 拦截的 prop:  a
+      this.a = 2;
+      
+      // 打印信息 
+      // [proxy get 执行] 拦截的 prop:  parent
+      // this 是否是主应用的 window:  false
+      console.log('[微应用执行] this 是否是主应用的 window: ', this === window.parent);
+      
+      // 打印信息 
+      // [微应用执行] this 是否是子应用的 window:  true
+      console.log('[微应用执行] this 是否是子应用的 window: ', this === contentWindow);
+      
+      // 打印信息 
+      // [proxy get 执行] 拦截的 prop:  proxy
+      // [微应用执行] this 是否是子应用的 window.proxy:  true
+      console.log('[微应用执行] this 是否是子应用的 window.proxy: ', this === window.proxy);
+
+    // 将内部的 this 指向 window 的代理对象
+    }).bind(window.proxy)(window.proxy, window)`;
+  
+    const scriptElement =
+      iframe.contentWindow.document.createElement("script");
+    scriptElement.textContent = microCode;
+    // 添加内嵌的 script 元素时会自动触发 JS 的解析和执行
+    iframe.contentWindow.document.head.appendChild(scriptElement);
+}
+~~~
+因此具备了上述的 `iframe + Proxy` 隔离设计后：
+- 可以解决 `JS` 运行环境的隔离问题，当然除了 `history` 故意不进行隔离
+- 微应用在使用 `var` 时需要挂载在全局对象上的能力缺失
+- 可以解决微应用之间的全局属性隔离问题，包括使用未限定标识符的变量、`this`
+- 使用 `this` 时访问是 `iframe` 的 `window` 代理对象，可以和主应用的 `this` 隔离
+- 可以解决 `iframe` 隔离中无法进行 `history` 操作和同步的问题
+
+::: tip
+温馨提示：可以将 `Proxy` 理解为微应用隔离的逃生窗口，在上述设计中可以将 `history` 理解为隔离的白名单，在后续的设计中需要精细化考虑子应用的 `history` 操作不能对主应用产生额外的影响。
+:::
+
+### Proxy + With
+基于上述的 `Proxy` 示例，我们会发现微应用中的 `var` 在主应用中运行时无法挂载在全局属性上。除此之外，我们单独使用 `history` 而不是 `window.history` 进行访问时也无法进行拦截：
+~~~ts
+ const microCode = `(function(window){
+    // 没有触发 Proxy 的 set 函数，由于在立即执行的匿名函数中执行 var，此时不是全局变量
+    var a = 2;
+    
+    // 触发 Proxy 的 get
+    
+    // 打印信息 
+    // [proxy get 执行] 拦截的 prop:  a
+    // [微应用执行] window.a:  undefined
+    console.log('[微应用执行] window.a: ', window.a);
+    
+    // window.history.pushState({}, '', '/micro');
+    // 如果不使用 window.history，那么无法进行拦截，此时使用的仍然是子应用的 history，执行会报错
+    history.pushState({}, '', '/micro');
+
+})(window.proxy)`;
+~~~
+关于 `history` 的问题解决方案有很多，这里可以列举多种实现方式：
+- 在执行微应用的代码前修改 `contentWindow.history`，使其指向主应用的 `history`
+- 在立即执行的匿名函数中传入第二个形参 `history`，指向 `widnow.proxy.history`
+- 对 `contentWindow.history` 进行单独代理，并传入立即执行的匿名函数
+
+而在函数中声明 `var` 局部变量无法将属性挂载在全局对象上，我们希望微应用独立运行和嵌入主应用运行的行为应该保持一致，为了解决该问题可以使用 `with` 配合 `Proxy` 实现。
 
 
 
