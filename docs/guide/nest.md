@@ -5264,3 +5264,749 @@ async findUserByEmail(email: string) {
     });
 }
 ~~~
+
+## 会议室预订系统
+首先，用户分为普通用户和管理员两种，各自有不同的功能：
+- **普通用户**：可以注册，注册的时候会发邮件来验证身份，注册之后就可以登录系统。
+- **管理员用户**：账号密码是内置的，不需要注册。
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/906d4fbf82004b8d98db97b4fcf85086~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+普通用户可以查看会议室列表、搜索可用会议室、提交预订申请、取消预订、查看预订历史等。
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/9596890a69e44ce7956ad0667e000468~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+普通用户预订成功会邮件通知(注册时的邮箱)，如果管理员一直没审批，可以催办。
+
+管理员可以查看用户列表、冻结用户、会议室列表、搜索会议室、添加/修改/删除会议室、审批预订申请、查看会议室统计信息等。
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/e4d405db23da46e2982f7b4404c2125a~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+整体分为用户管理、会议室管理、预订管理、统计这 4 部分。
+- 如果超过 10 分钟没审批，会发送邮件提醒管理员，如果超过半个小时没审批，会发送短信。
+- 管理员可以解除用户的预订，释放会议室。
+- 冻结用户是指把用户设置为冻结状态，冻结状态的用户不能预订会议室。
+- 统计模块会按照会议室维度和用户维度进行统计，并报表展示。
+
+### 数据库设计
+首先是用户表 `users`：
+
+字段名 | 数据类型 | 描述
+----|------|---
+id | INT | 用户ID
+username | VARCHAR(50) | 用户名
+password | VARCHAR(50) | 密码
+nick_name | VARCHAR(50) | 昵称
+email | VARCHAR(50) | 邮箱
+head_pic | VARCHAR(100) | 头像
+phone_number | VARCHAR(20) | 手机号
+is_frozen | BOOLEAN | 是否被冻结
+is_admin | BOOLEAN | 是否是管理员
+create_time | DATETIME | 创建时间
+update_time | DATETIME | 更新时间
+
+会议室表 `meeting_rooms`：
+
+字段名 | 数据类型 | 描述
+----|------|---
+id | INT | 会议室ID
+name | VARCHAR(50) | 会议室名字
+capacity | INT | 会议室容量
+location | VARCHAR(50) | 会议室位置
+equipment | VARCHAR(50) | 设备
+description | VARCHAR(100) | 描述
+is_booked | BOOLEAN | 是否被预订
+create_time | DATETIME | 创建时间
+update_time | DATETIME | 更新时间
+
+预订表 `bookings`：
+
+字段名 | 数据类型 | 描述
+----|------|---
+id | INT | 预订ID
+user_id | INT | 预订用户ID
+room_id | INT | 会议室ID
+start_time | DATETIME | 会议开始时间
+end_time | DATETIME | 会议结束时间
+status | VARCHAR(20) | 状态（申请中、审批通过、审批驳回、已解除）
+note | VARCHAR(100) | 备注
+create_time | DATETIME | 创建时间
+update_time | DATETIME | 更新时间
+
+预订-参会人表 `booking_attendees`：
+
+字段名 | 数据类型 | 描述
+----|------|---
+id | INT | ID
+user_id | INT | 参会用户ID
+booking_id | INT | 预订ID
+
+表关系图：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/fb13cbbd6dda4c8e95e46aeea52b21c5~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+角色表 `roles`：
+
+字段名 | 数据类型 | 描述
+----|------|---
+id | INT | ID
+name | VARCHAR(20) | 角色名
+
+权限表 `permissions`：
+
+字段名 | 数据类型 | 描述
+----|------|---
+id | INT | ID
+code | VARCHAR(20) | 权限代码
+description | VARCHAR(100) | 权限描述
+
+用户-角色中间表 `user_roles`：
+
+字段名 | 数据类型 | 描述
+----|------|---
+id | INT | ID
+user_id | INT | 用户 ID
+role_id | INT | 角色 ID
+
+角色-权限中间表 `role_permissions`：
+
+字段名 | 数据类型 | 描述
+----|------|---
+id | INT | ID
+role_id | INT | 角色 ID
+permission_id | INT | 权限 ID
+
+表关系图：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/698725b25d9843af8e5f41691830054e~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+### 模块划分
+首先是用户模块，实现普通用户和管理员的登录、注册、信息修改的功能：
+
+接口路径 | 请求方式 | 描述
+-----|------|---
+/user/login | POST | 普通用户登录
+/user/register | POST | 普通用户注册
+/user/update | POST | 普通用户个人信息修改
+/user/update_password | POST | 普通用户修改密码
+/user/admin/login | POST | 管理员登录
+/user/admin/update_password | POST | 管理员修改密码
+/user/admin/update | POST | 管理员个人信息修改
+/user/list | GET | 用户列表
+/user/freeze | GET | 冻结用户
+
+会议室管理模块：
+
+接口路径 | 请求方式 | 描述
+-----|------|---
+/meeting_room/list | GET | 会议室列表
+/meeting_room/delete/:id | DELETE | 会议室删除
+/meeting_room/update/:id | PUT | 会议室更新
+/meeting_room/create | POST | 会议室新增
+/meeting_room/search | GET | 会议室搜索
+
+预订管理模块：
+
+接口路径 | 请求方式 | 描述
+-----|------|---
+/booking/list | GET | 预订列表
+/booking/approve | POST | 审批预订申请
+/booking/add_booking | POST | 申请预订
+/booking/cancel_booking/:id | GET | 取消预订
+/booking/unbind_booking/:id | GET | 解除预订
+/booking/create | POST | 会议室新增
+/booking/search | GET | 会议室搜索
+/booking/history | GET | 预订历史
+/booking/urge | POST | 催办
+
+统计模块：
+
+接口路径 | 请求方式 | 描述
+-----|------|---
+/statistics/meeting_room_usage_frequency | GET | 会议室使用频率统计
+/statistics/user_booking_frequency | GET | 用户预订频率统计
+
+### 角色划分
+权限控制使用 **RBAC** 的方式，有普通用户和管理员两个角色。
+
+### 用户管理模块--用户注册
+新建项目
+~~~shell
+nest new meeting_room_booking_system_backend
+~~~
+安装 `typeorm` 相关的包：
+~~~shell
+npm install --save @nestjs/typeorm typeorm mysql2
+~~~
+在 `AppModule` 引入 `TypeOrmModule`：
+~~~ts
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+
+@Module({
+  imports: [ 
+    TypeOrmModule.forRoot({
+      type: "mysql",
+      host: "localhost",
+      port: 3306,
+      username: "root",
+      password: "guang",
+      database: "meeting_room_booking_system",
+      synchronize: true,
+      logging: true,
+      entities: [],
+      poolSize: 10,
+      connectorPackage: 'mysql2',
+      extra: {
+          authPlugin: 'sha256_password',
+      }
+    }),
+  ],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}
+~~~
+创建这个 `database`：
+~~~sql
+CREATE DATABASE meeting_room_booking_system DEFAULT CHARACTER SET utf8mb4;
+~~~
+先在 `nest-cli.json` 里添加 `generateOptions`，设置 `spec` 为 `false`:
+~~~json
+{
+  "$schema": "https: //json.schemastore.org/nest-cli",
+  "collection": "@nestjs/schematics",
+  "generateOptions":{
+    "spec": false
+  },
+  "sourceRoot": "src",
+  "compilerOptions": {
+    "deleteOutDir": true
+  }
+}
+~~~
+这样生成代码的时候不会生成测试代码，和 `nest g xxx --no-spec` 效果一样
+
+生成 `user` 模块：
+~~~shell
+nest g resource user
+~~~
+添加个 `src/user/entities` 目录，新建 3 个实体 `User`、`Role`、`Permission`。
+~~~ts
+import { Column, CreateDateColumn, Entity, JoinTable, ManyToMany, PrimaryGeneratedColumn, UpdateDateColumn } from "typeorm";
+import { Role } from "./role.entity";
+
+@Entity({
+    name: 'users'
+})
+export class User {
+
+    @PrimaryGeneratedColumn()
+    id: number;
+
+    @Column({
+        length: 50,
+        comment: '用户名'
+    })
+    username: string;
+
+    @Column({
+        length: 50,
+        comment: '密码'
+    })
+    password: string;
+
+    @Column({
+        name: 'nick_name',
+        length: 50,
+        comment: '昵称'
+    })
+    nickName: string;
+
+
+    @Column({
+        comment: '邮箱',
+        length: 50
+    })
+    email: string;
+
+
+    @Column({
+        comment: '头像',
+        length: 100,
+        nullable: true
+    })
+    headPic: string;
+
+    @Column({
+        comment: '手机号',
+        length: 20,
+        nullable: true
+    })
+    phoneNumber: string;
+
+    @Column({
+        comment: '是否冻结',
+        default: false
+    })
+    isFrozen: boolean;
+
+    @Column({
+        comment: '是否是管理员',
+        default: false
+    })
+    isAdmin: boolean;
+
+    @CreateDateColumn()
+    createTime: Date;
+
+    @UpdateDateColumn()
+    updateTime: Date;
+
+    @ManyToMany(() => Role)
+    @JoinTable({
+        name: 'user_roles'
+    })
+    roles: Role[] 
+}
+~~~
+~~~ts
+import { Column, CreateDateColumn, Entity, JoinTable, ManyToMany, PrimaryGeneratedColumn, UpdateDateColumn } from "typeorm";
+import { Permission } from "./permission.entity";
+
+@Entity({
+    name: 'roles'
+})
+export class Role {
+    @PrimaryGeneratedColumn()
+    id: number;
+
+    @Column({
+        length: 20,
+        comment: '角色名'
+    })
+    name: string;
+
+    @ManyToMany(() => Permission)
+    @JoinTable({
+        name: 'role_permissions'
+    })
+    permissions: Permission[] 
+}
+~~~
+~~~ts
+import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from "typeorm";
+
+@Entity({
+    name: 'permissions'
+})
+export class Permission {
+    @PrimaryGeneratedColumn()
+    id: number;
+
+    @Column({
+        length: 20,
+        comment: '权限代码'
+    })
+    code: string;
+
+    @Column({
+        length: 100,
+        comment: '权限描述'
+    })
+    description: string;
+}
+~~~
+在 `AppModule` 引入 `UserModule`, `User`, `Role`, `Permission`
+~~~ts
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+import { Role } from './user/entities/role.entity'
+import { User } from './user/entities/User.entity'
+import { Permission } from './user/entities/Permission.entity'
+import { UserModule } from './user/user.module'
+
+@Module({
+  imports: [ 
+    UserModule,
+    TypeOrmModule.forRoot({
+      type: "mysql",
+      host: "localhost",
+      port: 3306,
+      username: "root",
+      password: "guang",
+      database: "meeting_room_booking_system",
+      synchronize: true,
+      logging: true,
+      entities: [
+        User, Role, Permission
+      ],
+      poolSize: 10,
+      connectorPackage: 'mysql2',
+      extra: {
+          authPlugin: 'sha256_password',
+      }
+    }),
+  ],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}
+~~~
+启动项目：
+~~~shell
+npm run start:dev
+~~~
+::: tip
+注意：`mysql` 里没有 `boolean` 类型，使用 `TINYINT` 实现的，用 1、0 存储 `true`、`false`。
+`typeorm` 会自动把它映射成 `true`、`false`。
+:::
+实现注册，在 `UserController` 增加一个 `post` 接口：
+~~~ts
+@Post('register')
+register(@Body() registerUser: RegisterUserDto) {
+    console.log(registerUser);
+    return "success"
+}
+~~~
+创建 `RegisterUserDto`：
+~~~ts
+export class RegisterUserDto {
+
+    username: string;
+    
+    nickName: string;
+    
+    password: string;
+    
+    email: string;
+    
+    captcha: string;
+}
+~~~
+安装 `ValidationPipe` 用到的包：
+~~~shell
+npm install --save class-validator class-transformer
+~~~
+全局启用 `ValidationPipe`：
+~~~ts
+import { ValidationPipe } from '@nestjs/common';
+import { NestFactory } from 'anestjs/core';
+import { AppModule } from ' ./app.module';
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  app.useGlobalPipes (new ValidationPipe ());
+  await app. listen (3000);
+}
+bootstrap ();
+~~~
+加一下校验规则：
+~~~ts
+import { IsEmail, IsNotEmpty, MinLength } from "class-validator";
+
+export class RegisterUserDto {
+
+    @IsNotEmpty({
+        message: "用户名不能为空"
+    })
+    username: string;
+    
+    @IsNotEmpty({
+        message: '昵称不能为空'
+    })
+    nickName: string;
+    
+    @IsNotEmpty({
+        message: '密码不能为空'
+    })
+    @MinLength(6, {
+        message: '密码不能少于 6 位'
+    })
+    password: string;
+    
+    @IsNotEmpty({
+        message: '邮箱不能为空'
+    })
+    @IsEmail({}, {
+        message: '不是合法的邮箱格式'
+    })
+    email: string;
+    
+    @IsNotEmpty({
+        message: '验证码不能为空'
+    })
+    captcha: string;
+}
+~~~
+在 `userService` 里添加 `register` 方法：
+~~~ts
+import { Injectable, Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { md5 } from 'src/utils';
+import { Repository } from 'typeorm';
+import { RegisterUserDto } from './dto/register-user.dto';
+import { User } from './entities/user.entity';
+
+@Injectable()
+export class UserService {
+    private logger = new Logger();
+
+    @InjectRepository(User)
+    private userRepository: Repository<User>;
+
+    async register(user: RegisterUserDto) {
+        
+    }
+}
+~~~
+创建 `logger` 对象，注入 `Repository<User>`。
+
+这里注入 `Repository` 需要在 `UserModule` 里引入下 `TypeOrm.forFeature`：
+~~~ts
+import { Module } from '@nestjs/common';
+import { UserService } from ' ./user.service';
+import { UserController } from './user.controller';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { User } from './entities/user.entity';
+
+@Module({
+  imports: [
+    TypeOrmModule.forFeature([User])
+  ],
+  controllers: [UserController], 
+  providers: [UserServicel]
+})
+export class UserModule {}
+~~~
+封装个 `redis` 模块：
+~~~shell
+nest g module redis
+nest g service redis
+~~~
+安装 `redis` 的包：
+~~~shell
+npm install --save redis
+~~~
+添加连接 `redis` 的 `provider`：
+~~~ts
+import { Global, Module } from '@nestjs/common';
+import { RedisService } from './redis.service';
+import { createClient } from 'redis';
+
+@Global()
+@Module({
+  providers: [
+    RedisService,
+    {
+      provide: 'REDIS_CLIENT',
+      async useFactory() {
+        const client = createClient({
+            socket: {
+                host: 'localhost',
+                port: 6379
+            },
+            database: 1
+        });
+        await client.connect();
+        return client;
+      }
+    }
+  ],
+  exports: [RedisService]
+})
+export class RedisModule {}
+~~~
+这里用 `@Global()` 把它声明为全局模块，这样只需要在 `AppModule` 里引入，别的模块不用引入也可以注入 `RedisService` 了。
+
+然后写下 `RedisService`：
+~~~ts
+import { Inject, Injectable } from '@nestjs/common';
+import { RedisClientType } from 'redis';
+
+@Injectable()
+export class RedisService {
+
+    @Inject('REDIS_CLIENT') 
+    private redisClient: RedisClientType;
+
+    async get(key: string) {
+        return await this.redisClient.get(key);
+    }
+
+    async set(key: string, value: string | number, ttl?: number) {
+        await this.redisClient.set(key, value);
+
+        if(ttl) {
+            await this.redisClient.expire(key, ttl);
+        }
+    }
+}
+~~~
+注入 `redisClient`，实现 `get`、`set` 方法，`set` 方法支持指定过期时间。
+
+然后回过头来继续实现 `register` 方法：
+~~~ts
+@Inject(RedisService)
+private redisService: RedisService;
+
+async register(user: RegisterUserDto) {
+    const captcha = await this.redisService.get(`captcha_${user.email}`);
+
+    if(!captcha) {
+        throw new HttpException('验证码已失效', HttpStatus.BAD_REQUEST);
+    }
+
+    if(user.captcha !== captcha) {
+        throw new HttpException('验证码不正确', HttpStatus.BAD_REQUEST);
+    }
+
+    const foundUser = await this.userRepository.findOneBy({
+      username: user.username
+    });
+
+    if(foundUser) {
+      throw new HttpException('用户已存在', HttpStatus.BAD_REQUEST);
+    }
+
+    const newUser = new User();
+    newUser.username = user.username;
+    newUser.password = md5(user.password);
+    newUser.email = user.email;
+    newUser.nickName = user.nickName;
+
+    try {
+      await this.userRepository.save(newUser);
+      return '注册成功';
+    } catch(e) {
+      this.logger.error(e, UserService);
+      return '注册失败';
+    }
+}
+~~~
+`md5` 方法放在 `src/utils.ts` 里，用 `node` 内置的 `crypto` 包实现:
+~~~ts
+import * as crypto from 'crypto';
+
+export function md5(str) {
+    const hash = crypto.createHash('md5');
+    hash.update(str);
+    return hash.digest('hex');
+}
+~~~
+在 `controller` 里调用下：
+~~~ts
+@Post('register')
+async register(@Body() registerUser: RegisterUserDto) {    
+    return await this.userService.register(registerUser);
+}
+~~~
+创建个 `email` 模块：
+~~~shell
+nest g resource email
+~~~
+安装发送邮件用的包：
+~~~shell
+npm install nodemailer --save
+~~~
+在 `EmailService` 里实现 `sendMail` 方法:
+~~~ts
+import { Injectable } from '@nestjs/common';
+import { createTransport, Transporter} from 'nodemailer';
+
+@Injectable()
+export class EmailService {
+
+    transporter: Transporter
+    
+    constructor() {
+      this.transporter = createTransport({
+          host: "smtp.qq.com",
+          port: 587,
+          secure: false,
+          auth: {
+              user: '你的邮箱地址',
+              pass: '你的授权码'
+          },
+      });
+    }
+
+    async sendMail({ to, subject, html }) {
+      await this.transporter.sendMail({
+        from: {
+          name: '会议室预定系统',
+          address: '你的邮箱地址'
+        },
+        to,
+        subject,
+        html
+      });
+    }
+}
+~~~
+把 `EmailModule` 声明为全局的，并且导出 `EmailService`：
+~~~ts
+import { Global, Module } from '@nestjs/common';
+import { EmailService } from './email.service';
+import { EmailController } from './email.controller';
+
+@Global()
+@Module({
+  controllers: [EmailControllerl], 
+  providers: [EmailServicel], 
+  exports: [EmailService]
+})
+export class EmailModule {}
+~~~
+然后在 `UserController` 里添加一个 `get` 接口：
+~~~ts
+@Inject(EmailService)
+private emailService: EmailService;
+
+@Inject(RedisService)
+private redisService: RedisService;
+
+@Get('register-captcha')
+async captcha(@Query('address') address: string) {
+    const code = Math.random().toString().slice(2,8);
+
+    await this.redisService.set(`captcha_${address}`, code, 5 * 60);
+
+    await this.emailService.sendMail({
+      to: address,
+      subject: '注册验证码',
+      html: `<p>你的注册验证码是 ${code}</p>`
+    });
+    return '发送成功';
+}
+~~~
+到这里就完成了整个注册功能，可以进行测试下，注册的流程如下：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/d91b2715c99c4e699f00087a3fa9ca89~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+### 用户管理模块--配置抽离、登录认证鉴权
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

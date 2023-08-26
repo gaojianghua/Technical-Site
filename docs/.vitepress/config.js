@@ -177,6 +177,14 @@ function sidebarGuide() {
                 { text: 'PS', link: '/guide/ps' },
             ],
         },
+        {
+            text: '工具库',
+            collapsible: true,
+            items: [
+                { text: 'ClientTools', link: '/guide/client-tools' },
+                { text: 'ServiceTools', link: '/guide/service-tools' }
+            ],
+        },
     ];
     return menus;
 }
