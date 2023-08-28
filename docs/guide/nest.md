@@ -6063,9 +6063,99 @@ export class AppModule implements OnApplicationBootstrap {
   }
 }
 ~~~
+配置 `vscode` 的 `debug` 调试:
 
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/1456061033.png)
 
+~~~json
+{
+    // 使用 IntelliSense 了解相关属性。
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "debug nest",
+            "runtimeExecutable": "npm",
+            "args": [
+                "run",
+                "start:dev"
+            ],
+            "skipFiles": [
+                "<node_internals>/**"
+            ],
+            "console": "integratedTerminal"
+        }
+    ]
+}
+~~~
+再在 `console.log(jobs)` 处打上断点，然后点击 `debug` 启动 `name` 为 `debug nest` 的。
 
+自己创建定时任务，需要安装 `cron` 的包：
+~~~shell
+npm install --save cron
+~~~
+然后实现下删除定时任务的逻辑：
+~~~ts
+onApplicationBootstrap() {
+  // 获取定时任务队列（job）
+  const crons = this.schedulerRegistry.getCronJobs();
+  // 遍历定时任务队列（job）
+  crons.forEach((item, key) => {
+    item.stop();  // 停止定时任务（job）
+    this.schedulerRegistry.deleteCronJob(key);  // 删除定时任务（job）
+  });
+  // 获取定时任务队列（Interval）
+  const intervals = this.schedulerRegistry.getIntervals();
+  // 遍历定时任务队列（Interval）
+  intervals.forEach(item => {
+    // 获取定时任务（Interval）
+    const interval = this.schedulerRegistry.getInterval(item);
+    // 清除定时器（Interval）
+    clearInterval(interval);
+    // 删除定时任务（Interval）
+    this.schedulerRegistry.deleteInterval(item);
+  });
+  // 获取定时任务队列（Timeout）
+  const timeouts = this.schedulerRegistry.getTimeouts();
+  // 遍历定时任务队列（Timeout）
+  timeouts.forEach(item => {
+    // 获取定时任务（Timeout）
+    const timeout = this.schedulerRegistry.getTimeout(item);
+    // 清除定时器（Timeout）
+    clearTimeout(timeout);
+    // 删除定时任务（Timeout）
+    this.schedulerRegistry.deleteTimeout(item);
+  });
+
+  console.log(this.schedulerRegistry.getCronJobs());
+  console.log(this.schedulerRegistry.getIntervals());
+  console.log(this.schedulerRegistry.getTimeouts());
+
+  // 动态添加任务（job）
+  const job = new CronJob(`0/5 * * * * *`, () => {
+    console.log('cron job');
+  });
+  this.schedulerRegistry.addCronJob('job1', job);
+  job.start();
+  // 动态添加任务（Interval）
+  const interval = setInterval(() => {
+    console.log('interval job')
+  }, 3000);
+  this.schedulerRegistry.addInterval('job2', interval);
+  // 动态添加任务（Timeout）
+  const timeout = setTimeout(() => {
+    console.log('timeout job');
+  }, 5000);
+  this.schedulerRegistry.addTimeout('job3', timeout);
+}
+~~~
+执行 `npm run start:dev`, 在终端可以看到没有之前的定时任务了。新增了动态添加的那几个定时任务。
+::: tip
+可以看出来 `CronJob` 是基于 `cron` 包封装的，而 `interval` 和 `timeout` 就是用的原生 `api`。
+:::
 
 ## 会议室预订系统
 首先，用户分为普通用户和管理员两种，各自有不同的功能：
