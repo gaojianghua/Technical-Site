@@ -5265,6 +5265,808 @@ async findUserByEmail(email: string) {
 }
 ~~~
 
+## 定时任务 + Redis 实现阅读计数
+文章的阅读量计数，我们通常会想到加个 `views` 的字段，然后每次刷新页面都加一，但这样会有两个问题：
+- 每次刷新阅读量都加一，其实还是同一个人看的这篇文章，这样统计出来的阅读量是不准的，我们想要的阅读量是有多少人看过这篇文章
+- 阅读是个很高频的操作，直接存到数据库，数据库压力会太大
+
+其实我们学完 `Redis` 就应该能想到解决方案：
+- 在 `redis` 中存储 `user` 和 `article` 的关系，比如 `user_111_article_222` 为 `key`，10 分钟后删除，如果存在这个 key，就说明该用户看过这篇文章，就不更新阅读量，否则才更新。10 分钟后，这个人再看这篇文章，就可以算是新的一次阅读量。
+
+- 访问文章时把阅读量加载到 `redis`，之后的阅读量计数只更新 `redis`，不更新数据库，等业务低峰期再把最新的阅读量写入数据库。这里的业务低峰期，比如凌晨 4 点的时候写入数据库，可以用定时任务来做。
+
+下面我们来实现一下：
+
+新建项目
+~~~shell
+nest new article-views -p npm
+~~~
+安装 `typeorm` 相关的包：
+~~~shell
+npm install --save @nestjs/typeorm typeorm mysql2
+~~~
+在 AppModule 引入 TypeOrmModule：
+~~~ts
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+
+@Module({
+  imports: [ 
+    TypeOrmModule.forRoot({
+      type: "mysql",
+      host: "localhost",
+      port: 3306,
+      username: "root",
+      password: "guang",
+      database: "article_views",
+      synchronize: true,
+      logging: true,
+      entities: [],
+      poolSize: 10,
+      connectorPackage: 'mysql2',
+      extra: {
+          authPlugin: 'sha256_password',
+      }
+    }),
+  ],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}
+~~~
+创建这个 database：
+~~~sql
+CREATE DATABASE article-views DEFAULT CHARACTER SET utf8mb4;
+~~~
+新建个文章和用户的模块：
+~~~shell
+nest g resource user --no-spec
+nest g resource article --no-spec
+~~~
+添加 user 和 article 的 entity：
+~~~ts
+import { Column, PrimaryGeneratedColumn, Entity } from "typeorm";
+
+@Entity()
+export class User {
+    @PrimaryGeneratedColumn()
+    id: number;
+
+    @Column({
+        comment: '用户名'
+    })
+    username: string;
+
+    @Column({
+        comment: '密码'
+    })
+    password: string;
+}
+~~~
+~~~ts
+import { Column, Entity, PrimaryGeneratedColumn } from "typeorm";
+
+@Entity()
+export class Article {
+    @PrimaryGeneratedColumn()
+    id: number;
+
+    @Column({
+        comment: '文章名字',
+        length: 50
+    })
+    title: string;
+
+    @Column({
+        comment: '内容',
+        type: 'text'
+    })
+    content: string;
+
+    @Column({
+        comment: '阅读量',
+        default: 0
+    })
+    viewCount: number;
+
+    @Column({
+        comment: '点赞量',
+        default: 0
+    })
+    likeCount: number;
+
+    @Column({
+        comment: '收藏量',
+        default: 0
+    })
+    collectCount: number;
+}
+~~~
+在 AppModule 引入 entity：
+~~~ts
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+import { User } from './user/entities/user.entity'
+import { Article } from './article/entities/article.entity'
+import { UserModule } from './user/user.module'
+import { ArticleModule } from './article/article.module'
+
+@Module({
+  imports: [ 
+    TypeOrmModule.forRoot({
+      type: "mysql",
+      host: "localhost",
+      port: 3306,
+      username: "root",
+      password: "guang",
+      database: "article_views",
+      synchronize: true,
+      logging: true,
+      entities: [User, Article],
+      poolSize: 10,
+      connectorPackage: 'mysql2',
+      extra: {
+          authPlugin: 'sha256_password',
+      }
+    }),
+    UserModule,
+    ArticleModule
+  ],
+  controllers: [AppController],
+  providers: [AppService],
+})
+export class AppModule {}
+~~~
+执行 `npm run start:dev` 后可以看到 `typeorm` 会自动创建了 `user`，`article` 表。
+
+然后插入一些数据，在 `AppController` 创建 `init-data` 的路由，然后注入 `EntityManager`：
+~~~ts
+@InjectEntityManager()
+private entityManager: EntityManager;
+
+@Get('init-data')
+async initData() {
+  await this.entityManager.save(User, {
+    username: 'dong',
+    password: '111111'
+  });
+  await this.entityManager.save(User, {
+    username: 'guang',
+    password: '222222'
+  });
+
+  await this.entityManager.save(Article, {
+    title: '基于 Axios 封装一个完美的双 token 无感刷新',
+    content: `用户登录之后，会返回一个用户的标识，之后带上这个标识请求别的接口，就能识别出该用户。
+
+    标识登录状态的方案有两种： session 和 jwt。
+    `
+  });
+
+  await this.entityManager.save(Article, {
+    title: 'Three.js 手写跳一跳小游戏',
+    content: `前几年，跳一跳小游戏火过一段时间。
+
+    玩家从一个方块跳到下一个方块，如果没跳过去就算失败，跳过去了就会再出现下一个方块。`
+  });
+  return 'done';
+}
+~~~
+两个 `entity` 分别插入 2 条数据。
+
+然后先实现登录，这里使用 `session` 的方案，安装相关的包：
+~~~shell
+npm install express-session @types/express-session
+~~~
+在 `main.ts` 里启用：
+~~~ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import * as session from 'express-session';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  app.use(session({
+    secret: 'guang',
+    resave: false,
+    saveUninitialized: false
+  }));
+
+  await app.listen(3000);
+}
+bootstrap();
+~~~
+在 `UserController` 添加 `login` 的路由：
+~~~ts
+@Post('login')
+async login(@Body() loginUserDto: LoginUserDto) {
+    console.log(loginUserDto);
+    return 'success';
+}
+~~~
+新建 `src/user/dto/login-user.dto.ts`:
+~~~ts
+export class LoginUserDto {
+
+    username: string;
+
+    password: string;
+}
+~~~
+在 `UserService` 实现登录逻辑：
+~~~ts
+@InjectEntityManager()
+private entityManager: EntityManager;
+
+async login(loginUser: LoginUserDto) {
+    const user = await this.entityManager.findOne(User, {
+      where: {
+        username: loginUser.username
+      }
+    });
+
+    if(!user) {
+      throw new BadRequestException('用户不存在');
+    }
+
+    if(user.password !== loginUser.password) {
+      throw new BadRequestException('密码错误');
+    }
+
+    return user;
+}
+~~~
+在 `UserController` 调用下：
+~~~ts
+@Post('login')
+async login(@Body() loginUserDto: LoginUserDto, @Session() session) {
+    const user = await this.userService.login(loginUserDto);
+
+    session.user = {
+        id: user.id,
+        username: user.username
+    }
+
+    return 'success';
+}
+~~~
+调用 `userService` 的 `login` 方法，实现登录验证，然后把用户信息存入 `session`。
+
+在 `ArticleController` 添加一个查询文章的接口：
+~~~ts
+@Get(':id')
+async findOne(@Param('id') id: string) {
+    return await this.articleService.findOne(+id);
+}
+~~~
+实现 `articleService.findOne` 方法：
+~~~ts
+@InjectEntityManager()
+private entityManager: EntityManager;
+
+async findOne(id: number) {
+    return await this.entityManager.findOneBy(Article, {
+      id
+    });
+}
+~~~
+在 `ArticleController` 加一个阅读的接口：
+~~~ts
+@Get(':id/view')
+async view(@Param('id') id: string) {
+    return await this.articleService.view(+id);
+}
+~~~
+在 `ArticleService` 里实现具体的逻辑：
+~~~ts
+async view(id: number) {
+    const article = await this.findOne(id);
+
+    article.viewCount ++;
+
+    await this.entityManager.save(article);
+
+    return article.viewCount;
+}
+~~~
+安装 `redis` 的包：
+~~~shell
+npm install --save redis
+~~~
+创建个 `redis` 模块：
+~~~shell
+nest g module redis
+nest g service redis
+~~~
+在 `RedisModule` 创建连接 `redis` 的 `provider`，导出 `RedisService`，并把这个模块标记为 `@Global` 模块:
+~~~ts
+import { Global, Module } from '@nestjs/common';
+import { createClient } from 'redis';
+import { RedisService } from './redis.service';
+
+@Global()
+@Module({
+  providers: [
+    RedisService,
+    {
+      provide: 'REDIS_CLIENT',
+      async useFactory() {
+        const client = createClient({
+            socket: {
+                host: 'localhost',
+                port: 6379
+            }
+        });
+        await client.connect();
+        return client;
+      }
+    }
+  ],
+  exports: [RedisService]
+})
+export class RedisModule {}
+~~~
+在 `RedisService` 里注入 `REDIS_CLIENT`，并封装一些方法：
+~~~ts
+import { Inject, Injectable } from '@nestjs/common';
+import { RedisClientType } from 'redis';
+
+@Injectable()
+export class RedisService {
+
+    @Inject('REDIS_CLIENT') 
+    private redisClient: RedisClientType;
+
+    async get(key: string) {
+        return await this.redisClient.get(key);
+    }
+
+    async set(key: string, value: string | number, ttl?: number) {
+        await this.redisClient.set(key, value);
+
+        if(ttl) {
+            await this.redisClient.expire(key, ttl);
+        }
+    }
+
+    async hashGet(key: string) {
+        return await this.redisClient.hGetAll(key);
+    }
+
+    async hashSet(key: string, obj: Record<string, any>, ttl?: number) {
+        for(let name in obj) {
+            await this.redisClient.hSet(key, name, obj[name]);
+        }
+
+        if(ttl) {
+            await this.redisClient.expire(key, ttl);
+        }
+    }
+}
+~~~
+我们封装了 `get`、`set`、`hashGet`、`hashSet` 方法，分别是对 `redis` 的 `string`、`hash` 数据结构的读取。
+
+然后在 `view` 方法里引入 `redis`：
+~~~ts
+@Inject(RedisService)
+private redisService: RedisService;
+
+async view(id: number) {
+    const res = await this.redisService.hashGet(`article_${id}`);
+
+    if(res.viewCount === undefined) {
+      const article = await this.findOne(id);
+
+      article.viewCount ++;
+
+      await this.entityManager.update(Article, { id }, {
+        viewCount: article.viewCount
+      });
+
+      await this.redisService.hashSet(`article_${id}`, {
+        viewCount: article.viewCount,
+        likeCount: article.likeCount,
+        collectCount: article.collectCount
+      });
+
+      return article.viewCount;
+
+    } else {
+      await this.redisService.hashSet(`article_${id}`, {
+        ...res,
+        viewCount: +res.viewCount + 1
+      });
+      return +res.viewCount + 1;
+    }
+}
+~~~
+先查询 `redis`，如果没查到就从数据库里查出来返回，并存到 `redis` 里。查到了就更新 `redis` 的 `viewCount`，直接返回 `viewCount + 1`
+
+接下来同步到数据库。引入定时任务包 `@nestjs/schedule`：
+~~~shell
+npm install --save @nestjs/schedule
+~~~
+在 AppModule 引入下：
+~~~ts
+//...
+import { ScheduleModule } from '@nestjs/schedule';
+
+@Module({
+  imports:[
+    ScheduleModule.forRoot(),
+    //...
+  ]
+})
+~~~
+然后创建一个 `service`：
+~~~shell
+nest g module task
+nest g service task
+~~~
+定义个方法，通过 `@Cron` 声明每 **10s** 执行一次：
+~~~ts
+import { Injectable, Logger } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
+
+@Injectable()
+export class TasksService {
+
+  @Cron(CronExpression.EVERY_10_SECONDS)
+  handleCron() {
+    console.log('task execute')
+  }
+}
+~~~
+在 `TaskModule` 引入 `ArticleModule`：
+~~~ts
+import { Module } from '@nestjs/common';
+import { TaskService } from './task.service';
+import { ArticleModule } from 'src/article/article.module';
+
+@Module({
+  imports: [
+    ArticleModule
+  ],
+  providers: [TaskService]
+})
+export class TaskModule {}
+~~~
+并且在 `ArticleModule` 导出 `ArticleService`:
+~~~ts
+import { Module } from 'anestjs/common';
+import { ArticleService } from '/article.service'; 
+import { ArticleController } from './article.controlller'
+
+@Module({
+  controllers: [ArticleController], 
+  providers: [ArticleService], 
+  exports: [ArticleService]
+})
+export class ArticleModule {}
+~~~
+然后在 `TaskService` 里注入 `articleService`：
+~~~ts
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { ArticleService } from 'src/article/article.service';
+
+@Injectable()
+export class TaskService {
+
+  @Inject(ArticleService)
+  private articleService: ArticleService;
+
+  @Cron(CronExpression.EVERY_MINUTE)
+  async handleCron() {
+    await this.articleService.flushRedisToDB();
+  }
+}
+~~~
+每分钟执行一次，调用 `articleService` 的 `flushRedisToDB` 方法，下面实现下这个方法，先在 `RedisService` 添加一个 `keys` 方法，用来查询 `key`：
+~~~ts
+async keys(pattern: string) {
+    return await this.redisClient.keys(pattern);
+}
+~~~
+然后在 `ArticleService` 里实现同步数据库的逻辑：
+~~~ts
+async flushRedisToDB() {
+    const keys = await this.redisService.keys(`article_*`);
+    // 查询出 key 对应的值，更新到数据库。
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+
+      const res = await this.redisService.hashGet(key);
+
+      const [, id] = key.split('_');
+
+      await this.entityManager.update(Article, {
+        id: +id
+      }, {
+        viewCount: +res.viewCount,        
+      });
+    }
+}
+~~~
+接下来只要把定时任务的执行时间改为 4 点就好了，在 `TaskService` 中修改 `@Cron`：
+~~~ts
+@Cron(CronExpression.EVERY_DAY_AT_4AM)
+~~~
+基于 `redis` 的阅读量缓存，以及定时任务更新数据库就完成了。
+
+接下来在用户访问文章的时候在 `redis` 存一个 10 分钟过期的标记，有这个标记的时候阅读量不增加。修改 `view`：
+~~~ts
+async view(id: number, userId: string) {
+  const res = await this.redisService.hashGet(`article_${id}`);
+  if (res.viewCount === undefined) {
+    const article = await this.findOne(id);
+    article.viewCount++;
+    await this.entityManager.update(Article, { id }, {
+      viewCount: article.viewCount
+    });
+    await this.redisService.hashSet(`article_${id}`, {
+      viewcount: article.viewCount, 
+      likeCount: article.likeCount, 
+      collectCount: article.collectCount
+    });
+    await this.redisService.set(`user_${userId}_article_${id}`, 1, 3);  // 设置为 3s 方便测试，可自行修改
+    return article.viewCount;
+  } else {
+    const flag = await this.redisService.get(`user_${userId}_article_${id}`) ;
+    if(flag) {
+      return res.viewCount;
+    }
+    await this.redisService.hashSet(`article_${id}`, {
+      ...res,
+      viewCount: +res.viewCount + 1
+    });
+    await this.redisService.set(`user_${userId}_article_${id}`, 1, 3);  // 设置为 3s 方便测试，可自行修改
+    return +res.viewCount + 1;
+  }
+}
+~~~
+在 `ArticleController` 的 `view` 方法里传入下：
+~~~ts
+@Get(':id/view')
+async view(@Param('id') id: string, @Session() session, @Req() req) {
+    return await this.articleService.view(+id, session?.user?.id || req.ip);
+}
+~~~
+至此就完成了阅读量统计的功能，可自行测试下。
+
+## Nest 中使用定时任务
+新建项目：
+~~~shell
+nest new schedule-task
+~~~
+安装定时任务的包：
+~~~shell
+npm install --save @nestjs/schedule
+~~~
+在 AppModule 里引入：
+~~~ts
+import { Module } from '@nestjs/common';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+import { ScheduleModule } from '@nestjs/schedule';
+
+@Module ( {
+  imports: [
+    ScheduleModule.forRoot()
+  ], 
+  controllers: [AppController], 
+  providers: [AppService],
+})
+export class AppModule {}
+~~~
+创建 service 模块：
+~~~shell
+nest g service task --flat --no-spec
+~~~
+通过 `@Cron` 声明任务执行时间：
+~~~ts
+import { Injectable, Logger } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
+
+@Injectable()
+export class TaskService {
+
+  @Cron(CronExpression.EVERY_5_SECONDS)
+  handleCron() {
+    console.log('task execute');
+  }
+}
+~~~
+执行 `npm run start:dev` 启动服务，每 5 秒控制台会打印 `task execute`。
+
+也可以注入其他模块的 `service`，新建 aaa 模块：
+~~~shell
+nest g resource aaa
+~~~
+导出 AaaService：
+~~~ts
+import { Module } from '@nestjs/common'; 
+import { AaaService } from './aaa.service'; 
+import { AaaController } from './aaa.controller'
+
+@Module({
+  controllers: [AaaController], 
+  providers: [AaaService], 
+  exports: [AaaService]
+})
+export class AaaModule {}
+~~~
+在 TaskService 注入：
+~~~ts
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { AaaService } from './aaa/aaa.service';
+
+@Injectable()
+export class TaskService {
+
+  @Inject(AaaService)
+  private aaaService: AaaService;
+
+  @Cron(CronExpression.EVERY_5_SECONDS, {
+    name: "task", // 任务名
+    timeZone: "Asia/shanghai" // 时区
+  })
+  handleCron() {
+    console.log('task execute：', this.aaaService.findAll());
+  }
+}
+~~~
+这样每 5 秒都会执行 `aaaService` 中的 `findAll` 方法。
+
+`cron` 表达式有这 7 个字段：
+字段 | 允许值 | 允许的特殊字符
+---|-----|--------
+秒( Seconds ) | 0~59的整数 | , - * / 四个字符
+分( Minutes ) | 0~59的整数 | , - * / 四个字符
+that ( Hours ) | 0~23的整数 | , - * / 四个字符
+日期( DavofMonth ) | 1~31的整数( 但是你需要考虑你月的天数 ) | , - * ? / L W C 八个字符
+月份( Month ) | 1~12的整教或者 JAN-DEC | , - * / 四个字符
+星期( Davorveek ) | 1~7的整数或者 SUN-SAT ( 1=SUN ) | , - * ? / L C ＃ 八个字符
+年( 可选，留空 ) ( Year ) | 1970~2099 | , - * / 四个字符
+
+其中**年**是可选的，所以一般都是 6 个。每个字段都可以写 `*` ，比如**秒**写 `*` 就代表每秒都会触发，**日期**写 `*` 就代表每天都会触发。但当你指定了具体的日期的时候，星期得写 `?`， 比如：
+~~~shell
+7 12 13 10 * ?
+~~~
+表示每月 10 号的 13:12:07，但这时候你不知道是星期几，如果写 `*` 代表不管哪天都会执行，这时候就要写 `?`，代表忽略星期。同理，指定了星期的时候，日期也可能和它冲突，这时候也要指定 `?`。
+
+指定范围的示例：
+~~~shell
+0 20-30 * * * *
+# 从 20 到 30 的每分钟的第 0 秒都会执行
+~~~
+指定枚举的示例：
+~~~shell
+0 5,10 * * * *
+# 每小时的第 5 和 第 10 分钟的第 0 秒执行
+~~~
+指定间隔的示例：
+~~~shell
+0 5/10 * * * *
+# 从第 5 分钟开始，每隔 10 分钟触发一次执行
+~~~
+L 是 last，L 用在星期的位置就是星期六：
+~~~shell
+* * * ? * L
+~~~
+L 用在日期的位置就是每月最后一天：
+~~~shell
+* * * L * ?
+~~~
+W 代表工作日 workday，只能用在日期位置，代表从周一到周五：
+~~~shell
+* * * W * ?
+~~~
+当你指定 2W 的时候，代表每月的第 2 个工作日：
+~~~shell
+* * * 2W * ?
+~~~
+LW 可以在指定日期时连用，代表每月最后一个工作日：
+~~~shell
+* * * LW * ?
+~~~
+星期的位置还可以用 `4#3` 表示每个月第 3 周的星期三：
+~~~shell
+* * * ? * 4#3
+~~~
+同理，每个月的第二周的星期天就是这样：
+~~~shell
+* * * ? * 1#2
+~~~
+::: tip
+此外，星期几除了可以用从 1（星期天） 到 7（星期六） 的数字外，还可以用单词的前三个字母：`SUN`, `MON`, `TUE`, `WED`, `THU`, `FRI`, `SAT`
+:::
+
+再来看几个示例：
+~~~shell
+*/5 * * * * ?
+# 每隔 5 秒执行一次
+~~~
+~~~shell
+0 0 5-15 * * ?
+# 每天 5-15 点整点触发
+~~~
+~~~shell
+0 0 10,14,16 * * ?
+# 每天 10 点、14 点、16 点触发
+~~~
+~~~shell
+0 0 12 ? * WED
+# 每个星期三中午12点
+~~~
+~~~shell
+0 0 17 ? * TUES,THUR,SAT
+# 每周二、四、六下午五点
+~~~
+~~~shell
+0 0 22 L * ?
+# 每月最后一天 22 点执行一次
+~~~
+~~~shell
+0 30 9 ? * 6L 2023-2025 
+# 2023 年至 2025 年的每月的最后一个星期五上午 9:30 触发
+~~~
+~~~shell
+0 15 10 ? * 6#3 
+# 每月的第三个星期五上午 10:15 触发
+~~~
+
+除了使用 `@Cron` 外，我们还可以使用 `@Interval` 指定任务的执行间隔，参数为毫秒值：
+~~~ts
+@Interval('task2', 500)
+task2() {
+  console.log('task2');
+}
+~~~
+还可以用 `@Timeout` 指定多长时间后执行一次：
+~~~ts
+@Timeout('task3', 3000)
+task3() {
+  console.log('task3');
+}
+~~~
+我们在 `AppModule` 里注入 `SchedulerRegistry`，然后在 `OnApplicationBootstrap` 的声明周期里拿到所有的 `cronJobs` 打印下：
+~~~ts
+import { Module, OnApplicationBootstrap } from '@nestjs/common';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+import { ScheduleModule, SchedulerRegistry } from '@nestjs/schedule';
+import { TaskService } from './task.service';
+import { AaaModule } from './aaa/aaa.module';
+
+@Module ( {
+  imports: [
+    ScheduleModule.forRoot(),
+    AaaModule
+  ], 
+  controllers: [AppController], 
+  providers: [AppService, TaskService],
+})
+export class AppModule implements OnApplicationBootstrap {
+  @Inject(SchedulerRegistry)
+  private schedulerRegistry: SchedulerRegistry;
+
+  onApplicationBootstrap() {
+    const jobs = this.schedulerRegistry.getCronJobs();
+    console.log(jobs);
+  }
+}
+~~~
+
+
+
+
 ## 会议室预订系统
 首先，用户分为普通用户和管理员两种，各自有不同的功能：
 - **普通用户**：可以注册，注册的时候会发邮件来验证身份，注册之后就可以登录系统。
