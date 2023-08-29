@@ -4785,6 +4785,1115 @@ root.onclick = () => {
 - `DOM` 环境天然隔离，但是无法处理 `Modal` 相对于主应用的居中问题
 
 ## 框架原理：快照隔离
+`iframe` 隔离方案是一种非常彻底的隔离实现，接下来会简单讲解一个纯前端基于 `JS` 设计的快照隔离方案，该隔离方案用于简单实现全局对象属性的隔离。
+
+### 隔离思路
+在 `V8` 隔离中我们知道如果想要真正做到 `JS` 运行时环境的隔离，本质上需要在底层利用 `V8` 创建不同的 `Isolate` 或者 `Context` 进行隔离，例如 `iframe` 和 `Worker` 线程都可以做到这一点。利用 `iframe` 实现隔离已经在上一节课程中进行了讲解，而 `Worker` 线程因为和 `Renderer UI` 线程在 `Web API` 能力上存在差异，不适合作为微应用的 `JS` 运行环境。本课程接下来讲解的 `JS` 运行时隔离本质上并不是利用 `V8` 来创建不同的 `Context` 实现隔离，而是简单将主应用执行环境中的 `window` 全局对象进行隔离，微应用仍然运行在主应用的全局执行环境中，具体如下所示：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/0cd597b8d8214bd5a58082dc649c4ff1~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+为了实现快照隔离功能，首先需要讲解一些 `JavaScript` 的语言特性，从而帮助大家更好的理解方案设计。
+
+### 自执行的匿名函数
+在动态 `Script` 的方案中，我们讲解了可以使用自执行的匿名函数来隔绝变量声明的作用域。除此之外，`jQuery` 为了隔绝外部声明的变量和函数也采用了该特性，具体如下所示：
+~~~ts
+// 自执行的匿名函数（模拟微应用环境）
+(function(){
+    //局部函数
+    function a() {
+        alert('inner a');
+    }
+})();
+
+// 全局函数（主应用环境）
+function a() {
+    alert('out a');
+}
+
+a(); // out a
+console.log(window.a); // out a 对应的函数
+~~~
+从上述示例可以发现自执行匿名函数创建了自己的函数作用域，该作用域内的函数不会和匿名函数外部的同名函数冲突。除此之外，为了加速访问全局对象 `window`，可以进行如下处理：
+~~~ts
+window.a = 1;
+
+// 访问局部变量 window, 不需要向上遍历作用域链, 缩短查找时间, 同时在压缩代码时局部变量 window 可被压缩
+(function(window){
+    alert(a);
+})(window);
+
+// 向上遍历到顶层作用域, 访问速度变慢, 全局变量 window 不能被压缩
+(function(){
+    alert(a);
+})();
+~~~
+有了上述知识后，我们可以模仿微应用的执行作用域，具体如下所示：
+~~~ts
+// 主应用
+let a = 0;
+
+// 微应用 A
+(function (window) {
+    let a = 1;
+    console.log(a); // 1，相对于独立运行的微应用 A 而言符合预期
+})(window);
+
+// 微应用 B
+(function (window) {
+    let a = 2;
+    console.log(a); // 2，相对于独立运行的微应用 B 而言符合预期
+})(window);
+
+console.log(a); // 0
+console.log(window.a); // undefined，符合预期，let 不会在全局声明时（在最顶层的作用域）创建 window 对象的属性
+~~~
+此时因为自执行匿名函数有自己的作用域，在内部声明的 `let` 变量可以被作用域隔离，因为 `let` 声明的变量不会在作用域中被提升。如果我们将 `let` 替换成 `var` 进行尝试：
+~~~ts
+// 主应用
+var a = 0;
+console.log("主应用: ", window.a); // 0
+
+// 微应用 A
+(function (window) {
+    var a = 1;
+    console.log("微应用 A: ", window.a); // 0，相对于独立运行的微应用 A 而言不符合预期
+})(window);
+
+// 微应用 B
+(function (window) {
+    var a = 2;
+    console.log("微应用 B: ", window.a); // 0，相对于独立运行的微应用 B 而言不符合预期
+})(window);
+
+console.log("主应用: ", window.a); // 0，符合预期，主应用中的 window.a 不受微应用执行代码的影响
+~~~
+我们知道使用 `var` 在全局作用域中声明的变量将作为全局对象 `window` 的不可配置属性被添加，因此在全局作用域声明的变量 `a` 同时也是 `window` 对象的属性。但是如果将 `var` 放入函数中执行（注意不是块级作用域），那么变量的作用域将被限定在函数内部，此时并不会在全局对象 `window` 上添加属性。因此执行上述代码后，微应用中的 `var` 声明不会影响主应用的 `window` 属性，起到了隔离的效果。虽然主应用本身的执行没有受到影响，但是微应用的执行并不符合预期，因为微应用本质上可以独立运行，如果将微应用 `A` 的代码单独拿出来执行：
+~~~ts
+ // 微应用独立运行时下述代码是在全局作用域中执行，var 的声明可以添加到 window 对象的属性上
+ // 微应用在主应用中运行时下述代码是在立即执行的匿名函数中执行，var 的声明只能在函数内部生效
+ var a = 1;
+ console.log("微应用 A: ", window.a); // 1
+~~~
+可以发现微应用 `A` 单独执行和在自执行的匿名函数中执行的结果是不一样的，因为一个是在全局作用域内执行，另外一个则是放入了函数作用域进行执行。除此之外，在 `JavaScript` 中使用变量时也可以不限定标识符，此时微应用的执行会污染全局属性，例如：
+~~~ts
+// 主应用
+var a = 0;
+console.log("主应用: ", window.a); // 0
+
+// 微应用 A
+(function (window) {
+    // 非严格模式下不限定 let、const 或者 var 标识符，此时会在全局对象下创建同名属性
+    a = 1;
+    console.log("微应用 A: ", window.a); // 1，相对于独立运行的微应用 A 而言符合预期
+})(window);
+
+// 微应用 B
+(function (window) {
+    a = 2;
+    console.log("微应用 B: ", window.a); // 2，相对于独立运行的微应用 B 而言符合预期
+})(window);
+
+console.log("主应用: ", window.a); // 2，不符合预期，主应用中的 window.a 受到了微应用执行代码的影响
+~~~
+当然，在对 `this` 进行属性赋值时，也会污染全局属性，例如：
+~~~ts
+// 主应用
+var a = 0;
+console.log("主应用: ", window.a); // 0
+
+// 微应用 A
+(function (window) {
+    // 非严格模式下 this 指向 window 全局对象
+    this.a = 1;
+    console.log("微应用 A: ", window.a); // 1，相对于独立运行的微应用 A 而言符合预期
+})(window);
+
+// 微应用 B
+(function (window) {
+    this.a = 2;
+    console.log("微应用 B: ", window.a); // 2，相对于独立运行的微应用 B 而言符合预期
+})(window);
+
+console.log("主应用: ", window.a); // 2，不符合预期，主应用中的 window.a 受到了微应用执行代码的影响
+~~~
+从上述几个测试示例可以发现，仅仅将微应用封装在匿名函数中进行执行：
+- 可以解决 `let` 或者 `const` 声明变量的隔离问题
+- 未限定标识符声明变量时，无法实现全局属性隔离问题
+- 使用 `this` 时访问的仍然是主应用的 `window` 对象，无法实现全局属性隔离问题
+
+采用立即执行的匿名函数可以限定微应用的作用域，从而在创建局部变量时有很好的隔离效果。当然，由于将微应用封装在函数中执行，一些在全局作用域中运行的特性丢失，并且也无法解决全局属性隔离的问题。
+
+### JS 文本执行方式
+有了立即执行的匿名函数后，我们可以将微应用的 `JS` 包装在立即执行的匿名函数中运行，这个包装动作需要在主应用的环境中执行，因为微应用可能有很多的 `JS` 脚本需要被包装处理，并且可能还需要支持原有的独立运行能力。为此，通过 `Script` 标签设置 `src` 进行远程请求外部脚本的方式无法满足手动包装 `JS` 脚本执行的诉求，此时需要手动请求获取 `JS` 文本并进行手动执行。在 `iframe` 隔离的方案中，通过 `window.fetch` 手动请求 `JS` 文本内容（也可以通过 `XMLHttpRequest` 进行请求），如果主应用和微应用的服务跨域，那么请求需要服务端额外支持跨域：
+~~~ts
+// 获取 JS 文本（微应用服务需要支持跨域请求获取 JS 文件）
+async fetchScript(src) {
+  try {
+    const res = await window.fetch(src);
+    return await res.text();
+  } catch (err) {
+    console.error(err);
+  }
+}
+~~~
+::: tip
+温馨提示： `qiankun` 框架底层默认使用了 `fetch` 进行微应用静态资源的请求，如果是开发态启动的应用，需要额外配置跨域能力。
+:::
+获取到微应用 `JS` 的文本字符串后，需要具备手动执行 `JS` 文本的能力。在 `Web` 应用中执行 `JS` 文本字符串的方式有如下几种：
+- 通过 `Script` 标签加载内嵌的 `JS` 文本
+- 通过 `eval` 执行 `JS` 文本
+- 通过 `Function` 执行 `JS` 文本
+
+在 `iframe` 隔离中，我们使用了 `Script` 标签请求获取 `JS` 文本进行运行，实现的方式如下所示：
+~~~ts
+// 在 document 中创建一个 script 元素
+const scriptElement = document.createElement('script');
+// 指定 Script 元素的文本内容
+// scriptText 是通过请求获取的 JS 文本字符串，可以对该内容进行立即执行的匿名函数封装处理
+scriptElement.textContent = scriptText;
+// 将元素添加到 document 的 head 标签下（添加成功后代码会自动解析执行）
+document.head.appendChild(scriptElement);
+~~~
+除此之外，也可以使用 `eval` 和 `Function` 进行执行，如下所示：
+~~~ts
+eval("let a =1, b = 2; console.log(a + b);");
+
+// 等同于 function(a, b) { return  a + b; }
+// 前面几项是函数的入参，最后一项是函数的执行体
+const fn = new Function("a", "b", "return a + b;");
+console.log(fn(1, 2));
+~~~
+当然两者是存在差异的，例如生效的作用域不同：
+~~~ts
+var hello = 10;
+function createFunction1() {
+    var hello = 20;
+    return new Function('return hello;'); // 这里的 hello 指向全局作用域内的 hello
+}
+var f1 = createFunction1();
+console.log(f1());   // 10
+
+
+var world = 10;
+function createFunction2() {
+    var world = 20;
+    return eval('world;'); // 这里的 world 指向函数作用域内的 world
+}
+console.log(createFunction2()); // 20
+~~~
+从上述的执行示例可以看出，使用 `Function` 的安全性更高。例如在具备模块化开发环境的 `Vue` 或者 `React` 项目中，开发者可能习惯性的在文件顶部使用 `var` 进行变量声明，此时变量被声明在模块的作用域内，而不是全局的作用域（不会被添加到 `window` 上），因此上述代码在模块化的环境中使用 `Function` 执行会报错，而 `eval` 不会。理论上在开发时应该避免上述这种依赖执行的情况出现，如果 `hello` 和 `world` 两个变量在构建时被压缩，那么代码执行就会产生意想不到的错误。当然也可以使得 `eval` 在全局作用域内生效，例如：
+~~~ts
+var world = 10;
+function createFunction2() {
+    var world = 20;
+    // https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/eval
+    // 使用间接调用 (0,eval) 或者 var geval = eval; 可以达到相同的效果
+    return window.eval('world;'); // 这里的 world 指向全局作用域内的 world
+}
+console.log(createFunction2()); // 10
+~~~
+::: tip
+温馨提示：感兴趣的同学还可以了解一下 `Function` 和 `eval` 的执行性能差异。在 `qiankun` 框架中使用了 `(0,eval)` 来执行微应用的 `JS` 文本，在 `icestark` 中优先使用 `Function` 执行 `JS` 文本。
+:::
+### 隔离方案设计
+`Window` 快照会完全复用主应用的 `Context`，本质上没有形成隔离，仅仅是在主应用 `Context` 的基础上记录运行时需要的差异属性，每一个微应用内部都需要维护一个和主应用 `window` 对象存在差异的对象。不管是调用 `Web API` 还是设置 `window` 属性值，本质上仍然是在主应用的 `window` 对象上进行操作，只是会在微应用切换的瞬间恢复主应用的 `window` 对象，此方案无法做到真正的 `Context` 隔离，并且在一个时刻只能运行一个微应用，无法实现多个微应用同时运行，具体方案如下所示：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/b8ad089abe594f3eaca923ab3d36f4c0~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+大致实现的思路如下所示：
+- 通过请求获取后端的微应用列表数据，动态创建主导航
+- 根据导航切换微应用，切换时会跨域请求微应用 `JS` 的文本内容并进行缓存处理
+- 切换微应用时需要先失活已经激活的微应用，确保一个时刻只有一个微应用运行
+- 运行微应用前需要将微应用之前运行记录的 `DIFF` 对象和主应用的 `window` 快照进行合并，从而恢复微应用之前运行的 `window` 对象
+- 失活微应用前需要先通过当前运行时的 `window` 对象和主应用 `window` 快照进行对比，计算出本次运行时的 `DIFF` 差异对象，为下一次恢复微应用的 `window` 对象做准备，同时通过快照恢复主应用的 `window` 对象
+
+导航的两个按钮（微应用导航）根据后端数据动态渲染，点击按钮后会跨域请求微应用的 JS 静态资源并进行快照隔离执行。
+
+快照隔离实现的文件的结构目录如下所示：
+~~~shell
+├── public                   # 托管的静态资源目录
+│   ├── main/                # 主应用资源目录                               
+│   │   └── index.html                                        
+│   └── micro/               # 微应用资源目录
+│        ├── micro1.js        
+│        └── micro2.js      
+├── config.js                # 公共配置
+├── main-server.js           # 主应用服务
+└── micro-server.js          # 微应用服务
+~~~
+其中 `micro1.js` 和 `micro2.js` 是需要被隔离执行的微应用 `JS` 脚本，它们的设计如下所示：
+~~~ts
+// public/micro/micro1.js
+let root = document.createElement("h1");
+root.textContent = "微应用1";
+root.id = 'micro1-dom';
+root.onclick = () => {
+  console.log("微应用1 的 window.a: ", window.a);
+};
+document.body.appendChild(root);
+
+window.a = 1;
+~~~
+~~~ts
+// public/micro/micro2.js
+let root = document.createElement("h1");
+root.textContent = "微应用2";
+root.id = 'micro2-dom';
+root.onclick = () => {
+  console.log("微应用2 的 window.a: ", window.a);
+};
+document.body.appendChild(root);
+
+window.a = 2;
+~~~
+上述代码如果直接使用动态 `Script` 的方案进行请求和执行，会产生如下错误：
+- `root` 变量会重复声明报错，在本示例中会使用立即执行的匿名函数进行作用域隔离处理
+- `window.a` 不会被隔离，微应用会因为共用 `window.a` 而产生意想不到的结果
+
+接下来我们可以利用立即执行的匿名函数将微应用的 `JS` 文本进行包装，并使用 `eval` 进行手动执行。在这里，我们可以将之前 `iframe` 隔离中的 `MicroAppSandbox` 类进行改造，如下所示：
+~~~ts
+class MicroAppSandbox {
+  // 配置信息
+  options = null;
+  // 是否执行过 JS
+  exec = false;
+  // 微应用 JS 运行之前的主应用 window 快照
+  mainWindow = {};
+  // 微应用 JS 运行之后的 window 对象（用于理解）
+  microWindow = {};
+  // 微应用失活后和主应用的 window 快照存在差异的属性集合
+  diffPropsMap = {};
+
+  constructor(options) {
+    this.options = options;
+    // 重新包装需要执行的微应用 JS 脚本
+    this.wrapScript = this.createWrapScript();
+  }
+
+  createWrapScript() {
+    // 微应用的代码运行在立即执行的匿名函数中，隔离作用域
+    return `;(function(window){
+      ${this.options.scriptText}
+    })(window)`;
+  }
+
+  execWrapScript() {
+    // 在全局作用域内执行微应用代码
+    (0, eval)(this.wrapScript);
+  }
+
+  // 微应用 JS 运行之前需要记录主应用的 window 快照（用于微应用失活后的属性差异对比）
+  recordMainWindow() {
+    for (const prop in window) {
+      if (window.hasOwnProperty(prop)) {
+        this.mainWindow[prop] = window[prop];
+      }
+    }
+  }
+
+  // 微应用 JS 运行之前需要恢复上一次微应用执行后的 window 对象
+  recoverMicroWindow() {
+    // 如果微应用和主应用的 window 对象存在属性差异
+    // 上一次微应用 window = 主应用 window + 差异属性（在微应用失活前会记录运行过程中涉及到更改的 window 属性值，再次运行之前需要恢复修改的属性值）
+    Object.keys(this.diffPropsMap).forEach((p) => {
+      // 更改 JS 运行之前的微应用 window 对象，注意微应用本质上共享了主应用的 window 对象，因此一个时刻只能运行一个微应用
+      window[p] = this.diffPropsMap[p];
+    });
+    // 用于课程理解
+    this.microWindow = window;
+  }
+
+  recordDiffPropsMap() {
+    // 这里的 microWindow 是微应用失活之前的 window（在微应用执行期间修改过 window 属性的 window）
+    for (const prop in this.microWindow) {
+      // 如果微应用运行期间存在和主应用快照不一样的属性值
+      if (
+        window.hasOwnProperty(prop) &&
+        this.microWindow[prop] !== this.mainWindow[prop]
+      ) {
+        // 记录微应用运行期间修改或者新增的差异属性（下一次运行微应用之前可用于恢复微应用这一次运行的 window 属性）
+        this.diffPropsMap[prop] = this.microWindow[prop];
+        // 恢复主应用的 window 属性值
+        window[prop] = this.mainWindow[prop];
+      }
+    }
+  }
+
+  active() {
+    // 记录微应用 JS 运行之前的主应用 window 快照
+    this.recordMainWindow();
+    // 恢复微应用需要的 window 对象
+    this.recoverMicroWindow();
+    if (this.exec) {
+      return;
+    }
+    this.exec = true;
+    // 执行微应用（注意微应用的 JS 代码只需要被执行一次）
+    this.execWrapScript();
+  }
+
+  inactive() {
+    // 清空上一次记录的属性差异
+    this.diffPropsMap = {};
+    // 记录微应用运行后和主应用 Window 快照存在的差异属性
+    this.recordDiffPropsMap();
+    console.log(
+      `${this.options.appId} diffPropsMap: `,
+      this.diffPropsMap
+    );
+  }
+}
+~~~
+`MicroApps` 和 `MicroApp` 和 `iframe` 隔离方案设计基本一致（注释部分是差异部分）：
+~~~ts
+class MicroApp {
+  
+  scriptText = "";
+
+  sandbox = null;
+
+  rootElm = null;
+
+  constructor(rootElm, app) {
+    this.rootElm = rootElm;
+    this.app = app;
+  }
+
+  async fetchScript(src) {
+    try {
+      const res = await window.fetch(src);
+      return await res.text();
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async active() {
+
+    if (!this.scriptText) {
+      this.scriptText = await this.fetchScript(this.app.script);
+    }
+
+    if (!this.sandbox) {
+      this.sandbox = new MicroAppSandbox({
+        scriptText: this.scriptText,
+        appId: this.app.id,
+      });
+    }
+
+    this.sandbox.active();
+
+    // 获取元素并进行展示，这里先临时约定微应用往 body 下新增 id 为 `${this.app.id}-dom` 的元素
+    const microElm = document.getElementById(`${this.app.id}-dom`);
+    if (microElm) {
+      microElm.style = "display: block";
+    }
+  }
+
+  inactive() {
+  
+    // 获取元素并进行隐藏，这里先临时约定微应用往 body 下新增 id 为 `${this.app.id}-dom` 的元素
+    const microElm = document.getElementById(`${this.app.id}-dom`);
+    if (microElm) {
+      microElm.style = "display: none";
+    }
+    this.sandbox?.inactive();
+  }
+}
+
+class MicroApps {
+
+  appsMap = new Map();
+
+  rootElm = null;
+
+  constructor(rootElm, apps) {
+    this.rootElm = rootElm;
+    this.setAppMaps(apps);
+  }
+
+  setAppMaps(apps) {
+    apps.forEach((app) => {
+      this.appsMap.set(app.id, new MicroApp(this.rootElm, app));
+    });
+  }
+
+  prefetchApps() {}
+
+  activeApp(id) {
+    const app = this.appsMap.get(id);
+    app?.active();
+  }
+
+  inactiveApp(id) {
+    const app = this.appsMap.get(id);
+    app?.inactive();
+  }
+}
+~~~
+`MainApp` 中需要确保一个时刻只能运行一个微应用，因此在微应用激活之前，需要先失活已经激活运行的微应用，如下所示：
+~~~ts
+class MainApp {
+  microApps = [];
+  microAppsManager = null;
+
+  constructor() {
+    this.init();
+  }
+
+  async init() {
+    this.microApps = await this.fetchMicroApps();
+    this.createNav();
+    this.navClickListener();
+    this.hashChangeListener();
+    this.microAppsManager = new MicroApps(
+      document.getElementById("container"),
+      this.microApps
+    );
+  }
+
+  async fetchMicroApps() {
+    try {
+      const res = await window.fetch("/microapps", {
+        method: "post",
+      });
+      return await res.json();
+    } catch (err) {
+      console.error(err);
+    }
+  }
+  
+  createNav(microApps) {
+    const fragment = new DocumentFragment();
+    this.microApps?.forEach((microApp) => {
+      const button = document.createElement("button");
+      button.textContent = microApp.name;
+      button.id = microApp.id;
+      fragment.appendChild(button);
+    });
+    nav.appendChild(fragment);
+  }
+
+  navClickListener() {
+    const nav = document.getElementById("nav");
+    nav.addEventListener("click", (e) => {
+      // 此时有一个微应用已经被激活运行
+      console.log("主应用 window.a: ", window.a);
+      window.location.hash = event?.target?.id;
+    });
+  }
+
+  hashChangeListener() {
+    window.addEventListener("hashchange", () => {
+    
+      // 需要失活应用，为了确保一个时刻只能激活一个应用（这里可以设计微应用的运行状态，根据状态进行处理）
+      this.microApps?.forEach(async ({ id }) => {
+        if (id !== window.location.hash.replace("#", "")) {
+          this.microAppsManager.inactiveApp(id);
+        }
+      });
+
+      // 没有微应用被激活时，主应用的 window 对象会被恢复
+      console.log("恢复主应用的 window.a: ", window.a);
+
+      // 激活应用
+      this.microApps?.forEach(async ({ id }) => {
+        if (id === window.location.hash.replace("#", "")) {
+          this.microAppsManager.activeApp(id);
+        }
+      });
+
+    });
+  }
+}
+
+new MainApp();
+~~~
+具备了上述快照隔离能力后：
+- 可以解决 `let` 或者 `const` 声明变量的隔离问题
+- 可以解决微应用之间的全局属性隔离问题，包括使用未限定标识符的变量、`this`
+- 无法实现主应用和微应用同时运行时的全局属性隔离问题
+
+## 框架原理：通信
+主应用和微应用在运行期间可能需要实现主子应用之间的通信，接下来将重点讲解微前端的通信方式以及实现示例。
+
+### 通信模式
+在了解微前端的通信方式之前，我们先来了解两种常用的通信模式：**观察者和发布 / 订阅模式**。两者最主要的区别是一对多单向通信还是多对多双向通信的问题。以微前端为例，如果只需要主应用向各个子应用单向广播通信，并且多个子应用之间互相不需要通信，那么只需要使用观察者模式即可，而如果主应用需要和子应用双向通信，或者子应用之间需要实现去中心化的双向通信，那么需要使用发布 / 订阅模式。
+
+在浏览器中会使用观察者模式来实现**内置 API 的单向通信**，例如 `IntersectionObserver`、`MutationObserver`、`ResizeObserver` 以及 `PerformanceObserver` 等，而发布 / 订阅模式则通常是框架提供的一种供外部开发者自定义通信的能力，例如浏览器中的 `EventTarget`、`Node.js` 中的 `EventEmitter`、`Vue.js` 中的 `$emit` 等。
+
+### 观察者模式
+观察者模式需要包含 `Subject` 和 `Observer` 两个概念，其中 `Subject` 是需要被观察的目标对象，一旦状态发生变化，可以通过广播的方式通知所有订阅变化的 `Observer`，而 `Observer` 则是通过向 `Subject` 进行消息订阅从而实现接收 `Subject` 的变化通知，具体如下所示：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/e231141543db4bd9bbbc114c6e7da0c1~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+我们以浏览器的 `MutationObserver` 为例，来看下观察者模式如何运作：
+~~~html
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Document</title>
+  </head>
+  <body>
+    <div id="subject"></div>
+  </body>
+
+  <script>
+    // 当观察到变动时执行的回调函数
+    const callback = function (mutationsList, observer) {
+      // Use traditional 'for loops' for IE 11
+      for (let mutation of mutationsList) {
+        if (mutation.type === "childList") {
+          console.log("A child node has been added or removed.");
+        } else if (mutation.type === "attributes") {
+          console.log(
+            "The " + mutation.attributeName + " attribute was modified."
+          );
+        }
+      }
+    };
+
+    // 创建第一个 Observer
+    const observer1 = new MutationObserver(callback);
+
+    // Subject 目标对象
+    const subject = document.getElementById("subject");
+    
+    // Observer 的配置（需要观察什么变动）
+    const config = { attributes: true, childList: true, subtree: true };
+
+    // Observer 订阅 Subject 的变化
+    observer1.observe(subject, config);
+
+    // 创建第二个 Observer
+    const observer2 = new MutationObserver(callback);
+
+    // Observer 订阅 Subject 的变化
+    observer2.observe(subject, config);
+
+    // Subject 的属性变化，会触发 Observer 的 callback 监听
+    subject.className = "change class";
+    
+    // Subject 的子节点变化，会触发 Observer 的 callback 监听
+    subject.appendChild(document.createElement("span"));
+
+    // 这里为什么需要 setTimeout 呢？如果去除会有什么影响吗？
+    setTimeout(() => {
+      // 取消订阅
+      observer1.disconnect();
+      observer2.disconnect();
+    });
+  </script>
+</html>
+~~~
+当 `DOM` 元素（`Subject` 目标对象）改变自身的属性或者添加子元素时，都会将自身的状态变化单向通知给所有订阅该变化的观察者。当然上述 `Web API` 内部包装了很多功能，例如观察者配置。我们可以设计一个更加便于理解的观察者通信方式：
+~~~ts
+class Subject {
+  constructor() {
+    this.observers = [];
+  }
+
+  // 添加订阅
+  subscribe(observer) {
+    this.observers.push(observer);
+  }
+
+  // 取消订阅
+  unsubscribe() {}
+
+  // 广播信息
+  broadcast() {
+    this.observers.forEach((observer) => observer.update());
+  }
+}
+
+class Observer {
+  constructor() {}
+
+  // 实现一个 update 的接口，供 subject 耦合调用
+  update() {
+    console.log("observer update...");
+  }
+}
+
+const subject = new Subject();
+
+subject.subscribe(new Observer());
+
+subject.broadcast();
+
+subject.subscribe(new Observer());
+
+subject.broadcast();
+~~~
+上述观察者模式没有一个实体的 `Subject` 对象，我们可以结合 `DOM` 做一些小小的改动，例如：
+~~~html
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Document</title>
+  </head>
+  <body>
+    <!-- 目标对象 -->
+    <input type="checkbox" id="checkbox" />
+
+    <!-- 观察者 -->
+    <div id="div"></div>
+    <h1 id="h1"></h1>
+    <span id="span"></span>
+
+    <script>
+      class Subject {
+        constructor() {
+          this.observers = [];
+        }
+
+        // 添加订阅
+        subscribe(observer) {
+          this.observers.push(observer);
+        }
+
+        // 取消订阅
+        unsubscribe() {}
+
+        // 广播信息
+        broadcast(value) {
+          this.observers.forEach((observer) => observer.update(value));
+        }
+      }
+
+      // 观察的目标对象
+      const checkbox = document.getElementById("checkbox");
+
+      // 将 subject 实例挂载到 DOM 对象上（也可以单独使用）
+      checkbox.subject = new Subject();
+
+      checkbox.onclick = function (event) {
+        // 通知观察者 checkbox 的变化
+        checkbox.subject.broadcast(event.target.checked);
+      };
+
+      // 观察者
+      const span = document.getElementById("span");
+      const div = document.getElementById("div");
+      const h1 = document.getElementById("h1");
+
+      // 观察者实现各自 update 接口
+      span.update = function (value) {
+        span.innerHTML = value;
+      };
+      div.update = function (value) {
+        div.innerHTML = value;
+      };
+      h1.update = function (value) {
+        h1.innerHTML = value;
+      };
+
+      // 添加订阅
+      checkbox.subject.subscribe(span);
+      checkbox.subject.subscribe(div);
+      checkbox.subject.subscribe(h1);
+    </script>
+  </body>
+</html>
+~~~
+### 发布 / 订阅模式
+发布 / 订阅模式需要包含 `Publisher`、`Channels` 和 `Subscriber` 三个概念，其中 Publisher 是信息的发送者，`Subscriber` 是信息的订阅者，而 `Channels` 是信息传输的通道，如下所示：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/393f05012c7e4c0b848d8ee758c7559f~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+发布者可以向某个通道传输信息，而订阅者则可以订阅该通道的信息变化。通过新增通道，可以将发布者和订阅者解耦出来，从而形成一种去中心化的通信模式。如上图所示，订阅者本身也可以是发布者，从而实现事件的双向通信。我们以浏览器的 `EventTarget` 为例，来看下发布 / 订阅模式如何运作：
+~~~ts
+const event = new EventTarget();
+// event 是订阅者
+event.addEventListener("channel1", (e) => console.log(e.detail));
+// event 是发布者
+event.dispatchEvent(
+  new CustomEvent("channel1", { detail: { hello: true } })
+);
+event.dispatchEvent(
+  new CustomEvent("channel2", { detail: { hello: true } })
+);
+// 由于先发布后订阅，导致订阅失败，但是发布者不感知订阅者的失败状态
+event.addEventListener("channel2", (e) => console.log(e.detail));
+~~~
+我们可以通过简单的几行代码实现上述功能，如下所示：
+~~~ts
+class Event {
+  constructor() {
+    this.channels = {};
+    // 这里的 token 也可以是随机生成的 uuid
+    this.token = 0;
+  }
+
+  // 实现订阅
+  subscribe(channel, callback) {
+    if (!this.channels[channel]) this.channels[channel] = [];
+    this.channels[channel].push({
+      channel,
+      token: ++this.token,
+      callback,
+    });
+    return this.token;
+  }
+
+  // 实现发布
+  publish(channel, data) {
+    const subscribers = this.channels[channel];
+    if (!subscribers) return;
+    let len = subscribers.length;
+    while (len--) {
+      subscribers[len]?.callback(data, subscribers[len].token);
+    }
+  }
+
+  // 取消订阅
+  unsubscribe(token) {
+    for (let channel in this.channels) {
+      const index = this.channels[channel].findIndex(
+        (subscriber) => subscriber.token === token
+      );
+      if (index !== -1) {
+        this.channels[channel].splice(index, 1);
+        if (!this.channels[channel].length) {
+          delete this.channels[channel];
+        }
+        return token;
+      }
+    }
+  }
+}
+
+const event = new Event();
+const token = event.subscribe("channel1", (data) => console.log('token: ', data));
+const token1 = event.subscribe("channel1", (data) => console.log('token1: ', data));
+// 打印 token 和 token1
+event.publish("channel1", { hello: true });
+event.unsubscribe(token);
+// 打印 token1，因为 token 取消了订阅
+event.publish("channel1", { hello: true });
+~~~
+发布 / 订阅模式和观察者模式存在明显差异，首先在功能上观察者模式是一对多的单向通信模式，而发布 / 订阅模式是多对多的双向通信模式。其次观察者模式需要一个中心化的 `Subject` 广播消息，并且需要感知 `Observer`（例如上述的 `observers` 列表) 实现通知，是一种紧耦合的通信方式。而发布 / 订阅模式中的发布者只需要向特定的通道发送信息，并不感知订阅者的订阅状态，是一种松散解耦的通信方式。
+
+### 微前端通信
+在微前端中往往需要实现多对多的双向通信模式，例如微应用之间实现通信，主应用和微应用之间实现通信，因此使用发布 / 订阅模式是一种不错的选择。如果微应用和主应用处于同一个全局执行上下文，那么可以利用 `window` 变量实现通信，因为 `window` 实现了 [EventTarget](https://developer.mozilla.org/zh-CN/docs/Web/API/EventTarget) 的通信接口，例如常见的 `single-spa`，它会将应用的生命周期通过 `EventTarget` （`window.dispatchEvent`）的形式广播出来，从而可以使得 `qiankun` 实现监听处理。
+
+~~~ts
+// 主应用
+window.addEventListener("microChannel", (e) => {
+  console.log("main addEventListener: ", e);
+
+  window.dispatchEvent(
+    new CustomEvent("mainChannel", {
+      detail: "main",
+    })
+  );
+});
+~~~
+~~~ts
+// iframe 子应用1（加载以后立马触发）
+window.parent.addEventListener("mainChannel", (e) => {
+  console.log("micro1 addEventListener: ", e);
+});
+
+window.parent.dispatchEvent(
+  new CustomEvent("microChannel", {
+    detail: "micro1",
+  })
+);
+~~~
+~~~ts
+// iframe 子应用2
+window.parent.addEventListener("mainChannel", (e) => {
+  console.log("micro2 addEventListener: ", e);
+});
+
+window.parent.dispatchEvent(
+  new CustomEvent("microChannel", {
+    detail: "micro2",
+  })
+);
+~~~
+需要注意使用发布 / 订阅模式时先进行订阅处理，从而防止发布后没有及时订阅导致消息丢失。例如上述示例，如果微应用先发布消息然后再进行消息订阅，那么会使得首次无法接收消息。
+::: tip
+温馨提示：如果想使用自定义的发布 / 订阅模式，可以在 `window` 上挂载一个发布 / 订阅对象实现通信。除此之外，如果通信消息并不是所有子应用都可以订阅，那么可以通过类似于 `props` 的方式传递发布 / 订阅对象给需要的子应用进行处理，例如 `Web Components` 中可以通过属性的方式进行对象传递，从而实现特定范围内的通信。
+:::
+当然，如果主应用和微应用不同域的情况下通信，则会报跨域的错误：
+~~~html
+<!-- main.html：http://30.120.112.80:4000/ -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>通信测试</title>
+  </head>
+  <body>
+    <h1>main 应用</h1>
+    <br />
+    <!-- 跨域应用：iframe.html -->
+    <iframe id="iframe" src="<%= iframeUrl %>"></iframe>
+
+    <script>
+      const iframe = document.getElementById("iframe");
+
+      iframe.onload = () => {
+        window.dispatchEvent(
+          new CustomEvent({
+            detail: "main",
+          })
+        );
+        
+        // (index):14 Uncaught DOMException: Blocked a frame with origin "http://30.120.112.80:4000" 
+        // from accessing a cross-origin frame. at http://30.120.112.80:4000/:14:21
+        iframe.contentWindow.dispatchEvent(
+          new CustomEvent({
+            detail: "iframe",
+          })
+        );
+      };
+    </script>
+  </body>
+</html>
+~~~
+~~~html
+<!-- 跨域的 iframe.html：http://30.120.112.80:3000/ -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>跨域的 iframe 应用</title>
+  </head>
+  <body>
+    <h1>跨域的 iframe 应用</h1>
+
+    <script>
+    
+      // (index):14 Uncaught DOMException: Blocked a frame with origin "http://30.120.112.80:3000" 
+      // from accessing a cross-origin frame. at http://30.120.112.80:3000/:14:21
+      window.parent.addEventListener('main', (e) => {
+        console.log('iframe addEventListener: ', e);
+      })
+
+      window.addEventListener('iframe', (e) => {
+        console.log('iframe addEventListener: ', e);
+      })
+    </script>
+  </body>
+</html>
+~~~
+此时可以通过 `postMessage` 实现跨域通信：
+~~~html
+<!-- main.html -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>通信测试</title>
+  </head>
+  <body>
+    <h1>main 应用</h1>
+    <br />
+    <!-- 跨域应用：iframe.html -->
+    <iframe id="micro1" src="<%= micro1 %>"></iframe>
+    <iframe id="micro2" src="<%= micro2 %>"></iframe>
+
+    <script>
+      const micro1 = document.getElementById("micro1");
+      const micro2 = document.getElementById("micro2");
+
+      // 等待 iframe 加载完毕后才能通信
+      micro1.onload = () => {
+        // 给子应用发送消息，注意明确 targetOrigin
+        micro1.contentWindow.postMessage("main", "<%= micro1 %>");
+      };
+
+      micro2.onload = () => {
+        micro2.contentWindow.postMessage("main", "<%= micro2 %>");
+      };
+
+      // 接收来自于 iframe 的消息
+      window.addEventListener("message", (data) => {
+        // 通过 data.origin 来进行应用过滤
+        if (
+          data.origin === "<%= micro1 %>" ||
+          data.origin === "<%= micro2 %>"
+        ) {
+          console.log("main: ", data);
+        }
+      });
+    </script>
+  </body>
+</html>
+~~~
+~~~html
+<!-- micro1.html -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>跨域的 iframe 应用</title>
+  </head>
+  <body>
+    <h1>跨域的 iframe 应用</h1>
+
+    <script>
+      window.addEventListener("message", (data) => {
+        console.log("micro1: ", data);
+
+        if (data.origin === "<%= mainUrl %>") {
+          window.parent.postMessage("micro1", "<%= mainUrl %>");
+        }
+      });
+    </script>
+  </body>
+</html>
+~~~
+~~~html
+<!-- micro2.html -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>跨域的 iframe 应用</title>
+  </head>
+  <body>
+    <h1>跨域的 iframe 应用</h1>
+
+    <script>
+      window.addEventListener("message", (data) => {
+        console.log("micro2: ", data);
+        if (data.origin === "<%= mainUrl %>") {
+          window.parent.postMessage("micro1", "<%= mainUrl %>");
+        }
+      });
+    </script>
+  </body>
+</html>
+~~~
+三者的服务端设计如下所示：
+~~~ts
+// config.js
+// https://github.com/indutny/node-ip
+import ip from 'ip';
+import path from "path";
+import { fileURLToPath } from "url";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+export default {
+  port: {
+    main: 4000,
+    micro1: 3000,
+    micro2: 2000
+  },
+
+  // 获取本机的 IP 地址
+  host: ip.address(),
+
+  __dirname
+};
+~~~
+~~~ts
+// main-server.js
+import path from 'path';
+// https://github.com/expressjs/express
+import express from 'express';
+// ejs 中文网站: https://ejs.bootcss.com/#promo
+// ejs express 示例: https://github.com/expressjs/express/blob/master/examples/ejs/index.js
+import ejs from "ejs";
+import config from './config.js';
+const { port, host, __dirname } = config;
+
+const app = express();
+
+app.engine(".html", ejs.__express);
+app.set("views", path.join(__dirname, "views"));
+app.set("view engine", "html");
+
+// 浏览器访问 http://${host}:${port.main}/ 时会渲染 views/main.html 
+app.get("/", function (req, res) {
+  // 使用 ejs 模版引擎填充主应用 views/main.html 中的 micro 变量，并将其渲染到浏览器
+  res.render("main", {
+    // 填充子应用的地址，只有端口不同，iframe 应用和 main 应用跨域
+    micro1: `http://${host}:${port.micro1}`,
+    micro2: `http://${host}:${port.micro2}`
+  });
+});
+
+// 启动 Node 服务
+app.listen(port.main, host);
+console.log(`server start at http://${host}:${port.main}/`);
+~~~
+~~~ts
+// micro1-server.js
+import path from 'path';
+import express from 'express';
+import ejs from "ejs";
+import config from './config.js';
+const { port, host, __dirname } = config;
+
+const app = express();
+
+app.engine(".html", ejs.__express);
+app.set("views", path.join(__dirname, "views"));
+app.set("view engine", "html");
+
+app.get("/", function (req, res) {
+  res.render("micro1", {
+    mainUrl:  `http://${host}:${port.main}`
+  });
+});
+
+// 启动 Node 服务
+app.listen(port.micro1, host);
+console.log(`server start at http://${host}:${port.micro1}/`);
+~~~
+~~~ts
+// micro2-server.js
+import path from 'path';
+import express from 'express';
+import ejs from "ejs";
+import config from './config.js';
+const { port, host, __dirname } = config;
+
+const app = express();
+
+app.engine(".html", ejs.__express);
+app.set("views", path.join(__dirname, "views"));
+app.set("view engine", "html");
+
+app.get("/", function (req, res) {
+  res.render("micro2", {
+    mainUrl:  `http://${host}:${port.main}`
+  });
+});
+
+// 启动 Node 服务
+app.listen(port.micro2, host);
+console.log(`server start at http://${host}:${port.micro2}/`);
+~~~
+
+
+
+
+
+
+
+
 
 
 

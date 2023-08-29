@@ -142,7 +142,7 @@
 
 
 
-整型
+**整型**
 
 |  类型  |                             描述                             |
 | :----: | :----------------------------------------------------------: |
@@ -155,7 +155,7 @@
 | int32  |         有符号 32位整型 (-2147483648 到 2147483647)          |
 | int64  | 有符号 64位整型 (-9223372036854775808 到 9223372036854775807) |
 
-特殊整型
+**特殊整型**
 
 |  类型   |                        描述                        |
 | :-----: | :------------------------------------------------: |
@@ -163,32 +163,32 @@
 |   int   |  32位操作系统上就是int32，64位操作系统上就是int64  |
 | uintptr |            无符号整型，用于存放一个指针            |
 
-**注意：**
+::: tip
 在使用`int`和 `uint`类型时，不能假定它是32位或64位的整型，而是考虑`int`和`uint`可能在不同平台上的差异。
-
-**注意事项**
+:::
+::: tip
 获取对象的长度的内建`len()`函数返回的长度可以根据不同平台的字节长度进行变化。实际使用中，切片或 map 的元素数量等都可以用`int`来表示。在涉及到二进制传输、读写文件的结构描述时，为了保持文件的结构不会受到不同编译目标平台字节长度的影响，不要使用`int`和 `uint`
+:::
 
 
-
-浮点型
+**浮点型**
 
 Go语言支持两种浮点型数：`float32`和`float64`。这两种浮点型数据格式遵循`IEEE 754`标准：
-`float32` 的浮点数的最大范围约为 `3.4e38`，可以使用常量定义：`math.MaxFloat32`。
-`float64` 的浮点数的最大范围约为 `1.8e308`，可以使用一个常量定义：`math.MaxFloat64`。
+- `float32` 的浮点数的最大范围约为 `3.4e38`，可以使用常量定义：`math.MaxFloat32`。
+- `float64` 的浮点数的最大范围约为 `1.8e308`，可以使用一个常量定义：`math.MaxFloat64`。
 
 
 
-复数
+**复数**
 
 complex64和complex128
 
-复数有实部和虚部，complex64的实部和虚部为32位，complex128的实部和虚部为64位。
+复数有实部和虚部:
+- complex64的实部和虚部为32位。
+- complex128的实部和虚部为64位。
 
-
-
-基本数据转String
-
+**基本数据转String**
+~~~go
 fmt.Sprintf()
 
 strconv.FormatInt(变量, 进制)
@@ -198,11 +198,9 @@ strconv.FormatFloat(变量, 格式, 小数保留几位, 小数类型值如: 64)
 strconv.FormatBool(变量)
 
 strconv.Itoa(变量)
-
-
-
-String转基础数据
-
+~~~
+**String转基本数据**
+~~~go
 Parse系列函数有两个返回值,可以用b,_接收,下划线表示忽略
 
 strconv.ParseBool(变量)
@@ -210,20 +208,14 @@ strconv.ParseBool(变量)
 strconv.ParseInt(变量, 进制, 整型位数)
 
 strconv.ParseFloat(变量, 小数类型位数)
-
+~~~
 
 
 **指针(slice)**
-
-变量的地址存的值, 地址通过: &变量 获取
-
-指针变量存储的地址里的值通过: *指针变量 获取
-
-指针用来存储内存地址,且只能存一个,重复存储会覆盖掉旧值
-
-值类型都有对应的指针类型
-
-值类型: int系列, float系列, bool, string, 数组 , struct
+- 变量的地址存的值, 地址通过: &变量 获取
+- 指针变量存储的地址里的值通过: *指针变量 获取
+- 指针用来存储内存地址,且只能存一个,重复存储会覆盖掉旧值
+- 值类型都有对应的指针类型
 
 ~~~go
 var num int = 10 
@@ -240,26 +232,17 @@ var i *int;
 i = new(int); 
 *i = 1
 ~~~
-
-
-
-运算符注意点
-
+运算符注意点：
 1. 整数相除会舍弃小数位
 2. ++和--只能独立使用, 如( a = i++ )是错误的
 3. 只有(i++, i--) 没有(++i, --i)
 4. %取余的本质是: a % b = a - a / b * b
-
-
-
-获取控制台输入的值
-
+   
+获取控制台输入的值：
+~~~go
 fmt.Scanf(指定%格式, 变量地址)与fmt.Scanln(变量地址)
-
-
-
-流程控制语句
-
+~~~
+流程控制语句：
 ~~~go
 if a < 10 {
 
@@ -270,28 +253,26 @@ if b := 1; b < 10 {
 }
 //if判断中可以直接定义变量
 ~~~
-
 ~~~go
 switch score := 30; {
-    case 'a':
-    fmt.Println('a')
-    case 'b':
-    fmt.Println('b')
-    case 'c', 'd':
-    fmt.Println('c', 'd')
+    case "a":
+    fmt.Println("a")
+    case "b":
+    fmt.Println("b")
+    case "c", "d":
+    fmt.Println("c", "d")
 	case score > 20 $$ score < 50:
-    fmt.Println('判断')
+    fmt.Println("判断")
     fallthrough
     case:
-    fmt.Println('0')
+    fmt.Println("0")
     default:
-    fmt,Println('以上都不匹配,默认输出')
+    fmt,Println("以上都不匹配,默认输出")
 }
 //不需要break, case后面可以带多个表达式用逗号分隔
 //case后面也可不带表达式, 也可以直接定义变量, 不推荐
 //fallthrough穿透: 当前case成立,仍执行后面的case,只穿透一层
 ~~~
-
 ~~~go
 for i := 1; i <= 10;i++ {
 
@@ -303,7 +284,6 @@ for index, value := range str {
 }
 //for-range默认按字符方式遍历
 ~~~
-
 ~~~go
 lable2:
 for i := 0;i < 4;i++ {
@@ -312,13 +292,12 @@ for i := 0;i < 4;i++ {
         if j == 2 {
             break label1
         }
-        fmt.Println('123')
+        fmt.Println("123")
     }
 }
 //break默认会跳出最近的循环
 //当指定跳出的标签时,会跳出标签层对应的for循环
 ~~~
-
 ~~~go
 lable2:
 for i := 0;i < 4;i++ {
@@ -327,13 +306,12 @@ for i := 0;i < 4;i++ {
         if j == 2 {
             continue label1
         }
-        fmt.Println('123')
+        fmt.Println("123")
     }
 }
 //continue默认结束当前最近的循环,执行下次循环
 //当指定跳出的标签时,会结束标签层对应的当前循环,执行下次循环
 ~~~
-
 ~~~go
 fmt.Println("1")
 goto label
@@ -346,12 +324,8 @@ fmt.Println("6")
 //goto语句指定标签,直接跳到标签处执行代码,不建议使用该语句
 //通常与if语句一起使用
 ~~~
-
-
-
-函数类型
-
-返回值支持命名和多个
+**函数类型**
+- 返回值支持命名和多个
 
 ~~~go
 //定义函数类型
@@ -370,7 +344,6 @@ func main() {
 	fmt.Println(res3)
 }
 ~~~
-
 ~~~go
 func myfunc(args... int) (i int, o int) {
     num := 1
@@ -381,7 +354,6 @@ func myfunc(args... int) (i int, o int) {
 }
 //args...代表传进来的多个参数,类型是切片
 ~~~
-
 ~~~go
 var abc int = 567
 func init(){
@@ -398,130 +370,133 @@ func main(){
 
 
 
-### 常用函数
+## 常用函数
 
-#### 字符串
-
-**len(str)**					
-
+### 字符串
+~~~go
+len(str)					
 //返回变量的长度, 内置函数(无需引包)
-
-**[]rune(str)**
-
+~~~
+~~~go
+[]rune(str)
 //转为切片并返回, 内置函数(无需引包), 解决遍历字符串出现乱码的问题.
-
-**strconv.Atoi("123")**
-
+~~~
+~~~go
+strconv.Atoi("123")
 //有两个返回值: value和error
-
 //字符串转整数并返回, 需要引包, 只能转数字字符串, 否则返回的为nil零值
-
-**strconv.Itoa(123)**
-
+~~~
+~~~go
+strconv.Itoa(123)
 //整数转字符串并返回, 需要引包
-
+~~~
+~~~go
 **[]byte("hello")**
-
 //字符串转byte切片并返回ascll码值
-
-**string([]byte{97,98,99})**
-
+~~~
+~~~go
+string([]byte{97,98,99})
 //将byte切片转为字符串并返回, 内置函数
-
-**strconv.FormatInt(123, 2)**
-
+~~~
+~~~go
+strconv.FormatInt(123, 2)
 //10进制转其他进制并返回
-
-**strings.Contains("hello", "he")**
-
+~~~
+~~~go
+strings.Contains("hello", "he")
 //查找子字符串是否在指定的字符串中, 返回布尔值, 需要引包
-
-**strings.Count("ababa", "ab")**
-
+~~~
+~~~go
+strings.Count("ababa", "ab")
 //统计子字符串在指定的字符串中有多少个并返回, 需要引包
-
-**strings.EqualFold("abc", "ABC")**
-
+~~~
+~~~go
+strings.EqualFold("abc", "ABC")
 //字符串比较, 不区分大小写(==是区分大小写), 返回布尔值, 需要引包
-
-**strings.Index("abc", "b")**
-
+~~~
+~~~go
+strings.Index("abc", "b")
 //返回子字符串在指定字符串中第一次出现的值的索引值, 需要引包
-
-**strings.LastIndex("abc", "b")**
-
+~~~
+~~~go
+strings.LastIndex("abc", "b")
 //返回子字符串在指定字符串中最后一次出现的值的索引值, 需要引包
-
-**strings.Replace("gogohello", "go", "ios", -1)**
-
+~~~
+~~~go
+strings.Replace("gogohello", "go", "ios", -1)
 //指定初始字符串, 要替换的位置子串, 替换后的子串, 替换次数
-
 //-1为替换所有匹配的子串, 不改变初始字符串, 返回替换后的新字符串
-
-**strings.Split("go,go,hello",  ",")**
-
+~~~
+~~~go
+strings.Split("go,go,hello",  ",")
 //按照指定的字符分割字符串,返回一个包含分割后的多个字符串的数组
-
 //不会改变初始字符串本身
-
-**strings.ToLower("Go")**
-
+~~~
+~~~go
+strings.ToLower("Go")
 //字符串转小写并返回, 不改变字符串本身
-
-**strings.ToUpper("Go")**
-
+~~~
+~~~go
+strings.ToUpper("Go")
 //字符串转大写并返回, 不改变字符串本身
-
-**strings.TrimSpace(" gao ")**
-
+~~~
+~~~go
+strings.TrimSpace(" gao ")
 //去除字符串两端空格并返回, 不改变字符串本身
-
-**strings.Trim("!gao!", "!")**
-
+~~~
+~~~go
+strings.Trim("!gao!", "!")
 //去掉字符串两端指定的字符并返回, 不改变字符串本身
-
-**strings.TrimLeft("!gao", "!")**
-
+~~~
+~~~go
+strings.TrimLeft("!gao", "!")
 //去掉字符串左边指定的字符并返回, 不改变字符串本身
-
-**strings.TrimRight("gao!", "!")**
-
+~~~
+~~~go
+strings.TrimRight("gao!", "!")
 //去掉字符串右边指定的字符并返回, 不改变字符串本身
-
-**strings.HasPrefix("!gao", "!")**
-
+~~~
+~~~go
+strings.HasPrefix("!gao", "!")
 //判断字符串是否以指定的字符开头并返回布尔值
-
-**strings.HasSuffix("gao!", "!")**
-
+~~~
+~~~go
+strings.HasSuffix("gao!", "!")
 //判断字符串是否以指定的字符结束并返回布尔值
-
-
-
-#### 时间日期
-
-**now := time.Now()**
-
+~~~
+### 时间日期
+~~~go
+now := time.Now()
 //获取当前时间并返回
-
-**now.Year()**
-
-**int(now.Month())**
-
-**now.Day()**
-
-**now.Hour()**
-
-**now.Minute()**
-
-**now.Second()**
-
-//依次获取年月日, 时分秒 
-
-**now.Format("2006-01-02 15:04:05")**
-
+~~~
+~~~go
+now.Year()
+// 获取年
+~~~
+~~~go
+int(now.Month())
+// 获取月
+~~~
+~~~go
+now.Day()
+// 获取日期
+~~~
+~~~go
+now.Hour()
+// 获取小时
+~~~
+~~~go
+now.Minute()
+// 获取分钟
+~~~
+~~~go
+now.Second()
+// 获取秒
+~~~
+~~~go
+now.Format("2006-01-02 15:04:05")
 //格式化日期时间
-
+~~~
 ~~~go
 type Duration int64
 const (
@@ -532,48 +507,37 @@ const (
 	Minute				= 60 * Second			//分
 	Hour				= 60 * Minute			//时
 )
+// 内置的时间常量
 ~~~
-
-//内置的时间常量
-
-**time.Sleep()**
-
+~~~go
+time.Sleep()
 //休眠即延迟执行, 可使用时间常量来计算需要休眠的时间 
-
-**now.Unix()**
-
+~~~
+~~~go
+now.Unix()
 //获取1970年到现在的秒数时间戳
-
-**now.UnixNano()**
-
+~~~
+~~~go
+now.UnixNano()
 //获取1970年到现在的纳秒数时间戳
-
-
-
-#### 内置 
-
-**new()**
-
+~~~
+### 内置变量初始化函数
+~~~go
+new()
 //传入一个值类型, 创建一个指针, 系统分配指针的地址值以及自身的地址
-
 //指针的地址值的值为传入值类型的零值
-
-**make()**
-
+~~~
+~~~go
+make()
 //传入一个引用类型, 创建一个指针, 系统分配指针的地址值以及自身的地址
-
 //指针的地址值的值为传入引用类型的零值
-
-
-
-
-
+~~~
 ### 错误处理
+- defer
+- panic
+- recover
 
-defer, panic, recover
-
-//Go中抛出一个panic异常,然后在defer中通过recover捕获, 然后正常处理
-
+Go中抛出一个panic异常,然后在defer中通过recover捕获, 然后正常处理：
 ~~~go
 func test () int {
 	defer func() {
@@ -588,7 +552,6 @@ func test () int {
 	return num3
 }
 
-
 func main()  {
 
 	test := test()
@@ -598,43 +561,34 @@ func main()  {
 }
 ~~~
 
-自定义错误
+**自定义错误**
 
 1. errors.New("错误说明"), 返回error类型的值为一个错误
 
-2. panic内置函数, 接收一个interface()类型的值, 可接收error类型变量
-
-   输出错误信息并退出程序
-
-~~~go
-func read(name string) (err error)  {
-	if name == "config" {
-		return nil
-	}else {
-		return errors.New("文件错误")
+2. panic内置函数, 接收一个interface()类型的值, 可接收error类型变量，输出错误信息并退出程序：
+	~~~go
+	func read(name string) (err error)  {
+		if name == "config" {
+			return nil
+		}else {
+			return errors.New("文件错误")
+		}
 	}
-}
-func test2()  {
-	err := read("config1")
-	if err != nil {
-		panic(err)
+	func test2()  {
+		err := read("config1")
+		if err != nil {
+			panic(err)
+		}
+		fmt.Println("正常执行")
 	}
-	fmt.Println("正常执行")
-}
-func main()  {
-	test2()
-}
-~~~
-
-
-
-### **结构体**
-
-结构体元素的地址是连续的, 是值类型
-
-在方法调用中遵守值拷贝传递的方式
-
-若要修改结构体变量的值, 可以通过结构体指针的方式去处理
+	func main()  {
+		test2()
+	}
+	~~~
+### 结构体
+- 结构体元素的地址是连续的, 是值类型
+- 在方法调用中遵守值拷贝传递的方式
+- 若要修改结构体变量的值, 可以通过结构体指针的方式去处理
 
 ~~~go
 type Circle struct {
@@ -654,14 +608,9 @@ func main()  {
 	res := name.area2()
 	fmt.Println(res)	//输出314
 }
-
 //在方法area2中通过指针改变了结构体中radius的值, 指针指向的结构体本身.
 ~~~
-
-
-
 结构体类型相互转换时: 元素的名字, 个数, 类型必须完全相同
-
 ~~~go
 type A struct {
 	number int
@@ -677,11 +626,7 @@ func main()  {
 }
 //当元素的名字, 个数, 类型完全相同, 可以进行类型强转
 ~~~
-
-
-
 公共结构体元素首字母大写转json格式时, 可以通过tag标签标记转换时为小写
-
 ~~~go
 type Circle struct {
 	Radius float64 `json:"radius"`
@@ -693,22 +638,11 @@ func main()  {
 }
 //json.Marshal()将结构体转换为字节码, 通过string()内置函数转换为字符串
 ~~~
-
-
-
-
-
-方法与函数总结
-
+**方法与函数总结**
 1. 不管调用形式如何, 真正决定是值拷贝还是地址拷贝, 看这个方法是和哪个类型绑定
 2. 如果是值类型, 如(p Person)则是值拷贝, 如果是指针类型, 如(p *Person)则是地址拷贝
 
-
-
-
-
 工厂模式解决私有结构体跨包使用
-
 ~~~go
 //主包
 type a struct {
@@ -725,19 +659,11 @@ func main()  {
 	fmt.Println(*stu)
 }
 ~~~
-
-
-
-
-
 ### 接口
 
 接口( interface )类型可以定义一组方法且不需要实现, 不能包含任何变量, 当某个自定义类型使用的时候, 再将其实现出来
 
 空接口可表示任意类型
-
- 
-
 ### 协程
 
 通过go关键字启动协程
@@ -932,11 +858,7 @@ if err != nil {			//err == io.EOF则读完所有内容
 }
 fmt.Println(string(buf))
 ~~~
-
-
-
 文件拷贝
-
 ~~~go
 func main () {
 	//打开要读取的文件
@@ -967,13 +889,7 @@ func main () {
     }
 }
 ~~~
-
-
-
-
-
 遍历目录
-
 ~~~go
 func main() {
 	var path string
@@ -1001,13 +917,6 @@ func main() {
     }
 }
 ~~~
-
-
-
-
-
-
-
 ### 反射
 
 需引入reflect包
@@ -1190,8 +1099,6 @@ elem = reflect.New(st)
 常量定义时必须初始化赋值, 不可修改
 
 只能修饰bool, 数字, 字符串
-
-
 
 iota的使用
 

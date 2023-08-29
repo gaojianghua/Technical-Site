@@ -1081,3 +1081,87 @@ buildObj.prepareKnexjs()
 1. 配置项external是为了避免编译过程中esbuild去寻找这些模块而导致编译失败，也就是说Knex.js中这样的代码会保持原样输出到编译产物中：require('better-sqlite3')。
 2. 同样，我们要再为 package.json 增加一个生产依赖：localPkgJson.dependencies["knex"] = "*";，以避免 electron-builder 为我们安装Knex.js模块。
 3. 别忘记在closeBundle钩子函数中调用这个方法：buildObj.prepareKnexjs()。
+
+## Knex.js 的使用
+关于使用`Knex.js`操作数据库的知识，请参阅[官方文档](https://knexjs.org/guide/)。
+
+接下来数据库并新建`Chat`表
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/794dca78d4ab46939e418eb25365f9ea~tplv-k3u1fbpfcp-zoom-in-crop-mark_3024_0_0_0.webp)
+
+我们要创建一个数据库访问类，由于主进程的逻辑和渲染进程的逻辑都有可能会访问数据库，所以我们把数据库访问类放置在`src\common`目录下，方便两个进程的逻辑代码使用这个类，代码如下：
+~~~ts
+//src\common\db.ts
+import knex, { Knex } from "knex";
+import fs from "fs";
+import path from "path";
+let dbInstance: Knex;
+if (!dbInstance) {
+  let dbPath = process.env.APPDATA || (process.platform == "darwin" ? process.env.HOME + "/Library/Preferences" : process.env.HOME + "/.local/share");
+  dbPath = path.join(dbPath, "electron-jue-jin/db.db");
+  let dbIsExist = fs.existsSync(dbPath);
+  if (!dbIsExist) {
+    let resourceDbPath = path.join(process.execPath, "../resources/db.db");
+    fs.copyFileSync(resourceDbPath, dbPath);
+  }
+  dbInstance = knex({
+    client: "better-sqlite3",
+    connection: { filename: dbPath },
+    useNullAsDefault: true,
+  });
+}
+export let db = dbInstance;
+~~~
+这段代码导出一个数据库访问对象，**只有第一次引入这个数据库访问对象的时候才会执行此对象的初始化逻辑**，也就是说，无论我们在多少个组件中引入这个数据库访问对象，它只会被初始化一次，但这个约束只局限在一个进程内，也就是说对于整个应用而言，**主进程有一个 db 实例，渲染进程也有一个 db 实例，两个实例是完全不同的**。
+
+由于渲染进程内的数据库访问对象和主进程内的数据库访问对象不是同一个对象，所以会有并发写入数据的问题，你需要控制好你的业务逻辑，避免两个进程在同一时间写入相同的业务数据。
+
+::: tip
+SQLite 不支持并发写入数据，两个或两个以上的写入操作同时执行时，只有一个写操作可以成功执行，其他写操作会失败。并发读取数据没有问题。
+:::
+
+第一次初始化数据库链接对象时，我们会检查`C:\Users\[username]\AppData\Roaming\[appname]\db.db`文件是否存在，如果不存在，我们就从应用程序安装目录`C:\Program Files\[appname]\resources\db.db`拷贝一份到该路径下，所以我们要提前把数据库设计好，基础数据也要初始化好，制作安装包的时候，把数据库文件打包到安装包里。
+
+我们是通过为`plugins\buildPlugin.ts`增加配置来把数据库文件打包到安装包内的，其中关键的配置代码如下所示：
+~~~ts
+//plugins\buildPlugin.ts
+//buildInstaller方法内option.config的一个属性
+extraResources: [{ from: `./src/common/db.db`, to: `./` }],
+~~~
+这是 `electron-builder` 的一项配置：`extraResources`，可以让开发者为安装包指定额外的资源文件，`electron-builder` 打包应用时会把这些资源文件附加到安装包内，当用户安装应用程序时，这些资源会释放在安装目录的 `resources\`子目录下。
+
+关于`extraResources`的详细配置信息请参阅[官方文档](https://www.electron.build/configuration/contents.html#filesetto)。
+
+可能有同学会问，为什么要如此麻烦把数据库拷贝到`C:\Users\[username]\AppData\Roaming\[appname]\`目录下再访问，为什么不直接访问安装目录下的数据库文件呢？这是因为**当用户升级应用程序时安装目录下的文件都会被删除，因为我们可能会在数据库中放置很多用户数据，这样的话每次升级应用用户这些数据就都没了。**
+
+我们假定数据库是整个应用的核心组件，没有它数据库应用程序无法正常运行，所以初始化数据库的逻辑都是同步操作（`fs.copyFileSync`），注意这类以 `Sync` 结尾的方法都是同步操作，它们是会阻塞 `JavaScript` 的执行线程的，也就是说在它们执行过程中，其他任何操作都会处于阻塞状态，比如以 `setInterval` 注册的定时器不会按照预期执行，只有等同步操作执行完成之后 `JavaScript` 的执行线程才会继续执行被阻塞的方法，所以**应用中一定要谨慎使用同步操作**。除了 `Node.js` 提供的类似 `fs.copyFileSync` 这样的方法外，还有 `Electron` 提供的 `dialog.showOpenDialogSync` 这样的方法，好在同步方法一般都有对应的异步方法来替代。
+
+实际上对于真实的产品来说，不一定在这里使用同步操作，最好根据你的应用程序的情况来实现这部分逻辑，在需要使用数据库之前把数据库初始化好即可。
+
+在应用程序开发调试阶段，开发者可以先把设计好的数据库文件放置在目标路径 `AppData\Roaming[appname]\` 下，这样调试应用就会方便很多。
+
+`db.ts` 文件导出的是一个 `Knex` 类型的对象，初始化这个对象时，我们传入了一个配置对象，配置对象的 client 属性代表着使用什么模块访问数据库，这里我们要求 `Knex` 使用`better-sqlite3`访问数据库，`Knex` 支持很多数据库，比如MySql、Oracle、SqlServer等，都有对应的数据库访问模块。**由于 SQLite 是一个客户端数据库，所以我们只要把数据库的本地路径告知 Knex 即可，这个属性是通过配置对象的 connection 属性提供的**。配置对象的 `useNullAsDefault` 属性告知 `Knex` 把开发者未明确提供的数据配置为 `Null`。
+
+接下来我们就尝试使用这个数据库访问对象把 `Chat` 表的数据检索出来，代码如下所示：
+~~~ts
+// src\renderer\main.ts
+import { db } from "../common/db";
+db("Chat")  // 创建数据库连接
+  .first()  // 获取第一条数据
+  .then((obj) => {
+    console.log(obj);  // 获取成功后打印
+  });
+~~~
+
+
+
+
+
+
+
+
+
+
+
+
+
