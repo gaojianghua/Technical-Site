@@ -6880,17 +6880,153 @@ async captcha(@Query('address') address: string) {
 ![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/d91b2715c99c4e699f00087a3fa9ca89~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
 
 ### 用户管理模块--配置抽离、登录认证鉴权
+实现登录认证鉴权之前，我们先抽离下配置，安装 `config` 的包：
+~~~shell
+npm install --save @nestjs/config
+~~~
+在 `AppModule` 的 `imports` 中引入下：
+~~~ts
+ConfigModule.forRoot({
+  isGlobal: true,   // 设为全局模块
+  envFilePath: 'src/.env'   // 指定 env 文件地址
+})
+~~~
+在 `src` 下添加 `.env` 文件：
+~~~shell
+redis_server_host=localhost
+redis_server_port=3306
+~~~
+在 `RedisModule` 里注入 `ConfigService` 来读取配置：
+~~~ts
+import { Global, Module } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { RedisService } from './redis.service';
+import { createClient } from 'redis';
 
+@Global()
+@Module({
+  providers: [
+    RedisService,
+    {
+      provide: 'REDIS_CLIENT',
+      async useFactory(configService: ConfigService) {
+        const client = createClient({
+            socket: {
+                host: 'localhost',
+                port: 6379
+            },
+            database: 1
+        });
+        await client.connect();
+        return client;
+      },
+      inject: [ConfigService]
+    }
+  ],
+  exports: [RedisService]
+})
+export class RedisModule {}
+~~~
+在 `.env` 里添加 `redis`、`mysql`、`nodemailer` 和 `nest` 服务的配置：
+~~~shell
+# redis 相关配置
+redis_server_host=localhost
+redis_server_port=6379
+redis_server_db=1
 
+# nodemailer 相关配置
+nodemailer_host=smtp.qq.com
+nodemailer_port=587
+nodemailer_auth_user=你的邮箱
+nodemailer_auth_pass=你的授权码
 
+# mysql 相关配置
+mysql_server_host=localhost
+mysql_server_port=3306
+mysql_server_username=root
+mysql_server_password=123456
+mysql_server_database=meeting_room_booking_system
 
+# nest 服务配置
+nest_server_port=3000
+~~~
+修改 `main.ts`：
+~~~ts
+import { ConfigService } from '@nestjs/config';
+// ...
+const configService = app.get(ConfigService);
+await app.listen(configService.get('nest_server_port'));
+~~~
+修改 `EmailService`：
+~~~ts
+constructor(private configService: ConfigService) {
+    this.transporter = createTransport({
+        host: this.configService.get('nodemailer_host'),
+        port: this.configService.get('nodemailer_port'),
+        secure: false,
+        auth: {
+            user: this.configService.get('nodemailer_auth_user'),  // 发件人邮箱
+            pass: this.configService.get('nodemailer_auth_pass')   // 发件人邮箱授权码
+        },
+    });
+}
 
-
-
-
-
-
-
+async sendMail({ to, subject, html }) {
+  await this.transporter.sendMail({
+    from: {
+      name: '会议室预定系统',
+      address: this.configService.get('nodemailer_auth_user')
+    },
+    to,
+    subject,
+    html
+  });
+}
+~~~
+修改 `RedisModule`：
+~~~ts
+{
+  provide: 'REDIS_CLIENT',
+  async useFactory(configService: ConfigService) {
+    const client = createClient({
+        socket: {
+            host: configService.get('redis_server_host'),
+            port: configService.get('redis_server_port')
+        },
+        database: configService.get('redis_server_db')
+    });
+    await client.connect();
+    return client;
+  },
+  inject: [ConfigService]
+}
+~~~
+修改 `AppModule`：
+~~~ts
+TypeOrmModule.forRootAsync({
+  useFactory(configService: ConfigService) {
+    return {
+      type: "mysql",
+      host: configService.get('mysql_server_host'),
+      port: configService.get('mysql_server_port'),
+      username: configService.get('mysql_server_username'),
+      password: configService.get('mysql_server_password'),
+      database: configService.get('mysql_server_database'),
+      synchronize: true,
+      logging: true,
+      entities: [
+        User, Role, Permission
+      ],
+      poolSize: 10,
+      connectorPackage: 'mysql2',
+      extra: {
+          authPlugin: 'sha256_password',
+      }
+    }
+  },
+  inject: [ConfigService]
+})
+~~~
 
 
 
