@@ -6157,6 +6157,58 @@ onApplicationBootstrap() {
 可以看出来 `CronJob` 是基于 `cron` 包封装的，而 `interval` 和 `timeout` 就是用的原生 `api`。
 :::
 
+## Nest 中使用 SSE 数据推送
+SSE（Server-Sent Events）是一种基于HTTP的服务器推送技术，用于实时从服务器接收事件和数据更新。通过 `SSE`，服务器可以主动向客户端发送持久性连接上的数据，而不需要客户端发起请求。
+
+我们先来看下 `WebSocket` 的通信过程：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/d77dfe73e74d4fac89f8747266c01cd1~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+首先通过 `http` 切换协议，服务端返回 `101` 的状态码后，就代表协议切换成功。之后就是 `WebSocket` 格式数据的通信了，一方可以随时向另一方推送消息。
+
+再来看下 SSE 的通信过程：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/8d99ee4d7ad0471db06cb16280001d77~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+服务端返回的 `Content-Type` 是 `text/event-stream`，这是一个流，可以多次返回内容。`SSE` 就是通过这种消息来随时推送数据。
+
+接下来我们实现一下，新建项目：
+~~~shell
+npx nest new sse-test
+~~~
+在 `AppController` 添加一个 `stream` 接口：
+~~~ts
+@Sse('stream')  // 表示 event stream 类型的接口
+stream() {
+    return new Observable((observer) => {
+      observer.next({ data: { msg: 'aaa'} });
+
+      setTimeout(() => {
+        observer.next({ data: { msg: 'bbb'} });
+      }, 2000);
+
+      setTimeout(() => {
+        observer.next({ data: { msg: 'ccc'} });
+      }, 5000);
+    });
+}
+~~~
+返回的是一个 `Observable` 对象，然后内部用 `observer.next` 返回消息。可以返回任意的 `json` 数据。
+
+前端代码中添加如下：
+~~~ts
+// EventSource 是浏览器原生 api，用来获取 sse 接口的响应
+const eventSource = new EventSource('http://localhost:3000/stream');
+// 接收到的消息回调
+eventSource.onmessage = ({ data }) => {
+  console.log('New message', JSON.parse(data));
+};
+~~~
+依次启动后端项目和前端项目，可以看到浏览器控制台中打印的 `New message` 信息。
+::: tip
+注意：`WebSocket` 断连后需要手动重连，而 `SSE` 并不需要，浏览器会自动重连。它的应用场景有很多，比如站内信、构建日志实时展示、chatgpt 的消息返回等等。
+:::
+
 ## 会议室预订系统
 首先，用户分为普通用户和管理员两种，各自有不同的功能：
 - **普通用户**：可以注册，注册的时候会发邮件来验证身份，注册之后就可以登录系统。
@@ -7028,13 +7080,558 @@ TypeOrmModule.forRootAsync({
 })
 ~~~
 
+接下来继续实现登录功能。我们先初始化用户、角色、权限的数据。在 `UserService` 注入 `Role` 和 `Permission` 的 `Repository`：
+~~~ts
+import { Module } from '@nestjs/common';
+import { UserService } from './user.service';
+import { UserController } from './user.controller'; 
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { Permission } from './entities/permission.entity' 
+import { User } from './entities/user.entity'; 
+import { Role } from './entities/role.entity';
+
+@Module ({
+  imports: [
+    TypeOrmModule.forfeature([User, Role, Permission])
+  ], 
+  controllers: [UserController], 
+  providers: [UserService]
+})
+export class UserModule {}
+~~~
+~~~ts
+// user.service.ts
+@Injectable()
+export class UserService {
+  private logger = new Logger();
+  
+  @InjectRepository(User)
+  private userRepository: Repository<User>;
+  
+  @InjectRepository(Role)
+  private roleRepository: Repository<Role>;
+  
+  @InjectRepository(Permission)
+  private permissionRepository: Repository<Permission>;
+}
+~~~
+写个初始化数据的方法：
+~~~ts
+// user.service.ts
+async initData() {
+  const user1 = new User();
+  user1.username = "zhangsan";
+  user1.password = md5("111111");
+  user1.email = "xxx@xx.com";
+  user1.isAdmin = true;
+  user1.nickName = '张三';
+  user1.phoneNumber = '13233323333';
+
+  const user2 = new User();
+  user2.username = 'lisi';
+  user2.password = md5("222222");
+  user2.email = "yy@yy.com";
+  user2.nickName = '李四';
+
+  const role1 = new Role();
+  role1.name = '管理员';
+
+  const role2 = new Role();
+  role2.name = '普通用户';
+
+  const permission1 = new Permission();
+  permission1.code = 'ccc';
+  permission1.description = '访问 ccc 接口';
+
+  const permission2 = new Permission();
+  permission2.code = 'ddd';
+  permission2.description = '访问 ddd 接口';
+
+  user1.roles = [role1];
+  user2.roles = [role2];
+
+  role1.permissions = [permission1, permission2];
+  role2.permissions = [permission1];
+
+  await this.permissionRepository.save([permission1, permission2]);
+  await this.roleRepository.save([role1, role2]);
+  await this.userRepository.save([user1, user2]);
+}
+~~~
+然后在 `UserController` 添加个 `handler`：
+~~~ts
+@Get("init-data") 
+async initData() {
+  await this.userService.initData();
+  return 'done';
+}
+~~~
+在浏览器中访问这个接口，查看数据库可以发现数据都插入成功了。
+::: tip
+注意：开发环境可以用代码来初始化数据，然后把数据导出为 `sql`，生产环境可以用这个 `sql` 文件来初始化。
+:::
+
+接下来实现登录，在 `UserController` 添加两个接口：
+~~~ts
+@Post('login')
+async userLogin(@Body() loginUser: LoginUserDto) {
+  console.log(loginUser);
+  return 'success';
+}
+
+@Post('admin/login')
+async adminLogin(@Body() loginUser: LoginUserDto) {
+  console.log(loginUser);
+  return 'success';
+}
+~~~
+添加 `src/user/dto/login-user.dto.ts`：
+~~~ts
+import { IsNotEmpty } from "class-validator";
+
+export class LoginUserDto {
+
+  @IsNotEmpty({
+      message: "用户名不能为空"
+  })
+  username: string;
+  
+  @IsNotEmpty({
+      message: '密码不能为空'
+  })
+  password: string;    
+}
+~~~
+创建 `src/user/vo/login-user.vo.ts`：
+~~~ts
+interface UserInfo {
+  id: number;
+
+  username: string;
+
+  nickName: string;
+
+  email: string;
+
+  headPic: string;
+
+  phoneNumber: string;
+
+  isFrozen: boolean;
+
+  isAdmin: boolean;
+
+  createTime: number;
+
+  roles: string[];
+
+  permissions: string[]
+}
+export class LoginUserVo {
+
+  userInfo: UserInfo;
+
+  accessToken: string;
+
+  refreshToken: string;
+}
+~~~
+然后在 `UserService` 实现 `login` 方法：
+~~~ts
+async login(loginUserDto: LoginUserDto, isAdmin: boolean) {
+  const user = await this.userRepository.findOne({
+    where: {
+        username: loginUserDto.username,
+        isAdmin
+    },
+    relations: [ 'roles', 'roles.permissions']
+  });
+
+  if(!user) {
+    throw new HttpException('用户不存在', HttpStatus.BAD_REQUEST);
+  }
+
+  if(user.password !== md5(loginUserDto.password)) {
+    throw new HttpException('密码错误', HttpStatus.BAD_REQUEST);
+  }
+
+  const vo = new LoginUserVo();
+  vo.userInfo = {
+    id: user.id,
+    username: user.username,
+    nickName: user.nickName,
+    email: user.email,
+    phoneNumber: user.phoneNumber,
+    headPic: user.headPic,
+    createTime: user.createTime.getTime(),
+    isFrozen: user.isFrozen,
+    isAdmin: user.isAdmin,
+    roles: user.roles.map(item => item.name),
+    permissions: user.roles.reduce((arr, item) => {
+      item.permissions.forEach(permission => {
+        if(arr.indexOf(permission) === -1) {
+            arr.push(permission);
+        }
+      })
+      return arr;
+    }, [])
+  }
+  return vo;
+}
+// 根据 username 和 isAdmin 查询数据库，设置级联查询 roles 和 roles.permissions。
+// 如果没有找到用户，返回 400 响应提示用户不存在。
+// 如果密码不对，返回 400 响应，提示密码错误。
+~~~
+在 `UserController` 里调用下：
+~~~ts
+@Post('login')
+async userLogin(@Body() loginUser: LoginUserDto) {
+  const vo = await this.userService.login(loginUser, false);
+
+  return vo;
+}
+
+@Post('admin/login')
+async adminLogin(@Body() loginUser: LoginUserDto) {
+  const vo = await this.userService.login(loginUser, true);
+
+  return vo;
+}
+~~~
+引入 `jwt` 模块：
+~~~shell
+npm install --save @nestjs/jwt
+~~~
+在 `AppModule` 里引入：
+~~~ts
+import { JwtModule } from '@nestjs/jwt'
+
+// 在 imports 中加入
+JwtModule.registerAsync({
+  global: true,
+  useFactory(configService: ConfigService) {
+    return {
+      secret: configService.get('jwt_secret'),
+      signOptions: {
+        expiresIn: '30m' // 默认 30 分钟
+      }
+    }
+  },
+  inject: [ConfigService]
+}),
+~~~
+在 .env 中添加：
+~~~shell
+# jwt 配置
+jwt_secret=guang
+jwt_access_token_expires_time=30m
+jwt_refresh_token_expres_time=7d
+~~~
+然后登录认证通过之后返回 `access_token` 和 `refresh_token`：
+~~~ts
+@Inject(JwtService)
+private jwtService: JwtService;
+
+@Inject(ConfigService)
+private configService: ConfigService;
+
+@Post('login')
+async userLogin(@Body() loginUser: LoginUserDto) {
+  const vo = await this.userService.login(loginUser, false);
+
+  vo.accessToken = this.jwtService.sign({
+    userId: vo.userInfo.id,
+    username: vo.userInfo.username,
+    roles: vo.userInfo.roles,
+    permissions: vo.userInfo.permissions
+  }, {
+    expiresIn: this.configService.get('jwt_access_token_expires_time') || '30m'
+  });
+
+  vo.refreshToken = this.jwtService.sign({
+    userId: vo.userInfo.id
+  }, {
+    expiresIn: this.configService.get('jwt_refresh_token_expres_time') || '7d'
+  });
+
+  return vo;
+}
+~~~
+另一个接口同样的处理。然后再增加一个 `refresh_token` 的接口用来刷新 `token`：
+~~~ts
+@Get('refresh')
+async refresh(@Query('refreshToken') refreshToken: string) {
+  try {
+    const data = this.jwtService.verify(refreshToken);
+
+    const user = await this.userService.findUserById(data.userId, false);
+
+    const access_token = this.jwtService.sign({
+      userId: user.id,
+      username: user.username,
+      roles: user.roles,
+      permissions: user.permissions
+    }, {
+      expiresIn: this.configService.get('jwt_access_token_expires_time') || '30m'
+    });
+
+    const refresh_token = this.jwtService.sign({
+      userId: user.id
+    }, {
+      expiresIn: this.configService.get('jwt_refresh_token_expres_time') || '7d'
+    });
+
+    return {
+      access_token,
+      refresh_token
+    }
+  } catch(e) {
+    throw new UnauthorizedException('token 已失效，请重新登录');
+  }
+}
+~~~
+在 `UserService` 实现这个 `findUserById` 方法：
+~~~ts
+async findUserById(userId: number, isAdmin: boolean) {
+  const user =  await this.userRepository.findOne({
+    where: {
+        id: userId,
+        isAdmin
+    },
+    relations: [ 'roles', 'roles.permissions']
+  });
+
+  return {
+    id: user.id,
+    username: user.username,
+    isAdmin: user.isAdmin,
+    roles: user.roles.map(item => item.name),
+    permissions: user.roles.reduce((arr, item) => {
+      item.permissions.forEach(permission => {
+        if(arr.indexOf(permission) === -1) {
+            arr.push(permission);
+        }
+      })
+      return arr;
+    }, [])
+  }
+}
+~~~
+同样的方式再实现一个后台管理的 `refresh` 接口：
+~~~ts
+@Get('admin/refresh')
+async adminRefresh(@Query('refreshToken') refreshToken: string) {
+  try {
+    const data = this.jwtService.verify(refreshToken);
+
+    const user = await this.userService.findUserById(data.userId, true);
+
+    const access_token = this.jwtService.sign({
+      userId: user.id,
+      username: user.username,
+      roles: user.roles,
+      permissions: user.permissions
+    }, {
+      expiresIn: this.configService.get('jwt_access_token_expires_time') || '30m'
+    });
+
+    const refresh_token = this.jwtService.sign({
+      userId: user.id
+    }, {
+      expiresIn: this.configService.get('jwt_refresh_token_expres_time') || '7d'
+    });
+
+    return {
+      access_token,
+      refresh_token
+    }
+  } catch(e) {
+    throw new UnauthorizedException('token 已失效，请重新登录');
+  }
+}
+~~~
+接下来我们加上 `LoginGuard` 和 `PermissionGuard` 来做鉴权：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/a363d08394dc4a5ab4a0d7d17aafc0c2~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+~~~shell
+nest g guard login --flat --no-spec
+nest g guard permission --flat --no-spec
+~~~
+`LoginGuard` 的实现代码如下：
+~~~ts
+import { CanActivate, ExecutionContext, Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { JwtService } from '@nestjs/jwt';
+import { Request } from 'express';
+import { Observable } from 'rxjs';
+import { Permission } from './user/entities/permission.entity';
+
+interface JwtUserData {
+  userId: number;
+  username: string;
+  roles: string[];
+  permissions: Permission[]
+}
+
+declare module 'express' {
+  interface Request {
+    user: JwtUserData
+  }
+}
+
+@Injectable()
+export class LoginGuard implements CanActivate {
+  
+  @Inject()
+  private reflector: Reflector;
+
+  @Inject(JwtService)
+  private jwtService: JwtService;
+  
+  canActivate(
+    context: ExecutionContext,
+  ): boolean | Promise<boolean> | Observable<boolean> {
+    const request: Request = context.switchToHttp().getRequest();
+    
+    const requireLogin = this.reflector.getAllAndOverride('require-login', [
+      context.getClass(),
+      context.getHandler()
+    ]);
 
 
+    if(!requireLogin) {
+      return true;
+    }
+    
+    const authorization = request.headers.authorization;
+
+    if(!authorization) {
+      throw new UnauthorizedException('用户未登录');
+    }
+
+    try{
+      const token = authorization.split(' ')[1];
+      const data = this.jwtService.verify<JwtUserData>(token);
+
+      request.user = {
+        userId: data.userId,
+        username: data.username,
+        roles: data.roles,
+        permissions: data.permissions
+      }
+      return true;
+    } catch(e) {
+      throw new UnauthorizedException('token 失效，请重新登录');
+    }
+  }
+}
+~~~
+用 `reflector` 从目标 `controller` 和 `handler` 上拿到 `require-login` 的 `metadata`。如果没有 `metadata`，就是不需要登录，返回 `true` 放行。否则从 `authorization` 的 `header` 取出 `jwt` 来，把用户信息设置到 `request`，然后放行。如果 `jwt` 无效，返回 `401` 响应，提示 `token` 失效，请重新登录。
+
+然后全局启用这个 `Guard`，在 `AppModule` 里添加这个 `provider`：
+~~~ts
+import { APP_GUARD } from '@nestjs/core'
+import { LoginGuard } from './login.guard'
+
+// providers 中添加
+{
+  provide: APP_GUARD,
+  useClass: LoginGuard
+}
+~~~
+继续实现 `PermissionGuard`：
+~~~ts
+import { CanActivate, ExecutionContext, Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { Request } from 'express';
+
+@Injectable()
+export class PermissionGuard implements CanActivate {
+
+  @Inject(Reflector)
+  private reflector: Reflector;
+
+  async canActivate(
+    context: ExecutionContext,
+  ): Promise<boolean> {
+    const request: Request = context.switchToHttp().getRequest();
+
+    if(!request.user) {
+      return true;
+    }
+
+    const permissions = request.user.permissions;
+
+    const requiredPermissions = this.reflector.getAllAndOverride<string[]>('require-permission', [
+      context.getClass(),
+      context.getHandler()
+    ])
+    
+    if(!requiredPermissions) {
+      return true;
+    }
+    
+    for(let i = 0; i < requiredPermissions.length; i++) {
+      const curPermission = requiredPermissions[i];
+      const found = permissions.find(item => item.code === curPermission);
+      if(!found) {
+        throw new UnauthorizedException('您没有访问该接口的权限');
+      }
+    }
+
+    return true;
+  }
+}
+~~~
+同样是用 `reflector` 取出 `handler` 或者 `controller` 上的 `require-permission` 的 `metadata`。如果没有，就是不需要权限，直接放行，返回 `true`。对于需要的每个权限，检查下用户是否拥有，没有的话就返回 `401`，提示没权限。否则就放行，返回 `true`。
+
+同样是全局启用这个 `PermissionGuard`：
+~~~ts
+import { PermissionGuard } from './permissionGuard.guard'
+
+// providers 中添加
+{
+  provide: APP_GUARD,
+  useClass: PermissionGuard
+}
+~~~
+最后我们把这两个 @SetMetadata 封装成自定义装饰器，新建 `src/custom.decorator.ts`：
+~~~ts
+import { SetMetadata } from "@nestjs/common";
+import { createParamDecorator, ExecutionContext } from '@nestjs/common';
+import { Request } from "express";
+
+export const  RequireLogin = () => SetMetadata('require-login', true);
+
+export const  RequirePermission = (...permissions: string[]) => SetMetadata('require-permission', permissions);
+
+// 自定义参数装饰器
+export const UserInfo = createParamDecorator(
+  (data: string, ctx: ExecutionContext) => {
+    const request = ctx.switchToHttp().getRequest<Request>();
+
+    if(!request.user) {
+        return null;
+    }
+    return data ? request.user[data] : request.user;
+  },
+)
+~~~
+在 `AppController` 中添加：
+~~~ts
+@Get('aaa')
+@SetMetadata()
+@SetMetadata('ddd')
+aaa(@UserInfo('username') username: string, @UserInfo() userInfo) {
+  console.log(username)
+  console.log(userInfo)
+  return 'aaa';
+}
+~~~
+浏览器访问 `aaa` 接口，可以看到服务端从 `request` 取出了 `user` 的值传入了 `handler`，而这个 `request.user` 是在 `LoginGuard` 里设置的。这样，就完成了鉴权和拿到用户信息的功能。
 
 
-
-
-
-
+### 用户管理模块-- interceptor、修改信息接口
 
 
