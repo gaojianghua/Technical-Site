@@ -22,7 +22,6 @@
 6. 使用vscode或者GoLand打开E:\GO\src目录下新建的项目并新建一个go文件
 
 7. 使用https://goproxy.io国内代理安装go插件,执行下方命令
-
    ~~~go
    go env -w GO111MODULE=on
    go env -w GOPROXY=https://goproxy.cn,direct
@@ -31,25 +30,21 @@
 8. 在vscode右下角弹出的插件安装提示中点击install all安装所有插件
 
 9. 在GoLand设置中配置GOROOT和GOPATH以及GO Module
-
    - GOROOT就是GO的安装路径, 默认会自动设置上
    - GOPATH里的三个设置, 全部设置为你创建的E:\GO目录
    - GO Module中勾选启动模块集成并填上GOPROXY=https://goproxy.io,direct
 
 10. GO命令:
-
     - go build -o 123.go        //编译并运行go文件
     - go install                       //编译并生成可执行文件移动到bin目录下
     - go run                            //像执行脚本文件一样执行go代码
 
 11. 跨平台编译: (其他平台去掉S)
-
     - SET CGO_ENABLED=0      //禁用CGO
     - SET GOOS=linux               //目标平台是linux(在哪个平台跑就改成哪个平台)
     - SET GOARCH=amd64       //目标处理器架构是amd64
 
-## 基础
-
+## 内置规则
 1. 函数名首字母大写才能在其他包引用并使用
 2. 变量首字母大写并写在外部才能供其他包引用并使用
 3. 包名与文件夹名没有必然联系,因便于开发强烈建议同名处理
@@ -58,10 +53,8 @@
 6. main包有且只能有一个,入口即出口,golang的核心
 7. main包最终会编译成可执行文件( go build -o bin/main.exe golang/project/main )
 
-### fmt基础包
-
+## fmt
 通用：
-
 ```
 %v	值的默认格式表示 
 %+v	类似%v，但输出结构体时会添加字段名
@@ -69,15 +62,11 @@
 %T	值的类型的Go语法表示
 %%	百分号
 ```
-
 布尔值：
-
 ```
 %t	单词true或false
 ```
-
 整数：
-
 ```
 %b	表示为二进制
 %c	该值对应的unicode码值
@@ -88,9 +77,7 @@
 %X	表示为十六进制，使用A-F
 %U	表示为Unicode格式：U+1234，等价于"U+%04X"
 ```
-
 浮点数与复数的两个组分：
-
 ```
 %b	无小数部分、二进制指数的科学计数法，如-123456p-78；参见strconv.FormatFloat
 %e	科学计数法，如-1234.456e+78
@@ -100,26 +87,20 @@
 %g	根据实际情况采用%e或%f格式（以获得更简洁、准确的输出）
 %G	根据实际情况采用%E或%F格式（以获得更简洁、准确的输出）
 ```
-
 字符串和[]byte：
-
 ```
 %s	直接输出字符串或者[]byte
 %q	该值对应的双引号括起来的go语法字符串字面值，必要时会采用安全的转义表示
 %x	每个字节用两字符十六进制数表示（使用a-f）
 %X	每个字节用两字符十六进制数表示（使用A-F）    
 ```
-
 指针：
-
 ```
 %p	表示为十六进制，并加上前导的0x    
 ```
-
 没有%u。整数如果是无符号类型自然输出也是无符号的。类似的，也没有必要指定操作数的尺寸（int8，int64）。
 
 宽度通过一个紧跟在百分号后面的十进制数指定，如果未指定宽度，则表示值时除必需之外不作填充。精度通过（可选的）宽度后跟点号后跟的十进制数指定。如果未指定精度，会使用默认精度；如果点号后没有跟数字，表示精度为0。举例如下：
-
 ```
 %f:    默认宽度，默认精度
 %9f    宽度9，默认精度
@@ -127,10 +108,30 @@
 %9.2f  宽度9，精度2
 %9.f   宽度9，精度0 
 ```
-
-
-
-### 基础类型
+## 基础类型
+类型 | 长度(字节) | 默认值 | 说明
+---|--------|-----|---
+bool | 1 | false | 
+byte | 1 | 0 | uint8
+rune | 4 | 0 | Unicode Code Point, int32
+int, uint | 4或8 | 0 | 32 或 64 位
+int8, uint8 | 1 | 0 | -128 ~ 127, 0 ~ 255，byte是uint8 的别名
+int16, uint16 | 2 | 0 | -32768 ~ 32767, 0 ~ 65535
+int32, uint32 | 4 | 0 | -21亿~ 21亿, 0 ~ 42亿，rune是int32 的别名
+int64, uint64 | 8 | 0 | 
+float32 | 4 | 0.0 | 
+float64 | 8 | 0.0 | 
+complex64 | 8 |  | 
+complex128 | 16 |  | 
+uintptr | 4或8 |  | 以存储指针的 uint32 或 uint64 整数
+array |  |  | 值类型
+struct |  |  | 值类型
+string |  | "" | UTF-8 字符串
+slice |  | nil | 引用类型
+map |  | nil | 引用类型
+channel |  | nil | 引用类型
+interface |  | nil | 接口
+function |  | nil | 函数
 
 1. 值类型: 变量直接存储值, 内存通常在栈中分配
 
@@ -139,8 +140,6 @@
 2. 引用类型: 变量存储的是地址, 地址对应的空间存储真正的值, 通常在堆中分配, 当没有变量引用这个地址时, 地址对应的空间被视为垃圾, 由GC来回收
 
 - 引用类型: 指针pointer, 切片slice, 字典map, 管道chan, 接口interface
-
-
 
 **整型**
 
@@ -169,15 +168,11 @@
 ::: tip
 获取对象的长度的内建`len()`函数返回的长度可以根据不同平台的字节长度进行变化。实际使用中，切片或 map 的元素数量等都可以用`int`来表示。在涉及到二进制传输、读写文件的结构描述时，为了保持文件的结构不会受到不同编译目标平台字节长度的影响，不要使用`int`和 `uint`
 :::
-
-
 **浮点型**
 
 Go语言支持两种浮点型数：`float32`和`float64`。这两种浮点型数据格式遵循`IEEE 754`标准：
 - `float32` 的浮点数的最大范围约为 `3.4e38`，可以使用常量定义：`math.MaxFloat32`。
 - `float64` 的浮点数的最大范围约为 `1.8e308`，可以使用一个常量定义：`math.MaxFloat64`。
-
-
 
 **复数**
 
@@ -210,8 +205,25 @@ strconv.ParseInt(变量, 进制, 整型位数)
 strconv.ParseFloat(变量, 小数类型位数)
 ~~~
 
+## 常量
+- 使用关键字const声明
+- 常量定义时必须初始化赋值, 不可修改
+- 只能修饰bool, 数字, 字符串
 
-**指针(slice)**
+`iota`的使用：
+~~~go
+func main() {
+	//iota数值递增
+	const (
+		a = iota
+		b
+		c, d = iota, iota	//不会递增
+	)
+	fmt.Println(a,b,c,d) //0,1,2,2
+}
+~~~
+
+## 指针
 - 变量的地址存的值, 地址通过: &变量 获取
 - 指针变量存储的地址里的值通过: *指针变量 获取
 - 指针用来存储内存地址,且只能存一个,重复存储会覆盖掉旧值
@@ -242,7 +254,8 @@ i = new(int);
 ~~~go
 fmt.Scanf(指定%格式, 变量地址)与fmt.Scanln(变量地址)
 ~~~
-流程控制语句：
+
+## 流程控制
 ~~~go
 if a < 10 {
 
@@ -324,7 +337,7 @@ fmt.Println("6")
 //goto语句指定标签,直接跳到标签处执行代码,不建议使用该语句
 //通常与if语句一起使用
 ~~~
-**函数类型**
+## 函数
 - 返回值支持命名和多个
 
 ~~~go
@@ -368,11 +381,9 @@ func main(){
 //在全局中,go语言会依次解析全局变量->init初始化函数->main主函数
 ~~~
 
-
-
 ## 常用函数
 
-### 字符串
+字符串：
 ~~~go
 len(str)					
 //返回变量的长度, 内置函数(无需引包)
@@ -464,7 +475,7 @@ strings.HasPrefix("!gao", "!")
 strings.HasSuffix("gao!", "!")
 //判断字符串是否以指定的字符结束并返回布尔值
 ~~~
-### 时间日期
+时间日期：
 ~~~go
 now := time.Now()
 //获取当前时间并返回
@@ -521,7 +532,8 @@ now.Unix()
 now.UnixNano()
 //获取1970年到现在的纳秒数时间戳
 ~~~
-### 内置变量初始化函数
+
+## 变量初始化函数
 ~~~go
 new()
 //传入一个值类型, 创建一个指针, 系统分配指针的地址值以及自身的地址
@@ -532,7 +544,8 @@ make()
 //传入一个引用类型, 创建一个指针, 系统分配指针的地址值以及自身的地址
 //指针的地址值的值为传入引用类型的零值
 ~~~
-### 错误处理
+
+## 错误处理
 - defer
 - panic
 - recover
@@ -585,7 +598,8 @@ func main()  {
 		test2()
 	}
 	~~~
-### 结构体
+	
+## 结构体
 - 结构体元素的地址是连续的, 是值类型
 - 在方法调用中遵守值拷贝传递的方式
 - 若要修改结构体变量的值, 可以通过结构体指针的方式去处理
@@ -659,12 +673,174 @@ func main()  {
 	fmt.Println(*stu)
 }
 ~~~
-### 接口
+## Map
+`map`是一种无序的基于`key:value`的数据结构，Go语言中的 `map` 是引用类型，必须初始化才能使用。
 
-接口( interface )类型可以定义一组方法且不需要实现, 不能包含任何变量, 当某个自定义类型使用的时候, 再将其实现出来
+语法定义：
+~~~go
+map[KeyType]ValueType
 
-空接口可表示任意类型
-### 协程
+//KeyType:表示键的类型。
+//ValueType:表示键对应的值的类型。
+~~~
+`map`类型的变量默认初始值为`nil`，需要使用`make()`函数来分配内存。语法为：
+~~~go
+make(map[KeyType]ValueType, [cap])
+
+// 其中cap表示map的容量，该参数虽然不是必须的，但是我们应该在初始化map的时候就为其指定一个合适的容量。
+~~~
+基本用法：
+~~~go
+scoreMap := make(map[string]int, 8)	// 初始化map，并设置容量8
+scoreMap["张三"] = 90	// 向map变量中插入数据
+~~~
+~~~go
+// 声明时填充元素
+userInfo := map[string]string{
+	"username": "pprof.cn",
+	"password": "123456",
+}
+~~~
+判断`map`中键是否存在：
+~~~go
+scoreMap := make(map[string]int)
+// 如果key存在ok为true,v为对应的值；不存在ok为false,v为值类型的零值
+v, ok := scoreMap["张三"]
+~~~
+遍历`map`：
+~~~go
+scoreMap := make(map[string]int)
+scoreMap["张三"] = 90
+scoreMap["小明"] = 100
+scoreMap["王五"] = 60
+// 需要使用 for range 遍历
+for k, v := range scoreMap {
+	fmt.Println(k, v)
+}
+~~~
+使用 `delete()` 删除 `map` 中的键值对：
+~~~go
+delete(scoreMap, "小明")// 将键为'小明'的数据从map变量scoreMap中删除
+~~~
+按照指定顺序遍历`map`：
+~~~go
+rand.Seed(time.Now().UnixNano()) //初始化随机数种子
+
+var scoreMap = make(map[string]int, 200)
+
+for i := 0; i < 100; i++ {
+	key := fmt.Sprintf("stu%02d", i) //生成stu开头的字符串
+	value := rand.Intn(100)          //生成0~99的随机整数
+	scoreMap[key] = value
+}
+//取出map中的所有key存入切片keys
+var keys = make([]string, 0, 200)
+for key := range scoreMap {
+	keys = append(keys, key)
+}
+//对切片进行排序
+sort.Strings(keys)
+//按照排序后的key遍历map
+for _, key := range keys {
+	fmt.Println(key, scoreMap[key])
+}
+~~~
+元素为`map`类型的切片：
+~~~go
+var mapSlice = make([]map[string]string, 3)
+for index, value := range mapSlice {
+	fmt.Printf("index:%d value:%v\n", index, value)
+}
+fmt.Println("after init")
+// 对切片中的map元素进行初始化
+mapSlice[0] = make(map[string]string, 10)
+mapSlice[0]["name"] = "王五"
+mapSlice[0]["password"] = "123456"
+mapSlice[0]["address"] = "红旗大街"
+for index, value := range mapSlice {
+	fmt.Printf("index:%d value:%v\n", index, value)
+}
+~~~
+值为切片类型的`map`:
+~~~go
+var sliceMap = make(map[string][]string, 3)
+fmt.Println(sliceMap)
+fmt.Println("after init")
+key := "中国"
+value, ok := sliceMap[key]
+if !ok {
+	value = make([]string, 0, 2)
+}
+value = append(value, "北京", "上海")
+sliceMap[key] = value
+fmt.Println(sliceMap)
+~~~
+
+## 接口
+接口( `interface` )类型可以定义一组方法且不需要实现, 不能包含任何变量, 当某个自定义类型使用的时候, 再将其实现出来。
+
+接口是一个或多个方法签名的集合。任何类型的方法集中只要拥有该接口'对应的全部方法'签名。就表示它 "实现" 了该接口，无须在该类型上显式声明实现了哪个接口。这称为`Structural Typing`。所谓对应方法，是指有相同名称、参数列表 (不包括参数名) 以及返回值。当然，该类型还可以有其他方法。
+
+- 接口只有方法声明，没有实现，没有数据字段。
+- 接口可以匿名嵌入其他接口，或嵌入到结构中。
+- 对象赋值给接口时，会发生拷贝，而接口内部存储的是指向这个复制品的指针，既无法修改复制品的状态，也无法获取指针。
+- 只有当接口存储的类型和对象都为`nil`时，接口才等于`nil`。
+- 接口调用不会做`receiver`的自动转换。
+- 接口同样支持匿名字段方法。
+- 接口也可实现类似`OOP`中的多态。
+- 空接口可以作为任何类型数据的容器。
+- 一个类型可实现多个接口。
+- 接口命名习惯以 `er` 结尾。
+
+语法如下:
+- 接口名：使用`type`将接口定义为自定义的类型名。`Go`语言的接口在命名时，一般会在单词后面添加`er`，如有写操作的接口叫Writer，有字符串功能的接口叫`Stringer`等。接口名最好要能突出该接口的类型含义。
+- 方法名：当方法名首字母是大写且这个接口类型名首字母也是大写时，这个方法可以被接口所在的包（`package`）之外的代码访问。
+- 参数列表、返回值列表：参数列表和返回值列表中的参数变量名可以省略。
+~~~go
+type 接口类型名 interface{
+	方法名1( 参数列表1 ) 返回值列表1
+	方法名2( 参数列表2 ) 返回值列表2
+	…
+}
+~~~
+值接收者和指针接收者实现接口的区别:
+~~~go
+type Mover interface {
+    move()
+}
+
+type dog struct {}
+~~~
+~~~go
+// 值接收者实现接口
+func (d dog) move() {
+    fmt.Println("狗会动")
+}
+func main() {
+    var x Mover
+    var wangcai = dog{} // 旺财是dog类型
+    x = wangcai         // x可以接收dog类型
+    var fugui = &dog{}  // 富贵是*dog类型
+    x = fugui           // x可以接收*dog类型
+    x.move()
+}
+// 使用值接收者实现接口之后，不管是dog结构体还是结构体指针*dog类型的变量都可以赋值给该接口变量。因为Go语言中有对指针类型变量求值的语法糖，dog指针fugui内部会自动求值*fugui。
+~~~
+~~~go
+// 指针接收者实现接口
+func (d *dog) move() {
+    fmt.Println("狗会动")
+}
+func main() {
+    var x Mover
+    var wangcai = dog{} // 旺财是dog类型
+    x = wangcai         // x不可以接收dog类型
+    var fugui = &dog{}  // 富贵是*dog类型
+    x = fugui           // x可以接收*dog类型
+}
+// 此时实现Mover接口的是*dog类型，所以不能给x传入dog类型的wangcai，此时x只能存储*dog类型的值。
+~~~
+## 协程
 
 通过go关键字启动协程
 
@@ -672,21 +848,13 @@ func main()  {
 
 协程是主线程的分支, 依赖于主线程, 若主线程执行完成, 协程会自动结束
 
-### 管道
-
-先进先出
-
-遍历管道需使用for range
-
-容量固定, 需要用make声明再使用
-
-管道只读: var Chan <-  chan int
-
-管道只写: var Chan chan <-  int
-
-select case语法解决管道阻塞问题
-
-
+## 管道
+- 先进先出
+- 遍历管道需使用 `for range`
+- 容量固定, 需要用 `make` 声明再使用
+- 管道只读: `var Chan <-  chan int`
+- 管道只写: `var Chan chan <-  int`
+- `select case`语法解决管道阻塞问题
 
 协程与管道案例
 
@@ -745,14 +913,8 @@ func main() {
 }
 ~~~
 
-
-
-
-
-### 文件操作
-
-os.Create:		文件不存在则创建, 文件存在则清空文件内容
-
+## 文件操作
+`os.Create`: 文件不存在则创建, 文件存在则清空文件内容
 ~~~go
 func main () {
 	f, err := os.Create('./test/is')
@@ -763,9 +925,7 @@ func main () {
 	defer f.Close()		//关闭文件
 }
 ~~~
-
-os.Open:			以只读方式打开文件,文件不存在则打开失败
-
+`os.Open`: 以只读方式打开文件,文件不存在则打开失败
 ~~~go
 func main () {
 	f, err := os.Open('./test/is')
@@ -781,28 +941,24 @@ func main () {
 	defer f.Close()		//关闭文件
 }
 ~~~
-
-os.OpenFile:	(适用于操作目录)	以只读, 只写, 读写方式打开文件, 文件不存在则打开失败
+`os.OpenFile`: (适用于操作目录) 以只读, 只写, 读写方式打开文件, 文件不存在则打开失败
 
 参数1: 文件名
 
 参数2:
-
 - O_RDONLY		只读
 - O_WRONLY       只写
 - O_RDWR            读写
 
 参数3: ( 对于目录传: os.ModeDir )
-
-0. 没有任何权限
-1. 执行权限 ( 如果是可执行文件, 是可以运行的 )
-2. 写权限
-3. 写权限与执行权限
-4. 读权限
-5. 读权限与执行权限
-6. 读权限与写权限
-7. 读权限, 写权限, 执行权限
-
+1. 没有任何权限
+2. 执行权限 ( 如果是可执行文件, 是可以运行的 )
+3. 写权限
+4. 写权限与执行权限
+5. 读权限
+6. 读权限与执行权限
+7. 读权限与写权限
+8. 读权限, 写权限, 执行权限
 ~~~go
 func main () {
 	f, err := os.OpenFile('./test/is', O_RDWR, 6)
@@ -818,37 +974,24 @@ func main () {
 	defer f.Close()		//关闭文件
 }
 ~~~
+- `f.WriteString()`: 返回写入的字符个数, 从起始位置开始, 会覆盖原有内容
 
+- `f.Seek()`: 修改文件的读写指针位置
 
+	- 参数1: 偏移量
+    	- 正: 向文件尾部偏移
+    	- 负: 向文件头部偏移
+  
+	- 参数2: 偏移起始位置
+    	- `io.SeekStart`: 文件起始位置
+    	- `io.SeekCurrent`: 文件当前位置
+        - `io.SeekEnd`: 文件结尾位置
 
-f.WriteString ( ) :	返回写入的字符个数, 从起始位置开始, 会覆盖原有内容
+- `f.WriteAt()`: 在文件指定偏移位置, 写入`[]byte`, 通常搭配`Seek()`
+  - 参数1:	待写入的数据
+  - 参数2:	偏移量
 
-
-
-f.Seek ( ) :	修改文件的读写指针位置
-
-参数1:	偏移量	正: 向文件尾部偏移	负: 向文件头部偏移
-
-参数2:	偏移起始位置:	io.SeekStart ( 文件起始位置 )	io.SeekCurrent ( 文件当前位置 )
-
-io.SeekEnd ( 文件结尾位置 )
-
-返回:	从起始位置到当前位置的偏移量
-
-
-
-f.WriteAt ( ) :	在文件指定偏移位置, 写入[]byte, 通常搭配Seek()
-
-参数1:	待写入的数据
-
-参数2:	偏移量
-
-返回:	实际写出的字节数
-
-
-
-bufio.NewReader(f)
-
+创建带缓冲区的读取器
 ~~~go
 reader := bufio.NewReader(f) 	//创建一个带有缓冲区的reader
 buf, err := reader.ReadBytes('\n')		//到\n结束,读一行数据
@@ -917,12 +1060,445 @@ func main() {
     }
 }
 ~~~
-### 反射
+## 泛型
+要定义泛型函数或类型，可以使用类型 `T` 关键字，后跟用方括号[]括起来的泛型形参的名称。例如，要创建一个接受任意类型的`slice`并返回其第一个元素的泛型函数，可以这样定义:
+~~~go
+func First[T any](items []T) T {
+    return items[0]
+}
+// [T any]表示类型参数T，它表示任意类型。any关键字表示T类型可以是任何有效类型。
+~~~
+可以使用任何切片类型调用`First`函数，该函数将返回该切片的第一个元素。例如:
+~~~go
+func func1() {
+	intSlice := []int{1, 2, 3, 4, 5}
+	firstInt := First[int](intSlice) // returns 1
 
-需引入reflect包
+	println(firstInt)
 
-案例
+	stringSlice := []string{"apple", "banana", "cherry"}
+	firstString := First[string](stringSlice) // returns "apple"
 
+	println(firstString)
+}
+
+func First[T any](items []T) T {
+	return items[0]
+}
+~~~
+编写函数`SumGenerics`，它对各种数字类型(如`int`、`int16`、`int32`、`int64`、`int8`、`float32`和`float64`)执行加法操作：
+~~~go
+func SumGenerics[T int | int16 | int32 | int64 | int8 | float32 | float64](a, b T) T {
+    return a + b
+}
+
+func func2() {
+	sumInt := SumGenerics[int](2, 3)
+
+	sumFloat := SumGenerics[float32](2.5, 3.5)
+
+	sumInt64 := SumGenerics[int64](10, 20)
+
+	fmt.Println(sumInt)   // returns 5
+	fmt.Println(sumFloat) // returns 6.0
+	fmt.Println(sumInt64) // returns 30
+}
+~~~
+泛型可以用于任意数据类型的序列化和反序列化，实现序列化和反序列化函数:
+~~~go
+type Person struct {
+ 	Name    string
+ 	Age     int
+ 	Address string
+}
+
+func Serialize[T any](data T) ([]byte, error) {
+  	buffer := bytes.Buffer{}
+  	encoder := gob.NewEncoder(&buffer)
+  	err := encoder.Encode(data)
+  	if err != nil {
+    	return nil, err
+  	}
+  	return buffer.Bytes(), nil
+}
+
+func Deserialize[T any](b []byte) (T, error) {
+	buffer := bytes.Buffer{}
+	buffer.Write(b)
+	decoder := gob.NewDecoder(&buffer)
+	var data T
+	err := decoder.Decode(&data)
+	if err != nil {
+		return data, err
+	}
+	return data, nil
+}
+// 函数Serialize和Deserialize，它们利用Go的gob包将任意数据类型转换为字节，反之亦然。
+
+func DeserializeUsage() {
+	// 创建一个Person实例
+	person := Person{
+		Name:    "John",
+		Age:     30,
+		Address: "123 Main St.",
+	}
+	// 将person对象转换为字节数组
+	serialized, err := Serialize(person)
+	if err != nil {
+    	panic(err)
+	}
+	// 将字节数组转换回Person对象
+	deserialized, err := Deserialize[Person](serialized)
+	if err != nil {
+    	panic(err)
+  	}
+  
+	fmt.Printf("Name: %s, Age: %d, Address: %s", deserialized.Name, deserialized.Age, deserialized.Address)
+	// Output: Name: John, Age: 30, Address: 123 Main St.
+}
+~~~
+自定义验证器编写一个通用的`Validate`函数:
+~~~go
+// 接受任意类型T的值并返回一个错误
+type Validator[T any] func(T) error
+// 使用自定义验证器执行数据验证
+func Validate[T any](data T, validators ...Validator[T]) error {
+	for _, validator := range validators {
+		err := validator(data)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+// 自定义验证器：确保字符串不为空
+func StringNotEmpty(s string) error {
+	if len(strings.TrimSpace(s)) == 0 {
+		return fmt.Errorf("string cannot be empty")
+	}
+	return nil
+}
+// 自定义验证器：检查整数是否在指定范围内
+func IntInRange(num int, min, max int) error {
+	if num < min || num > max {
+		return fmt.Errorf("number must be between %d and %d", min, max)
+	}
+	return nil
+}
+
+func main() {
+	person := Person{
+		Name:    "John",
+		Age:     30,
+		Address: "123 Main St.",
+	}
+	
+	err := Validate(
+		person, // 实例
+		func(p Person) error {	// 验证 name 是否为空
+			return StringNotEmpty(p.Name)
+		}, 
+		func(p Person) error {	// 验证 age 是否在0~120之内
+			return IntInRange(p.Age, 0, 120)
+		}
+	)
+	
+	if err != nil {
+		println(err.Error())
+		panic(err)
+	}
+	
+	println("Person is valid")
+}
+~~~
+通过使用泛型和自定义验证器，`Validate`函数允许跨不同数据类型进行灵活和可重用的数据验证，增强代码可重用性，并使添加或修改验证规则变得容易。
+
+再写一个登录验证的示例：
+~~~go
+// 登录表单的结构体
+type LoginForm struct {
+    Username string
+    Password string
+}
+
+// 接受任意类型T的值并返回一个错误
+type Validator[T any] func(T) error
+
+// 使用自定义验证器执行数据验证
+func Validate[T any](data T, validators ...Validator[T]) error {
+	for _, validator := range validators {
+		err := validator(data)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// 自定义验证器：确保字符串不为空
+func StringNotEmpty(s string) error {
+	if len(strings.TrimSpace(s)) == 0 {
+		return fmt.Errorf("string cannot be empty")
+	}
+	return nil
+}
+
+// 给 LoginForm 实现一个 Validate 方法
+func (f *LoginForm) Validate() error {
+    return Validate(f,
+        func(l *LoginForm) error {
+            return StringNotEmpty(l.Username)	// 验证用户名
+        },
+        func(l *LoginForm) error {
+            return StringNotEmpty(l.Password)	// 验证密码
+        },
+    )
+}
+
+func main() {
+    loginForm := LoginForm{
+        Username: "John",
+        Password: "123",
+    }
+
+    err := loginForm.Validate() // 调用校验方法
+    if err != nil {
+        println(err.Error())
+        panic(err)
+    }
+
+    println("Login form is valid")
+}
+~~~
+
+## 反射
+反射是指在程序运行期对程序本身进行访问和修改的能力
+
+变量的内在机制：
+- 变量包含类型信息和值信息 `var arr [10]int arr[0] = 10`
+- 类型信息：是静态的元信息，是预先定义好的
+- 值信息：是程序运行过程中动态改变的
+
+反射的使用：
+- `reflect`包封装了反射相关的方法
+- 获取类型信息：`reflect.TypeOf`，是静态的
+- 获取值信息：`reflect.ValueOf`，是动态的
+
+空接口与反射:
+- 反射可以在运行时动态获取程序的各种详细信息
+- 反射获取`interface`类型信息
+  	~~~go
+  	//反射获取interface类型信息
+
+	func reflect_type(a interface{}) {
+		t := reflect.TypeOf(a)
+		fmt.Println("类型是：", t)
+		// kind()可以获取具体类型
+		k := t.Kind()
+		fmt.Println(k)
+	    switch k {
+			case reflect.Float64:
+				fmt.Printf("a is float64\n")
+			case reflect.String:
+				fmt.Println("string")
+		}
+	}
+
+	func main() {
+		var x float64 = 3.4
+		reflect_type(x)
+	}
+  	~~~
+- 反射获取`interface`值信息
+	~~~go
+	//反射获取interface值信息
+
+	func reflect_value(a interface{}) {
+		v := reflect.ValueOf(a)
+		fmt.Println(v)
+		k := v.Kind()
+		fmt.Println(k)
+		switch k {
+		case reflect.Float64:
+			fmt.Println("a是：", v.Float())
+		}
+	}
+
+	func main() {
+		var x float64 = 3.4
+		reflect_value(x)
+	}
+	~~~
+- 反射修改值信息
+	~~~go
+	//反射修改值
+	func reflect_set_value(a interface{}) {
+		v := reflect.ValueOf(a)
+		k := v.Kind()
+		switch k {
+		case reflect.Float64:
+			// 反射修改值
+			v.SetFloat(6.9)
+			fmt.Println("a is ", v.Float())
+		case reflect.Ptr:
+			// Elem()获取地址指向的值
+			v.Elem().SetFloat(7.9)
+			fmt.Println("case:", v.Elem().Float())
+			// 地址
+			fmt.Println(v.Pointer())
+		}
+	}
+
+	func main() {
+		var x float64 = 3.4
+		// 反射认为下面是指针类型，不是float类型
+		reflect_set_value(&x)
+		fmt.Println("main:", x)
+	}
+	~~~
+结构体与反射:
+- 查看类型、字段和方法
+	~~~go
+	// 定义结构体
+	type User struct {
+		Id   int
+		Name string
+		Age  int
+	}
+
+	// 绑方法
+	func (u User) Hello() {
+		fmt.Println("Hello")
+	}
+
+	// 传入interface{}
+	func Poni(o interface{}) {
+		t := reflect.TypeOf(o)
+		fmt.Println("类型：", t)
+		fmt.Println("字符串类型：", t.Name())
+		// 获取值
+		v := reflect.ValueOf(o)
+		fmt.Println(v)
+		// 可以获取所有属性
+		// 获取结构体字段个数：t.NumField()
+		for i := 0; i < t.NumField(); i++ {
+			// 取每个字段
+			f := t.Field(i)
+			fmt.Printf("%s : %v", f.Name, f.Type)
+			// 获取字段的值信息
+			// Interface()：获取字段对应的值
+			val := v.Field(i).Interface()
+			fmt.Println("val :", val)
+		}
+		fmt.Println("=================方法====================")
+		for i := 0; i < t.NumMethod(); i++ {
+			m := t.Method(i)
+			fmt.Println(m.Name)
+			fmt.Println(m.Type)
+		}
+
+	}
+
+	func main() {
+		u := User{1, "zs", 20}
+		Poni(u)
+	}
+	~~~
+- 查看匿名字段
+	~~~go
+	// 定义结构体
+	type User struct {
+		Id   int
+		Name string
+		Age  int
+	}
+
+	// 匿名字段
+	type Boy struct {
+		User
+		Addr string
+	}
+
+	func main() {
+		m := Boy{User{1, "zs", 20}, "bj"}
+		t := reflect.TypeOf(m)
+		fmt.Println(t)
+		// Anonymous：匿名
+		fmt.Printf("%#v\n", t.Field(0))
+		// 值信息
+		fmt.Printf("%#v\n", reflect.ValueOf(m).Field(0))
+	}
+	~~~
+- 修改结构体的值
+	~~~go
+	// 定义结构体
+	type User struct {
+		Id   int
+		Name string
+		Age  int
+	}
+
+	// 修改结构体值
+	func SetValue(o interface{}) {
+		v := reflect.ValueOf(o)
+		// 获取指针指向的元素
+		v = v.Elem()
+		// 取字段
+		f := v.FieldByName("Name")
+		if f.Kind() == reflect.String {
+			f.SetString("kuteng")
+		}
+	}
+
+	func main() {
+		u := User{1, "5lmh.com", 20}
+		SetValue(&u)
+		fmt.Println(u)
+	}
+	~~~
+- 调用方法
+	~~~go
+	// 定义结构体
+	type User struct {
+		Id   int
+		Name string
+		Age  int
+	}
+
+	func (u User) Hello(name string) {
+		fmt.Println("Hello：", name)
+	}
+
+	func main() {
+		u := User{1, "5lmh.com", 20}
+		v := reflect.ValueOf(u)
+		// 获取方法
+		m := v.MethodByName("Hello")
+		// 构建一些参数
+		args := []reflect.Value{reflect.ValueOf("6666")}
+		// 没参数的情况下：var args2 []reflect.Value
+		// 调用方法，需要传入方法的参数
+		m.Call(args)
+	}
+	~~~
+- 获取字段的tag
+	~~~go
+	type Student struct {
+		Name string `json:"name1" db:"name2"`
+	}
+
+	func main() {
+		var s Student
+		v := reflect.ValueOf(&s)
+		// 类型
+		t := v.Type()
+		// 获取字段
+		f := t.Elem().Field(0)
+		fmt.Println(f.Tag.Get("json"))
+		fmt.Println(f.Tag.Get("db"))
+	}
+	~~~
+案例:
 ~~~go
 //对int类型的反射
 func reflect1(b interface{}) {
@@ -977,29 +1553,17 @@ func main() {
 	reflect2(stu)
 }
 ~~~
-
-Kind()方法
-
-获取变量的类别, 返回一个常量
-
-Type是类型, Kind是类别
-
+获取反射对象的底层类型的方法:
 ~~~go
 var num int = 10
-//num的Type是int, Kind也是int
-var stu Student
-//stu的Type是包名.Student, Kind是struct
+value := reflect.ValueOf(num)
+
+fmt.Println(value.Kind()) // 输出：int
 ~~~
-
-
-
-通过反射来修改变量, 使用SetXxx() (Xxx就是类型如: SetInt())方法
-
-修改前需要使用对应的指针类型来完成
-
-同时需要使用Elem()方法
-
+通过反射来修改变量，使用SetXxx()方法，Xxx就是类型，比如: SetInt()：
 ~~~go
+// 修改前需要使用对应的指针类型来完成
+// 同时需要使用Elem()方法
 func main() {
 	var num int = 100
 	fn := reflect.ValueOf(&num)
@@ -1008,113 +1572,142 @@ func main() {
 	fmt.Printf("%v\n", num)	//输出200
 }
 ~~~
-
-
-
-NumField()方法
-
-返回结构体有多少个字段
-
+获取结构体（`struct`）类型的值 `val` 的字段数量的方法:
 ~~~go
-num := val.Num.Field() 
+type Person struct {
+    Name string
+    Age  int
+}
+
+p := Person{Name: "Alice", Age: 30}
+
+// 获取结构体字段数量
+num := reflect.ValueOf(p).NumField()
+
+fmt.Println(num) // 输出：2
 ~~~
-
-
-
-reflect.ValueOf().Field()方法
-
-获取到结构体中指定的字段的值, 需断言后才能操作该值
-
-
-
-reflect.TypeOf().Field()方法
-
-获取到结构体的tag标签的值
-
+获取结构体类型值的指定字段的值，需要先进行类型断言来将其转换为具体的类型，然后才能对字段的值进行操作：
 ~~~go
-type.Field(i).Tag.Get("json") //获取json转换后的tag标签值
+type Person struct {
+	Name string
+	Age  int
+}
+
+func main() {
+	p := Person{Name: "Alice", Age: 30}
+	
+	value := reflect.ValueOf(p)
+	
+	nameField := value.Field(0)
+	ageField := value.Field(1)
+	
+	if nameField.Kind() == reflect.String {
+		fmt.Println(nameField.String()) // 输出：Alice
+	}
+	
+	if ageField.Kind() == reflect.Int {
+		age := ageField.Int()
+		fmt.Println(age) // 输出：30
+	}
+}
 ~~~
-
-
-
-reflect.ValueOf().NumMethod()方法
-
-获取该结构体的方法的个数
-
+获取结构体类型的指定字段的反射信息：
 ~~~go
-num := val.NumMethod()
+type Person struct {
+	Name string
+	Age  int
+}
+
+func main() {
+	t := reflect.TypeOf(Person{})
+	
+	nameField, _ := t.FieldByName("Name")
+	ageField, _ := t.FieldByName("Age")
+	
+	fmt.Println(nameField.Name) // 输出：Name
+	fmt.Println(ageField.Name)  // 输出：Age
+}
 ~~~
-
-
-
-Method()与Call()方法
-
-获取指定的第几个方法并调用它
-
+获取类型的方法数量：
 ~~~go
-val.Method(1).Call(nil)
+type Person struct {
+	Name string
+	Age  int
+}
+
+func (p Person) SayHello() {
+	fmt.Println("Hello, my name is", p.Name)
+}
+
+func (p Person) GetAge() int {
+	return p.Age
+}
+
+func main() {
+	p := Person{Name: "Alice", Age: 30}
+	
+	value := reflect.ValueOf(p)
+	
+	// NumMethod() 只能应用于接收者为值或指针类型的方法，不能应用于接口类型。
+	numMethods := value.NumMethod()
+	
+	fmt.Println(numMethods) // 输出：2
+}
+~~~
+获取指定索引位置的方法的反射值: 
+~~~go
 //结构体上的方法的排序依据方法首字母在ascll码表上的大小排序
 //call方法传入一个反射类型切片并返回一个反射类型切片
 //用于方法调用传参
 var params []reflect.Value
 params = append(params, reflect.ValueOf(10))
 params = append(params, reflect.ValueOf(20))
-res := val.Method(0).Call(params)
+res := params.Method(0).Call(params)
 fmt.Println("res=", res[0].Int())
 //调用结构体上的第一个方法并传入两个int参数
 //输出方法调用后返回的int值并通过Int()转换类型获取真实的值
 ~~~
-
-
-
-FieldByName()方法
-
-指定结构体的字段名,可做后续修改操作
-
+根据字段名获取结构体类型值的指定字段的值:
 ~~~go
-sv.Elem().FieldByName("UserId").SetString("123")
-sv.Elem().FieldByName("Name").SetString("高江华")
-~~~
+type Person struct {
+	Name string
+	Age  int
+}
 
-
-
-reflect.New()方法
-
-返回一个Value类型值,该值持有一个指向类型为type的新申请的零值的指针
-
-~~~go
-elem = reflect.New(st)
-//st为新申请的零值的指针
-//elem是一个指向st的指针
-~~~
-
-
-
-
-
-### 常量
-
-使用关键字const声明
-
-常量定义时必须初始化赋值, 不可修改
-
-只能修饰bool, 数字, 字符串
-
-iota的使用
-
-~~~go
 func main() {
-	//iota数值递增
-	const (
-		a = iota
-		b
-		c, d = iota, iota	//不会递增
-	)
-	fmt.Println(a,b,c,d) //0,1,2,2
+	p := Person{Name: "Alice", Age: 30}
+	
+	value := reflect.ValueOf(p)
+	
+	nameField := value.FieldByName("Name")
+	ageField := value.FieldByName("Age")
+	
+	fmt.Println(nameField) // 输出：Alice
+	fmt.Println(ageField)  // 输出：30
+}
+~~~
+创建一个指定类型的指针值:
+~~~go
+type Person struct {
+	Name string
+	Age  int
+}
+
+func main() {
+	pType := reflect.TypeOf(Person{})
+
+	// New() 方法返回一个 reflect.Value 对象，该对象包含了一个指向新创建对象的指针值
+	ptr := reflect.New(pType)
+	
+	fmt.Println(ptr) // 输出：&{{ } 0}
+
+	// 如果你想获取指针值所指向的对象，可以使用 Elem() 方法来间接访问
+	person := ptr.Elem().Interface().(Person)
+	fmt.Println(person) // 输出：{ 0}
 }
 ~~~
 
-### net包
+## net包
 ~~~go
 listen, err := net.Listen("tcp", "0.0.0.0:8888")
 //使用tcp协议监听本地8888端口
