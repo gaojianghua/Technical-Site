@@ -1396,4 +1396,374 @@ export default Index;
 ~~~
 
 ## 自定义 Hooks：响应式的 useState
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/8852dc3801e2450ba677706c9c2c17c7~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
 
+`react-hooks` 是 `React16.8` 的产物，目的是增加代码的可复用性、逻辑性，并且解决函数式组件无状态的问题，这样既保留了函数式的简单，又解决了没有数据管理状态的缺陷。
+
+而自定义 `Hooks` 是 `react-hooks` 基础上的一个扩展，它可以根据实际的业务场景、需求制定相应的 `Hooks`， 将对应的逻辑进行封装，从而具备逻辑性、复用性。
+
+从本质而言，**Hooks 就是一个函数**，可以简单地认为 `Hooks` 是用来处理一些通用性数据、逻辑的。
+
+::: tip
+普通函数加入 `html（JSX 语法）`就是函数组件，但这个组件无状态，也就是没有数据管理状态，而 `Hooks` 的作用就是让函数组件具备数据管理的能力。如果说函数组件是一辆车，那么 `Hooks` 就是油，驱动这辆车跑起来的燃料。
+:::
+- Hooks 的驱动条件
+
+所谓驱动条件，就是会改变数据源，从而驱动整个数据状态。通常用 useState、useReducer 为驱动条件，驱动整个自定义 Hooks。
+
+- 通用模式
+
+自定义 Hooks 的名称通常以 use 开头，我们设计为：
+~~~ts
+const [ xxx, ...] = useXxx(参数一，参数二, ...)
+~~~
+
+### useLatest
+永远返回最新的值，可以避免闭包问题。
+
+示例：
+~~~ts
+import { useState, useEffect } from "react";
+
+export default () => {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      console.log("count:", count);
+      setCount(count + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <>
+      <div>自定义Hooks：useLatestt</div>
+      <div>count: {count}</div>
+    </>
+  );
+};
+~~~
+打印出的 `count` 为 `0`，页面中的 `count` 为 `1`（具体原因我们在讲 `useEffect` 源码篇时提及，这里先看解决方法）
+
+解决方法：
+
+利用 `useRef` 的高级用法：缓存数据去解决，并且这种方式在`react-redux`源码中进行应用，而不止是获取元素属性。
+~~~ts
+import { useRef } from "react";
+
+const useLatest = <T,>(value: T): { readonly current: T } => {
+  const ref = useRef(value);
+  ref.current = value;
+
+  return ref;
+};
+
+export default useLatest;
+~~~
+::: tip
+一起来看下这段代码 `<T,>(value: T): { readonly current: T }`。
+
+从作用来看，这个钩子返回的永远是最新值，也就是说，这个钩子的入参与出参都是这个值，但这个值我们却不知道是 `string`、`number` 还是其他类型的值，这时，我们就希望它传入的值与返回的值是同种类型。
+
+简单来说，无论传入什么类型，都要返回对应的类型，这种情况必是泛型。
+
+`:{readonly current: T}` 代表返回结果的类型，由于我们使用的为 `useRef` ，所以，返回的值都在 `current` 内，那么 `current` 的类型就是 `T`。
+
+至于 `readonly` 则是代表的只读不可修改，因为固定模式为 `current` 对象，所以这里使用 `readonly` 。
+:::
+
+### useMount 和 useUnmount
+- `useMount`：只在组件初始化执行的 `hook`。
+- `useUnmount`：只在组件卸载时的 `hook`。
+
+两者都是根据 `useEffect` 演化而来，而 `useUnmount` 需要注意一下，这里传入的函数需要保持最新值，直接使用 `useLatest` 即可：
+~~~ts
+// useMount
+import { useEffect } from "react";
+
+const useMount = (fn: () => void) => {
+  useEffect(() => {
+    fn?.();
+  }, []);
+};
+
+export default useMount;
+
+// useUnmount
+import { useEffect } from "react";
+import useLatest from "../useLatest";
+
+const useUnmount = (fn: () => void) => {
+  const fnRef = useLatest(fn);
+
+  useEffect(
+    () => () => {
+      fnRef.current();
+    },
+    []
+  );
+};
+
+export default useUnmount;
+~~~
+示例：
+~~~tsx
+import { useState } from "react";
+import { useMount, useUnmount } from "../../hooks";
+
+import { Button, message } from "antd";
+
+const Child = () => {
+  useMount(() => {
+    message.info("首次渲染");
+  });
+
+  useUnmount(() => {
+    message.info("组件已卸载");
+  });
+
+  return <div>大家好，我是小杜杜，一起玩转Hooks吧！</div>;
+};
+
+const Index = () => {
+  const [flag, setFlag] = useState<boolean>(false);
+
+  return (
+    <div>
+      <Button type="primary" onClick={() => setFlag((v) => !v)}>
+        切换 {flag ? "unmount" : "mount"}
+      </Button>
+      {flag && <Child />}
+    </div>
+  );
+};
+
+export default Index;
+~~~
+
+### useUnmountedRef
+获取当前组件是否卸载，这个钩子的思路也很简单，只需要利用 `useEffect` 的状态，来保存对应的值就 ok 了。
+~~~ts
+import { useEffect, useRef } from "react";
+
+const useUnmountedRef = (): { readonly current: boolean } => {
+  const unmountedRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+    };
+  }, []);
+
+  return unmountedRef;
+};
+
+export default useUnmountedRef;
+~~~
+示例：
+~~~tsx
+import { useState } from "react";
+import { useUnmountedRef, useUnmount, useMount } from "../../hooks";
+import { Button } from "antd";
+
+const Child = () => {
+  const unmountedRef = useUnmountedRef();
+
+  useMount(() => {
+    console.log("初始化：", unmountedRef);
+  });
+  useUnmount(() => {
+    console.log("卸载：", unmountedRef);
+  });
+
+  return <div>大家好，我是小杜杜，一起玩转Hooks吧！</div>;
+};
+
+const Index = () => {
+  const [flag, setFlag] = useState<boolean>(false);
+
+  return (
+    <div>
+      <Button type="primary" onClick={() => setFlag((v) => !v)}>
+        切换 {flag ? "卸载" : "初始化"}
+      </Button>
+      {flag && <Child />}
+    </div>
+  );
+};
+
+export default Index;
+~~~
+
+### useSafeState
+使用方法与 `useState` 的用法完全一致，但在组件卸载后异步回调内的 `setState` 不再执行，这样可以避免因组件卸载后更新状态而导致的内存泄漏。
+
+这里要注意的是卸载后的异步条件，所以直接使用 `useUnmountedRef` 即可，代码如下：
+~~~ts
+import { useCallback, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
+import useUnmountedRef from "../useUnmountedRef";
+
+function useSafeState<S>(
+  initialState: S | (() => S)
+): [S, Dispatch<SetStateAction<S>>];
+function useSafeState<S = undefined>(): [
+  S | undefined,
+  Dispatch<SetStateAction<S | undefined>>
+];
+function useSafeState<S>(initialState?: S | (() => S)) {
+  const unmountedRef: { current: boolean } = useUnmountedRef();
+  const [state, setState] = useState(initialState);
+  const setCurrentState = useCallback((currentState: any) => {
+    if (unmountedRef.current) return;
+    setState(currentState);
+  }, []);
+
+  return [state, setCurrentState] as const;
+}
+
+export default useSafeState;
+~~~
+- 首先，这个钩子和 `useState` 的用法完全一致，所以我们的入参和出参保持一致。这里使用泛型与 `useLatest` 的原因一样；
+- 入参：`initialState`，这个参数并不是一定必需的，所以存在两种情况，一种是 S（传入什么就是什么类型）、另一种是 `undefined`，其中 S 还分为是否为函数。所以标准的写法是函数重载，简单理解为：可以在同一个函数下定义多种类型值，最后汇总到一块；
+- 返参：`[state, setCurrentState] as const`，这种写法叫做断言，所谓断言，通过 `as` 这个参数告诉编辑器，就是这种类型，不用你再次校验。是不是很任性，像极了你的女朋友，而 `as const` 是标记为不可变，即这个数组的长度与成员类型均不可再进行修改，可翻译为 `readonly [S, Dispatch<SetStateAction<S>>]`，这样可能更加好理解一点；
+- 至于 `Dispatch<SetStateAction<S>>` 这种写法是固定的，就是对应 `useState` 的第二个参数。
+
+::: tip
+除此之外，这里还用到了 `useCallback`。在之前的介绍中，我说要配合使用 `React.Memo`，那么这里为什么要用呢？
+
+其实这里要特意说明下，如果是在开发自定义 `Hooks` 的时候，可直接使用 `useCallback`，而在具体的业务场景中，`useCallback` 需要配合 `React.Memo` 使用，具体为何，在之后介绍 `useCallBack` 源码篇中进行说明，现在只需要记住即可。
+:::
+
+### useUpdate
+强制组件重新渲染，最终返回一个函数。
+
+这就回到开头所说的问题，是什么驱动函数式的更新：用 `useState`、`useReducer` 作为更新条件，这里以 `useReducer` 做演示，毕竟大家对 `useState` 都很熟悉。
+
+具体的做法是：搞个累加器，无关的变量，触发一次，就累加 `1`，这样就会强制刷新。
+~~~ts
+import { useReducer } from "react";
+
+function useUpdate(): () => void {
+  const [, update] = useReducer((num: number): number => num + 1, 0);
+
+  return update;
+}
+
+export default useUpdate;
+~~~
+测试：
+~~~tsx
+import { useUpdate } from "../../hooks";
+import { Button, message } from "antd";
+
+const Index = () => {
+  const update = useUpdate();
+
+  return (
+    <div>
+      <div>时间：{Date.now()}</div>
+      <Button
+        type="primary"
+        onClick={() => {
+          update();
+        }}
+      >
+        更新
+      </Button>
+    </div>
+  );
+};
+
+export default Index;
+~~~
+
+### useCreation
+强化 `useMemo` 和 `useRef`，用法与 `useMemo` 一样，一般用于性能优化。
+
+useCreation 如何增强：
+- `useMemo` 的第一个参数 `fn`，会缓存对应的值，那么这个值就有可能拿不到最新的值，而 `useCreation` 拿到的值永远都是最新值；
+- `useRef` 在创建复杂常量的时候，会出现潜在的性能隐患（如：实例化 `new Subject`），但 `useCreation` 可以有效地避免。
+
+来简单分析一下如何实现 `useCreation`:
+- 明确出参入参：`useCreation` 主要强化的是 `useMemo`，所以出入参应该保持一致。出参返回对应的值，入参共有两个，第一个对应函数，第二个对应数组（此数组可变触发）；
+- 最新值处理：针对 `useMemo` 可能拿不到最新值的情况，可直接依赖 `useRef` 的高级用法来保存值，这样就会永远保存最新值；
+- 触发更新条件：比较每次传入的数组，与之前对比，若不同，则触发、更新对应的函数。
+
+~~~ts
+import { useRef } from "react";
+import type { DependencyList } from "react";
+
+const depsAreSame = (
+  oldDeps: DependencyList,
+  deps: DependencyList
+): boolean => {
+  if (oldDeps === deps) return true;
+
+  for (let i = 0; i < oldDeps.length; i++) {
+    if (!Object.is(oldDeps[i], deps[i])) return false;
+  }
+
+  return true;
+};
+
+const useCreation = <T,>(fn: () => T, deps: DependencyList) => {
+  const { current } = useRef({
+    deps,
+    obj: undefined as undefined | T,
+    initialized: false,
+  });
+
+  if (current.initialized === false || !depsAreSame(current.deps, deps)) {
+    current.deps = deps;
+    current.obj = fn();
+    current.initialized = true;
+  }
+
+  return current.obj as T;
+};
+
+export default useCreation;
+~~~
+分析 useRef：
+
+`useRef` 的保存值应该有哪些？其中 `deps` 和 `obj` 不必多说，一个是数组，一个是数据，是必须要保存的，除此之外，还需要保存 `initialized`（初始化条件），这个参数的作用是应对首次保存值，之后判断是否保存，根据 `deps` 判断即可。
+
+测试：
+~~~tsx
+import React, { useState } from "react";
+import { Button } from "antd";
+import { useCreation } from "../../hooks";
+
+const Index: React.FC<any> = () => {
+  const [flag, setFlag] = useState<boolean>(false);
+
+  const getNowData = () => {
+    return Math.random();
+  };
+
+  const nowData = useCreation(() => getNowData(), []);
+
+  return (
+    <>
+      <div>正常的函数： {getNowData()}</div>
+      <div>useCreation包裹后的： {nowData}</div>
+      <Button
+        type="primary"
+        onClick={() => {
+          setFlag((v) => !v);
+        }}
+      >
+        切换状态{JSON.stringify(flag)}
+      </Button>
+    </>
+  );
+};
+
+export default Index;
+~~~
+在浏览器中运行可以看到，当无关的变量刷新时，会影响 `getNowData` 产生的随机值，但不会影响经过 `useCreation` 包裹后的值，从而增强渲染时的性能问题。
+
+### useReactive
