@@ -2626,37 +2626,1420 @@ useTrackedEffect(
 我们需要了解两个核心概念：Fiber 和并发。 因为学习源码必然绕不开这两大核心概念，了解它们，对我们之后学习源码有着莫大的好处。
 
 ### 知悉 Fiber
+在一个庞大的项目中，如果有某个节点发生变化，就会给 `diff` 带来巨大的压力，此时想要找到真正变化的部分就会耗费大量的时间，也就是说此时，`js` 会占据主线程去做对比，导致无法正常的页面渲染，此时就会发生页面卡顿、页面响应变差、动画、手势等应用效果差。
+
+为了解决这一问题，`React` 团队花费两年时间，重写了 `React` 的核心算法`reconciliation`，在 `React v16` 中发布，为了区分 `reconciler`（调和器），将之前的 `reconciler` 称为 `stack reconciler`，之后称作 `fiber reconciler`（简称：`Fiber`）。
+
+简而言之，`Fiber` 实际上是一种核心算法，为了解决**中断和树庞大**的问题，也可以认为 `Fiber` 就是 `v16` 之后的虚拟 `DOM`。
+
+为了之后更好的理解，我们先来看看 `element`、`fiber`、`DOM` 元素三者的关系：
+- `element` 对象就是我们的 `jsx` 代码，上面保存了 `props`、`key`、`children` 等信息；
+- `DOM` 元素就是最终呈现给用户展示的效果；
+- 而 `fiber` 就是充当 `element` 和 `DOM` 元素的桥梁，简单来说，**只要 element 发生改变，就会通过 fiber 做一次调和，使对应的 DOM 元素发生改变。**
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/9db027b6d5d74dd8ab9e9c569a44d282~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+### 虚拟 DOM 如何转化为 Fiber
+万物始于 `jsx`，那么我们就从 `jsx` 入手，从而了解 `Fiber`。
+
+先看看最常见的一段 `jsx` 代码：
+~~~ts
+const Index = () => {
+  return <div>大家好，我是小杜杜，一起玩转hooks吧！</div>;
+}
+~~~
+然后到达绑定的结构：
+~~~ts
+import ReactDOM from 'react-dom/client';
+
+const root = ReactDOM.createRoot(
+  document.getElementById('root') as HTMLElement
+);
+root.render(
+  <App />
+);
+~~~
+::: tip
+注：`React v18` 将原先的 `render` 替换为 `createRoot`，也就是将原先的 `legacy` 模式转化为 `concurrent` 模式。
+:::
+**ReactDOM.createRoot 结构：**
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/3da042995c8c4c52b3c997c7f13871f4~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+实际上，依旧走的是之前的 `render` 方法。
+::: tip
+- 问：既然都走的 `render` 方法，那么 `React` 为什么要替换为 `createRoot` 呢？
+
+- 答：最大的改变点是模式的转化，原先的 `legacy` 模式是同步的，而转化后的 `concurrent` 模式是异步的。可以说在 `React v18` 的版本中兼容了**同步渲染**和**异步渲染**。
+
+其次是对服务端的改变，在新版本中，替换了原有的 `hydrate API`，做成了配置项，而非原有的 `ReactDOM.hydrate`
+:::
+### beginWork 方法
+当普通的 `JSX` 代码被 `babel` 编译成 `React.createElement` 的形式后，最终会走到 `beginWork` 这个方法中。
+
+这个方法可以说是 `React` 整个流程的开始，要特别注意这个方法。`beginWork` 中有个 `tag`，而这个 `tag` 的类型就是判断 `element` 对应的 `fiber`，如：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/20045ea700984698aa3a96428b70a8f2~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+**beginWork 的入参：**
+- **current**：在视图层渲染的树；
+- **workInProgress**：这个参数尤为重要，它就是在整个内存中所构建的 `Fiber`树，所有的更新都发生在 `workInProgress` 中，所以这个树是**最新状态**的，之后它将替换给 `current`；
+- **renderLanes**：跟优先级有关。
+
+**element 与 fiber 的对应关系：**
+fiber | element
+------|--------
+`FunctionComponent` = 0 | 函数组件
+`ClassComponent` = 1 | 类组件
+`IndeterminateComponent` = 2 | 初始化的时候不知道是函数组件还是类组件
+`HostRoot` = 3 | 根元素，通过`reactDom.render()`产生的根元素
+`HostPortal` = 4 | `ReactDOM.createPortal` 产生的 `Portal`
+`HostComponent` = 5 | `dom` 元素（如`<div>`）
+`HostText` = 6 | 文本节点
+`Fragment` = 7 | `<React.Fragment>`
+`Mode` = 8 | `<React.StrictMode>`
+`ContextConsumer` = 9 | `<Context.Consumer>`
+`ContextProvider` = 10 | `<Context.Provider>`
+`ForwardRef` = 11 | `React.ForwardRef`
+`Profiler` = 12 | `<Profiler>`
+`SuspenseComponent` = 13 | `<Suspense>`
+`MemoComponent` = 14 | `React.memo` 返回的组件
+`SimpleMemoComponent` = 15 | `React.memo` 没有制定比较的方法，所返回的组件
+`LazyComponent` = 16 | `<lazy />`
+
+### Fiber 中保存了什么
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/fd05d3e8ff4947a289f596fe5a4b934e~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+::: tip
+源码位置：`packages/react-reconciler/src/ReactFiber.js`中的`FiberNode`。
+:::
+为了更直观地查看 `FiberNode` 的属性，我们直接看对应的 `type`（位置在同目录下的 `ReactInternalTypes`）。
+
+将 `FiberNode` 内容简单化为四个部分，分别是 `Instance`、`Fiber`、`Effect`、`Priority`。
+
+`Instance`：这个部分是用来存储一些对应 `element` 元素的属性。
+
+~~~ts
+export type Fiber = {
+  tag: WorkTag,  // 组件的类型，判断函数式组件、类组件等（上述的tag）
+  key: null | string, // key
+  elementType: any, // 元素的类型
+  type: any, // 与fiber关联的功能或类，如<div>,指向对应的类或函数
+  stateNode: any, // 真实的DOM节点
+  ...
+}
+~~~
+**Fiber**：这部分内容存储的是关于 `Fiber` 链表相关的内容和相关的 `props`、`state`。
+~~~ts
+export type Fiber = {
+  ...
+  return: Fiber | null, // 指向父节点的fiber
+  child: Fiber | null, // 指向第一个子节点的fiber
+  sibling: Fiber | null, // 指向下一个兄弟节点的fiber
+  index: number, // 索引，是父节点fiber下的子节点fiber中的下表
+  
+  ref:
+    | null
+    | (((handle: mixed) => void) & {_stringRef: ?string, ...})
+    | RefObject,  // ref的指向，可能为null、函数或对象
+    
+  pendingProps: any,  // 本次渲染所需的props
+  memoizedProps: any,  // 上次渲染所需的props
+  updateQueue: mixed,  // 类组件的更新队列（setState），用于状态更新、DOM更新
+  memoizedState: any, // 类组件保存上次渲染后的state，函数组件保存的hooks信息
+  dependencies: Dependencies | null,  // contexts、events（事件源） 等依赖
+
+  mode: TypeOfMode, // 类型为number，用于描述fiber的模式 
+  ...
+}
+~~~
+**Effect**：副作用相关的内容。
+~~~ts
+export type Fiber = {
+  ...
+   flags: Flags, // 用于记录fiber的状态（删除、新增、替换等）
+   subtreeFlags: Flags, // 当前子节点的副作用状态
+   deletions: Array<Fiber> | null, // 删除的子节点的fiber
+   nextEffect: Fiber | null, // 指向下一个副作用的fiber
+   firstEffect: Fiber | null, // 指向第一个副作用的fiber
+   lastEffect: Fiber | null, // 指向最后一个副作用的fiber
+  ...
+}
+~~~
+**Priority**：优先级相关的内容。
+~~~ts
+export type Fiber = {
+  ...
+  lanes: Lanes, // 优先级，用于调度
+  childLanes: Lanes,
+  alternate: Fiber | null,
+  actualDuration?: number,
+  actualStartTime?: number,
+  selfBaseDuration?: number,
+  treeBaseDuration?: number,
+  ...
+}
+~~~
+
+### 链表之间如何连接的
+我们知道了 `Fiber` 中保存的属性，那么我们要知道标签之间是如何连接的。`Fiber` 中通过 `return`、`child`、`sibling` 这三个参数来进行连接，它们分别指向父级、子级、兄弟，也就是说每个 `element` 通过这三个属性进行连接，同时通过 `tag` 的值来判断对应的 `element` 是什么。如：
+~~~ts
+const Index = (props)=> {
+
+  return (
+    <div>
+      大家好，我是小杜杜，一起玩转Hooks吧！
+      <div>知悉Fiber</div>
+      <p>更好的了解Hooks</p>
+    </div>
+  );
+}
+~~~
+那么按照之前讲的就会转化为：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/34d146c090f04d569f10c34cf9889213~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+**Fiber** 结构的创建和更新都是**深度优先遍历**，遍历顺序为：
+- 首先会判断当前组件是类组件还是函数式组件，类组件 `tag` 为 `1`，函数式为 `0`；
+- 然后发现 `div` 标签，标记 `tag` 为 `5`；
+- 发现 `div` 下包含三个部分，分别是，文本：大家好，我是小杜杜，一起玩转`hooks`吧！、`div`标签、`p`标签；
+- 遍历文本：大家好，我是小杜杜，一起玩转 `hooks` 吧！，下面无节点，标记 `tag` 为 `6`；
+- 在遍历 `div` 标签，标记 `tag` 为 `5`，此时下面有节点，所以对节点进行遍历，也就是文本 知悉 `fiber`，标记 `tag` 为 `6`；
+- 同理最后遍历`p`标签。
+  
+整个的流程就是这样，通过 `tag` 标记属于哪种类型，然后通过 `return`、`child`、`sibling` 这三个参数来判断节点的位置。
+
+### React v18 并发机制
+在 `React v18` 中，最重要的一个概念就是并发（`concurrency`）。其中 `useTransition` 、`useDeferredValue` 的内部原理都是基于并发的，可见并发的重要性。
+
+##### React 中的并发
+首先，`js` 是单线程语言，也就是说 `js` 在同一时间只能干一件事情。但这样就会产生一个问题，如果当前的事情非常耗时，那么后续的事情就会被延后（阻塞）。
+
+比如用户点击按钮后，先执行一个非常耗时的操作（大约 500ms），再进行其他操作，但在这 500ms 中，界面是属于卡死的状态，也就是说用户是无法进行其他操作，这种行为是非常影响用户体验的。而并发就是为了解决这类事件。
+
+在并发的情况下，`React` 会先点击这个耗时任务，当其他操作发生时（如滚动），先执行滚动的任务，然后再执行耗时任务，这样既能保持耗时任务的进行，又能让用户进行交互。
+
+虽然想法是好的，但实现起来就比较困难了。比如在更新中又触发了其他更新条件，怎么区分哪个是耗时任务？在更新的时候如何中断耗时任务？又该如何去恢复呢？
+
+::: tip
+官网描述**并发属于新的一种幕后机制**，它允许在同一时间内，准备多个版本的 `UI`，即多个版本的更新。
+:::
+
+##### 时间分片
+首先，我们要知道一个前置知识点：[window.requestIdleCallback](https://developer.mozilla.org/zh-CN/docs/Web/API/Window/requestIdleCallback)。
+
+它的作用是：**插入一个函数，这个函数将在浏览器空闲时期被调用**。 这使开发者能够在主事件循环上执行后台和低优先级工作，而不会影响延迟关键事件，如动画和输入响应。函数一般会按先进先调用的顺序执行，然而，如果回调函数指定了执行超时时间 `timeout`，则有可能为了在超时前执行函数而打乱执行顺序。
+
+整个页面的内容是一帧一帧绘制出来的，通常来讲，1s 内绘制的帧数越多，就代表变现的画面更加细腻。大多数浏览器绘制一帧在 16.6ms 左右，执行步骤为：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/3c1fc8e731054f45b85d1ec505c5ba0b~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+1. 用户的操作：如 `click`、`input` 等；
+2. 执行 `JS` 代码，宏任务和微任务；
+3. 渲染前执行 `resize/scroll` 等操作，再执行 `requestAnimationFrame` 回调；
+4. 渲染页面，绘制 `html、css` 等；
+5. 执行 `RIC（requestIdleCallback 回调函数）`，如果前面的步骤执行完成了，一帧还有剩余时间，就会执行该函数。
+
+而 `React` 是将任务进行拆解，然后放到 `requestIdleCallback` 中执行。比如一个 300ms 的更新，拆解为 6 个 50ms 的更新，然后放到 `requestIdleCallback` 中，如果一帧之内有剩余就会去执行，这样的话更新一直在继续，也可以达到交互的效果。
+
+但 `requestIdleCallback` 的兼容性非常差，`React` 团队并不打算使用，而是自己去实现一个类似 `requestIdleCallback` 的功能，也就是：**时间分片**。
+
+##### 优先级
+优先级是 `React` 中非常重要的模块，分为两种方式：
+- `紧急更新（Urgent updates）`： 用户的交互，如：点击、输入等，直接影响用户体验的行为都属于紧急情况；
+- `过渡更新（Transition updates）`： 页面跳转等操作属于非紧急情况。
+
+优先级的模块非常大，这里不做过多的介绍。我们只需要知道，所有的操作都有对应优先级，`React` 会先执行紧急的更新，其次才会执行非紧急的更新。
+
+##### 并发模式的实现
+关于并发模式，整体可分为三步，分别是：
+- 每个更新，都会分配一个优先级（`lane`），用于区分紧急程度；
+- 将不紧急的更新拆解成多段，并通过宏任务的方式将其合理分配到浏览器的帧当中，使得紧急任务可以插入进来；
+- 优先级高的更新会打断优先级低的更新，等优先级高的更新执行完后，再执行优先级低的任务。
+
+##### Concurrent 模式是否默认开启
+并发机制是 `React v18` 中的新功能，那么很多小伙伴会产生这样的疑问，`Concurrent` 模式需要手动开启吗？还是说所有的代码都转化成 `Concurrent` 模式了呢？
+
+实际上，在 `React v18` 中，`Concurrent` 并不需要手动开启，而是默认开启，换句话说，`Concurrent` 模式无法关闭，而是一直存在的。
+
+但要注意，并不是所有的代码都执行 `Concurent` 模式，比如事件更新在 `event`、`setTimeout`、网络请求等，`React` 依旧采用 `legacy` （同步阻塞）模式，但如果事件更新与 `Suspense、useTransition、useDeferredValue` 相关，`React` 则会采用 `Concurent` 模式。
+
+总的来说，`React` 的 `Concurrent` 模式是否启用取决于**触发更新的上下文**，这点要特别注意。
+
+## 以 useState 的视角来看 Hooks 的运行机制
+我们知道，如果 `React` 并没有 `Hooks`，那么函数式组件只能接收 `props`，渲染 `UI`，做一个展示组件，所有的逻辑就要在 `Class` 中书写，这样势必会导致 `Class` 组件内部错综复杂、代码臃肿。而函数式组件则不然，它能做 `Class` 组件的功能，拥有属于自己的状态，处理一些副作用，获取目标元素的属性、缓存数据等，所以有必要做一套函数式组件代替类组件的方案，`Hooks` 也就诞生了。
+
+`Hooks` 拥有属于自己的状态，提供了 `useState` 和 `useReducer` 两个 `Hook`，解决自身的状态问题，取代 `Class` 组件的 `this.setState`。
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/923d24d4edcd4dc0bb2e25437d54b776~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+### 引入 useState 后发生了什么
+先举个例子：
+~~~tsx
+import { Button } from "antd";
+import { useState } from "react";
+const Index = () => {
+  const [count, setCount] = useState(0);
+  return (
+    <><div>大家好，我是小杜杜，一起玩转Hooks吧！</div><div>数字：{count}</div><Button onClick={() => setCount((v) => v + 1)}>点击加1</Button></>
+  );
+};
+
+export default Index;
+~~~
+在上述的例子中，我们引入了 `useState`，并存储 `count` 变量，通过 `setCount` 来控制 `count`。也就是说，`count` 是函数式组件自身的状态，`setCount` 是触发数据更新的函数。
+
+在通常的开发中，当引入组件后，会从引用地址跳到对应引用的组件，查看该组件到底是如何书写的。
+
+我们以相同的方式来看看 `useState`，看看它在 `React` 中是如何书写的。
+
+文件位置：`packages/react/src/ReactHooks.js`。
+~~~ts
+export function useState<S>(
+  initialState: (() => S) | S,
+): [S, Dispatch<BasicStateAction<S>>] {
+  const dispatcher = resolveDispatcher();
+  return dispatcher.useState(initialState);
+}
+~~~
+可以看出 `useState` 的执行就等价于 `resolveDispatcher().useState(initialState)`，那么我们顺着线索看下去：
+**resolveDispatcher() ：**
+~~~ts
+function resolveDispatcher() {
+  const dispatcher = ReactCurrentDispatcher.current;
+  return ((dispatcher: any): Dispatcher);
+}
+~~~
+**ReactCurrentDispatcher：**
+文件位置：`packages/react/src/ReactCurrentDispatcher.js`。
+~~~ts
+const ReactCurrentDispatcher = {
+  current: (null: null | Dispatcher),
+};
+~~~
+通过类型可以看到 `ReactCurrentDispatcher` 不是 `null`，就是 `Dispatcher`，而在初始化时 `ReactCurrentDispatcher.current` 的值必为 `null`，因为此时还未进行操作。
+
+那么此时就很奇怪了，我们并没有发现 `useState` 是如何进行存储、更新的，`ReactCurrentDispatcher.current` 又是何时为 `Dispatcher` 的？
+
+既然我们在 `useState` 自身中无法看到存储的变量，那么就只能从函数执行开始，一步一步探索 `useState` 是如何保存数据的。
+
+### 函数式组件如何执行的
+在上节 `Fiber` 的讲解中，了解到我们写的 `JSX` 代码，是被 `babel` 编译成 `React.createElement` 的形式后，最终会走到 `beginWork` 这个方法中，而 `beginWork` 会走到 `mountIndeterminateComponent` 中，在这个方法中会有一个函数叫 `renderWithHooks`。
+
+`renderWithHooks` 就是所有函数式组件触发函数，接下来一起看看：
+
+文件位置：`packages/react-reconciler/src/ReactFiberHooks`。
+~~~ts
+export function renderWithHooks<Props, SecondArg>(
+  current: Fiber | null,
+  workInProgress: Fiber,
+  Component: (p: Props, arg: SecondArg) => any,
+  props: Props,
+  secondArg: SecondArg,
+  nextRenderLanes: Lanes,
+): any {
+  currentlyRenderingFiber = workInProgress;
+
+  // memoizedState: 用于存放hooks的信息，如果是类组件，则存放state信息
+  workInProgress.memoizedState = null;
+  //updateQueue：更新队列，用于存放effect list，也就是useEffect产生副作用形成的链表
+  workInProgress.updateQueue = null;
+
+  // 用于判断走初始化流程还是更新流程
+  ReactCurrentDispatcher.current =
+    current === null || current.memoizedState === null
+      ? HooksDispatcherOnMount
+      : HooksDispatcherOnUpdate;
+
+  // 执行真正的函数式组件，所有的hooks依次执行
+  let children = Component(props, secondArg);
+
+  finishRenderingHooks(current, workInProgress);
+
+  return children;
+}
+
+function finishRenderingHooks(current: Fiber | null, workInProgress: Fiber) {
+    
+  // 防止hooks乱用，所报错的方案
+  ReactCurrentDispatcher.current = ContextOnlyDispatcher;
+
+  const didRenderTooFewHooks =
+    currentHook !== null && currentHook.next !== null;
+
+  // current树
+  currentHook = null;
+  workInProgressHook = null;
+
+  didScheduleRenderPhaseUpdate = false;
+}
+~~~
+我们先分析下 `renderWithHooks` 函数的入参。
+- **current**： 即 `current fiber`，渲染完成时所生成的 `current` 树，之后在 **commit 阶段替换为真正的 DOM 树**；
+- **workInProgress**： 即 `workInProgress fiber`，当更新时，**复制 current fiber，从这棵树进行更新，更新完毕后，再赋值给 current 树**；
+- **Component**： 函数组件本身；
+- **props**： 函数组件自身的 `props`；
+- **secondArg**： 上下文；
+- **nextRenderLanes**： 渲染的优先级。
+
+::: tip
+问：`Fiber` 架构的三个阶段分别是什么？
+
+答：总共分为 `reconcile`、`schedule`、`commit` 阶段。
+- `reconcile` 阶段： `vdom` 转化为 `fiber` 的过程。
+- `schedule` 阶段：在 `fiber` 中遍历的过程中，可以打断，也能再恢复的过程。
+- `commit` 阶段：`fiber` 更新到真实 `DOM` 的过程。
+:::
+
+#### renderWithHooks 的执行流程
+1. 在每次函数组件执行之前，先将 `workInProgress` 的 `memoizedState` 和 `updateQueue` 属性进行清空，之后将新的 `Hooks` 信息挂载到这两个属性上，之后在 `commit` 阶段替换 `current` 树，也就是说 `current` 树保存 `Hooks` 信息；
+2. 然后通过判断 `current` 树是否存在来判断走初始化（ `HooksDispatcherOnMount` ）流程还是更新（ `HooksDispatcherOnUpdate` ）流程。而 `ReactCurrentDispatcher.current` 实际上包含所有的 `Hooks`，简单地讲，`React` 根据 `current` 的不同来判断对应的 `Hooks`，从而监控 `Hooks` 的调用情况；
+3. 接下来调用的 `Component(props, secondArg)` 就是真正的函数组件，然后依次执行里面的 `Hooks`；
+4. 最后提供整个的异常处理，防止不必要的报错，再将一些属性置空，如：`currentHook`、`workInProgressHook` 等。
+
+通过 `renderWithHooks` 的执行步骤，可以看出总共分为三个阶段，分别是：初始化阶段、更新阶段以及异常处理三个阶段，同时这三个阶段也是整个 `Hooks` 处理的三种策略，接下来我们逐一分析。
+
+### HooksDispatcherOnMount（初始化阶段）
+在初始化阶段中，调用的是 `HooksDispatcherOnMount`，对应的 `useState` 所走的是 `mountState`。
+
+文件位置：`packages/react-reconciler/src/ReactFiberHooks.js`。
+~~~ts
+ // 包含所有的hooks，这里列举常见的
+const HooksDispatcherOnMount = { 
+    useRef: mountRef,
+    useMemo: mountMemo,
+    useCallback: mountCallback,
+    useEffect: mountEffect,
+    useState: mountState,
+    useTransition: mountTransition,
+    useSyncExternalStore: mountSyncExternalStore,
+    useMutableSource: mountMutableSource,
+    ...
+}
+
+function mountState(initialState){
+  // 所有的hooks都会走这个函数
+  const hook = mountWorkInProgressHook(); 
+  
+  // 确定初始入参
+  if (typeof initialState === 'function') {
+    // $FlowFixMe: Flow doesn't like mixed types
+    initialState = initialState();
+  }
+  hook.memoizedState = hook.baseState = initialState;
+  
+  const queue = {
+    pending: null,
+    lanes: NoLanes,
+    dispatch: null,
+    lastRenderedReducer: basicStateReducer,
+    lastRenderedState: (initialState),
+  };
+  hook.queue = queue;
+  
+  const dispatch = (queue.dispatch = (dispatchSetState.bind(
+    null,
+    currentlyRenderingFiber,
+    queue,
+  ): any));
+  return [hook.memoizedState, dispatch];
+}
+~~~
+#### mountWorkInProgressHook
+整体的流程先走向 `mountWorkInProgressHook()` 这个函数，它的作用尤为重要，因为这个函数的作用是将 `Hooks` 与 `Fiber` 联系起来，并且你会发现，所有的 `Hooks` 都会走这个函数，只是不同的 `Hooks` 保存着不同的信息。
+~~~ts
+function mountWorkInProgressHook(): Hook {
+  const hook: Hook = {
+    memoizedState: null,
+    baseState: null,
+    baseQueue: null,
+    queue: null,
+    next: null,
+  };
+
+  if (workInProgressHook === null) { // 第一个hooks执行
+    currentlyRenderingFiber.memoizedState = workInProgressHook = hook;
+  } else { // 之后的hooks
+    workInProgressHook = workInProgressHook.next = hook;
+  }
+  return workInProgressHook;
+}
+~~~
+来看看 `hook` 值的参数：
+- **memoizedState**：用于保存数据，不同的 `Hooks` 保存的信息不同，比如 `useState` 保存 `state` 信息，`useEffect` 保存 `effect` 对象，`useRef` 保存 `ref` 对象；
+- **baseState**：当数据发生改变时，保存最新的值；
+- **baseQueue**：保存最新的更新队列；
+- **queue**：保存待更新的队列或更新的函数；
+- **next**：用于指向下一个 `hook` 对象。
+
+那么 `mountWorkInProgressHook` 的作用就很明确了，每执行一个 `Hooks` 函数就会生成一个 `hook` 对象，然后将每个 `hook` 串联起来。
+::: tip
+特别注意：这里的 `memoizedState` 并不是 `Fiber` 链表上的 `memoizedState`，`workInProgress` 保存的是当前函数组件每个 `Hooks` 形成的链表。
+:::
+
+#### 执行步骤
+了解完 `mountWorkInProgressHook` 后，再来看看之后的流程。
+
+首先通过 `initialState` 初始值的类型（判断是否是函数），并将初始值赋值给 `hook` 的 `memoizedState` 和 `baseState`。再之后，创建一个 `queue` 对象，这个对象中会保存一些数据，这些数据为：
+- **pending**：用来调用 `dispatch` 创建时最后一个；
+- **lanes**：优先级；
+- **dispatch**：用来负责更新的函数；
+- **lastRenderedReducer**：用于得到最新的 `state`；
+- **lastRenderedState**：最后一次得到的 `state`。
+
+最后会定义一个 `dispath`，而这个 `dispath` 就应该对应最开始的 `setCount`，那么接下来的目的就是搞懂 `dispatch` 的机制。
+
+#### dispatchSetState
+`dispatch` 的机制就是 `dispatchSetState`，在源码内部还是调用了很多函数，所以在这里对 `dispatchSetState` 函数做了些优化，方便我们更好地观看。
+~~~ts
+function dispatchSetState<S, A>(
+  fiber: Fiber, // 对应currentlyRenderingFiber
+  queue: UpdateQueue<S, A>, // 对应 queue
+  action: A, // 真实传入的参数
+): void {
+
+  // 优先级，不做介绍，后面也会去除有关优先级的部分
+  const lane = requestUpdateLane(fiber);
+
+  // 创建一个update
+  const update: Update<S, A> = {
+    lane,
+    action,
+    hasEagerState: false,
+    eagerState: null,
+    next: (null: any),
+  };
+
+   // 判断是否在渲染阶段
+  if (fiber === currentlyRenderingFiber || (fiber.alternate !== null && fiber.alternate === currentlyRenderingFiber)) {
+      didScheduleRenderPhaseUpdateDuringThisPass = didScheduleRenderPhaseUpdate = true;
+      const pending = queue.pending;
+      // 判断是否是第一次更新
+      if (pending === null) {
+        update.next = update;
+      } else {
+        update.next = pending.next;
+        pending.next = update;
+      }
+      // 将update存入到queue.pending中
+      queue.pending = update;
+  } else { // 用于获取最新的state值
+    const alternate = fiber.alternate;
+    if (alternate === null && lastRenderedReducer !== null){
+      const lastRenderedReducer = queue.lastRenderedReducer;
+      let prevDispatcher;
+      const currentState: S = (queue.lastRenderedState: any);
+      // 获取最新的state
+      const eagerState = lastRenderedReducer(currentState, action);
+      update.hasEagerState = true;
+      update.eagerState = eagerState;
+      if (is(eagerState, currentState)) return;
+    }
+
+    // 将update 插入链表尾部，然后返回root节点
+    const root = enqueueConcurrentHookUpdate(fiber, queue, update, lane);
+    if (root !== null) {
+      // 实现对应节点的更新
+      scheduleUpdateOnFiber(root, fiber, lane, eventTime);
+    }
+  }
+}
+~~~
+在代码中，我已经将每段代码执行的目的标注出来，为了我们更好地理解，分析一下对应的入参，以及函数体内较重要的参数与步骤。
+- **分析入参**：`dispatchSetState` 一共有三个入参，前两个入参数被 `bind` 分别改为 `currentlyRenderingFiber` 和 `queue`，第三个 `action` 则是我们实际写的函数；
+- **update 对象**：生成一个 `update` 对象，用于记录更新的信息；
+- **判断是否处于渲染阶段**：如果是渲染阶段，则将 `update` 放入等待更新的 `pending` 队列中，如果不是，就会获取最新的 `state` 值，从而进行更新。
+::: tip
+问：`bind` 的作用是什么？
+
+答：当函数调用 `bind` 后，会产生一个新的函数，第一个值会作为新函数的 `this`，如果第一个参数为 `null` 或是 `undefined` 时，会默认指向 `window`，其余的参数会依次成为旧函数的参数。
+:::
+值得注意的是：在更新过程中，也会判断很多，通过调用 `lastRenderedReducer` 获取最新的 `state`，然后进行**比较（浅比较）** ，如果相等则退出，这一点就是证明 `useState` 渲染相同值时，组件不更新的原因。
+
+如果不相等，则会将 `update` 插入链表的尾部，返回对应的 `root` 节点，通过 **scheduleUpdateOnFiber 实现对应的更新**，可见 `scheduleUpdateOnFiber` 是 `React` 渲染更新的主要函数。
+
+### HooksDispatcherOnUpdate（更新阶段）
+在更新阶段时，调用 `HooksDispatcherOnUpdate`，对应的 `useState` 所走的是 `updateState`，如：
+
+文件位置：`packages/react-reconciler/src/ReactFiberHooks.js`。
+~~~ts
+const HooksDispatcherOnUpdate: Dispatcher = {
+  useRef: updateRef,
+  useMemo: updateMemo,
+  useCallback: updateCallback,
+  useEffect: updateEffect,
+  useState: updateState,
+  useTransition: updateTransition,
+  useSyncExternalStore: updateSyncExternalStore,
+  useMutableSource: updateMutableSource,
+  ...
+};
+
+function updateState<S>(
+  initialState: (() => S) | S,
+): [S, Dispatch<BasicStateAction<S>>] {
+  return updateReducer(basicStateReducer, (initialState: any));
+}
+
+function basicStateReducer<S>(state: S, action: BasicStateAction<S>): S {
+  return typeof action === 'function' ? action(state) : action;
+}
+~~~
+在 `updateState` 有两个函数，一个是 `updateReducer`，另一个是 `basicStateReducer`。
+
+`basicStateReducer` 很简单，判断是否是函数，返回对应的值即可。
+
+那么下面主要看 `updateReducer` 这个函数，在 `updateReducer` 函数中首先调用 `updateWorkInProgressHook`，我们先来看看这个函数，方便后续对 `updateReducer` 的理解。
+
+#### updateWorkInProgressHook
+`updateWorkInProgressHook` 跟 `mountWorkInProgressHook` 一样，当函数更新时，所有的 `Hooks` 都会执行。
+
+文件位置：`packages/react-reconciler/src/ReactFiberHooks.js`。
+~~~ts
+function updateWorkInProgressHook(): Hook {
+  let nextCurrentHook: null | Hook;
+  
+  // 判断是否是第一个更新的hook
+  if (currentHook === null) { 
+    const current = currentlyRenderingFiber.alternate;
+    if (current !== null) {
+      nextCurrentHook = current.memoizedState;
+    } else {
+      nextCurrentHook = null;
+    }
+  } else { // 如果不是第一个hook，则指向下一个hook
+    nextCurrentHook = currentHook.next;
+  }
+
+  let nextWorkInProgressHook: null | Hook;
+  // 第一次执行
+  if (workInProgressHook === null) { 
+    nextWorkInProgressHook = currentlyRenderingFiber.memoizedState;
+  } else {
+    nextWorkInProgressHook = workInProgressHook.next;
+  }
+
+  if (nextWorkInProgressHook !== null) {
+    // 特殊情况：发生多次函数组件的执行
+    workInProgressHook = nextWorkInProgressHook;
+    nextWorkInProgressHook = workInProgressHook.next;
+    currentHook = nextCurrentHook;
+  } else {
+    if (nextCurrentHook === null) {
+      const currentFiber = currentlyRenderingFiber.alternate;
+      
+      const newHook: Hook = {
+        memoizedState: null,
+        baseState: null,
+        baseQueue: null,
+        queue: null,
+        next: null,
+      };
+        nextCurrentHook = newHook;
+      } else {
+        throw new Error('Rendered more hooks than during the previous render.');
+      }
+    }
+
+    currentHook = nextCurrentHook;
+
+    // 创建一个新的hook
+    const newHook: Hook = {
+      memoizedState: currentHook.memoizedState,
+      baseState: currentHook.baseState,
+      baseQueue: currentHook.baseQueue,
+      queue: currentHook.queue,
+      next: null,
+    };
+
+    if (workInProgressHook === null) { // 如果是第一个函数
+      currentlyRenderingFiber.memoizedState = workInProgressHook = newHook;
+    } else {
+      workInProgressHook = workInProgressHook.next = newHook;
+    }
+  }
+  return workInProgressHook;
+}
+~~~
+`updateWorkInProgressHook` 执行流程：如果是首次执行 `Hooks` 函数，就会从已有的 `current` 树中取到对应的值，然后声明 `nextWorkInProgressHook`，经过一系列的操作，得到更新后的 `Hooks` 状态。
+
+在这里要注意一点，大多数情况下，`workInProgress` 上的 `memoizedState` 会被置空，也就是 `nextWorkInProgressHook` 应该为 `null`。但执行多次函数组件时，就会出现循环执行函数组件的情况，此时 `nextWorkInProgressHook` 不为 `null`。
+
+#### updateReducer
+掌握了 `updateWorkInProgressHook` 执行流程后， 再来看 `updateReducer` 具体有哪些内容。
+~~~ts
+function updateReducer<S, I, A>(
+  reducer: (S, A) => S,
+  initialArg: I,
+  init?: I => S,
+): [S, Dispatch<A>] {
+
+  // 获取更新的hook，每个hook都会走
+  const hook = updateWorkInProgressHook();
+  const queue = hook.queue;
+
+  queue.lastRenderedReducer = reducer;
+
+  const current: Hook = (currentHook: any);
+
+  let baseQueue = current.baseQueue;
+ 
+  // 在更新的过程中，存在新的更新，加入新的更新队列
+  const pendingQueue = queue.pending;
+  if (pendingQueue !== null) {
+    // 如果在更新过程中有新的更新，则加入新的队列，有个合并的作用，合并到 baseQueue
+    if (baseQueue !== null) {
+      const baseFirst = baseQueue.next;
+      const pendingFirst = pendingQueue.next;
+      baseQueue.next = pendingFirst;
+      pendingQueue.next = baseFirst;
+    }
+    current.baseQueue = baseQueue = pendingQueue;
+    queue.pending = null;
+  }
+
+  if (baseQueue !== null) {
+    const first = baseQueue.next;
+    let newState = current.baseState;
+
+    let newBaseState = null;
+    let newBaseQueueFirst = null;
+    let newBaseQueueLast = null;
+    let update = first;
+    
+    // 循环更新
+    do {
+      // 获取优先级
+      const updateLane = removeLanes(update.lane, OffscreenLane);
+      const isHiddenUpdate = updateLane !== update.lane;
+
+      const shouldSkipUpdate = isHiddenUpdate
+        ? !isSubsetOfLanes(getWorkInProgressRootRenderLanes(), updateLane)
+        : !isSubsetOfLanes(renderLanes, updateLane);
+
+      if (shouldSkipUpdate) {
+        const clone: Update<S, A> = {
+          lane: updateLane,
+          action: update.action,
+          hasEagerState: update.hasEagerState,
+          eagerState: update.eagerState,
+          next: (null: any),
+        };
+        if (newBaseQueueLast === null) {
+          newBaseQueueFirst = newBaseQueueLast = clone;
+          newBaseState = newState;
+        } else {
+          newBaseQueueLast = newBaseQueueLast.next = clone;
+        }
+        
+        // 合并优先级（低级任务）
+        currentlyRenderingFiber.lanes = mergeLanes(
+          currentlyRenderingFiber.lanes,
+          updateLane,
+        );
+        markSkippedUpdateLanes(updateLane);
+      } else {
+         // 判断更新队列是否还有更新任务
+        if (newBaseQueueLast !== null) {
+          const clone: Update<S, A> = {
+            lane: NoLane,
+            action: update.action,
+            hasEagerState: update.hasEagerState,
+            eagerState: update.eagerState,
+            next: (null: any),
+          };
+          
+          // 将更新任务插到末尾
+          newBaseQueueLast = newBaseQueueLast.next = clone;
+        }
+
+        const action = update.action;
+        
+        // 判断更新的数据是否相等
+        if (update.hasEagerState) {
+          newState = ((update.eagerState: any): S);
+        } else {
+          newState = reducer(newState, action);
+        }
+      }
+      // 判断是否还需要更新
+      update = update.next;
+    } while (update !== null && update !== first);
+
+    // 如果 newBaseQueueLast 为null，则说明所有的update处理完成，对baseState进行更新
+    if (newBaseQueueLast === null) {
+      newBaseState = newState;
+    } else {
+      newBaseQueueLast.next = (newBaseQueueFirst: any);
+    }
+
+    // 如果新值与旧值不想等，则触发更新流程
+    if (!is(newState, hook.memoizedState)) {
+      markWorkInProgressReceivedUpdate();
+    }
+
+    // 将新值，保存在hook中
+    hook.memoizedState = newState;
+    hook.baseState = newBaseState;
+    hook.baseQueue = newBaseQueueLast;
+
+    queue.lastRenderedState = newState;
+  }
+
+  if (baseQueue === null) {
+    queue.lanes = NoLanes;
+  }
+
+  const dispatch: Dispatch<A> = (queue.dispatch: any);
+  return [hook.memoizedState, dispatch];
+}
+~~~
+`updateReducer` 的作用是将待更新的队列 `pendingQueue` 合并到 `baseQueue` 上，之后进行循环更新，最后进行一次合成更新，也就是批量更新，统一更换节点。
+
+这种行为解释了 `useState` 在更新的过程中为何传入相同的值，不进行更新，同时多次操作，只会执行最后一次更新的原因了。
+
+### 更新 state 值
+为了更好理解更新流程，我们做一个简单的例子来说明：
+~~~tsx
+function Index() {
+  const [count, setCount] = useState(0);
+
+  return (
+    <div style={{ padding: 20 }}>
+      <div>数字：{count}</div>
+      <Button
+        onClick={() => {
+          // 第一种方式
+          setCount((v) => v + 1);
+          setCount((v) => v + 2);
+          setCount((v) => v + 3);
+
+          // 第二种方式
+          setCount(count + 1);
+          setCount(count + 2);
+          setCount(count + 3);
+        }}
+      >
+        批量执行
+      </Button>
+    </div>
+  );
+}
+
+export default Index;
+~~~
+案例中就是普通的点击按钮，触发 `count` 变化的操作，那么大家可以猜想下，这两种方式点击按钮后的 `count` 的值究竟是多少？
+
+答案：
+- 第一种 `count` 等于：**6**；
+- 第二种 `count` 等于：**3**。
+
+出现这种原因也非常简单，当 `setCount` 的参数为函数时，此时的返参 `v` 就是 `baseQueue` 链表不断更新的值，所以为 `0 + 1 + 2 + 3 = 6`。
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/ac2a852268ad4466bbb0218b66664fbe~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+而第二种的 `count` 为渲染后的值，也就是说，三个 `setCount` 全部执行完成，合并之后，`count` 才会变，在合并前为 `0 + 1， 0 + 2， 0 + 3`。最后一次为 `3`，所以 `count` 为 `3`。
+
+### ContextOnlyDispatcher 异常处理阶段
+在 `renderWithHooks` 流程最后，调用了 `finishRenderingHooks` 函数，这个函数中用到了 `ContextOnlyDispatcher`，那么它的作用是什么呢？看看代码：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/f508cfac3c534d3ca129cad61e1d1546~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+**throwInvalidHookError**：
+~~~ts
+function throwInvalidHookError() {
+  throw new Error(
+    'Invalid hook call. Hooks can only be called inside of the body of a function component. This could happen for' +
+      ' one of the following reasons:\n' +
+      '1. You might have mismatching versions of React and the renderer (such as React DOM)\n' +
+      '2. You might be breaking the Rules of Hooks\n' +
+      '3. You might have more than one copy of React in the same app\n' +
+      'See https://reactjs.org/link/invalid-hook-call for tips about how to debug and fix this problem.',
+  );
+}
+~~~
+可以看到，`ContextOnlyDispatcher` 是判断所需 `Hooks` 是否在函数组件内部，有**捕获并抛出异常的作用**，这也就解释了 `Hooks` 无法在 `React` 之外运行的原因。
+
+### useState 运行流程
+我们以 `useState` 为例，讲解了对应的初始化和更新，简单回顾一下运行流程：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/232fa16909db4636a3d4283816c3ccd4~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+### Hooks 规则：时序问题
+了解完 `useState` 源码，以及存储、更新、异常的处理方案，我们发现其中有一个问题点，在我们多次调用 `useState` `的时候，React` 是如何知道我们要改变的 `useState` 就是想要改变的 `useState` 呢？如：
+~~~ts
+const [name, setName] = useState("小杜杜")
+const [age, setAge] = useState(0)
+
+useEffect(() => {}, [])
+~~~
+这两个 `useState` 只有参数上的区别，那么 `React` 是如何区分是 `name` 还是 `age` 呢？
+
+答案其实很简单，就是时序，`React` 相当于做了一个合并操作，当我们第一次调用 `useState` 时，保存了 `name`，第二次调用时保存了 `age`，相当于类中的结构。
+~~~ts
+this.setState({
+    name: "小杜杜",
+    age: 7
+})
+~~~
+当然，在 `mountWorkInProgressHook` 讲解中说过，所有的 `Hooks` 在创建时，都会产生对应的 `hook` 对象，当有多个 `Hooks` 时会以 `next` 连接起来。
+
+当初始化完成后，对应的结构应该是：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/9503fa7935e64be29cda24c738f36293~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+同时，在 `Hooks` 的规则中有这么一条：只在最顶层使用 `Hook`，不要在循环、条件或嵌套函数中使用 `Hook`。
+
+那如果就把它放在条件中，会发生什么变化呢？
+~~~ts
+let age, setAge
+if(name! == "小杜杜"){
+   [age, setAge] = useState(0)
+}
+
+useEffect(() => {}, [])
+~~~
+在初始化中 `name` 为小杜杜，但当 `name` 改变时，便没有了 `age`，看看此时的报错：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/1baaa0b516484e269d4875ce9a38647f~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+造成这样的结果，是因为在新的中缺少了 `useState2`，换句话说，在更新状态的时候，表的结构遭到了**破坏**，**让原本指向 useState2 的，指向到 useEffect**。
+
+从源码的角度来讲，`current` 树的 `memoizedState` 缓存 `hook` 信息，和当前的 `workInProgress` 不一致，此时就会发生异常。这也是**不能在条件语句中创建的原因**。
+::: tip
+注：另外可以在 `Fiber` 中的 `_debugHookTypes` 属性中查看调用 `Hooks` 的顺序。
+:::
+
+### Hooks 的实现与 Fiber 有必然联系吗
+最终 `Hooks` 存储的数据保存在 `Fiber` 中，`Hooks` 的产生也确实在 `Fiber` 的基础上，那么 `Hooks` 与 `Fiber` 的关系是必然的吗？
+
+从 `React` 的角度出发，整个的渲染流程中是通过 `Fiber` 去进行转化的，流程为：**jsx => vdom => Fiber => 真实 DOM**。
+
+**而 Hooks 对应 Fiber 中的 memorizedState 链表，依靠 next 链接，只是不同的 hooks 对应保存的值不同而已**。 换言之，可以把 `Fiber` 当作保存 `Hooks` 值的容器，但这与本身是否依赖 `Fiber` 并没有太大的联系。
+
+就好比 `preact` 中的 `Hooks`，它并没有实现 `Fiber` 架构，但也同样实现了 `Hooks`，它把 `Hooks` 链表放在了 `vnode._component._hooks` 属性上。
+
+总的来说 ：实现 `Hooks` 与 `Fiber` 并没有必然的联系，相反，只要有对应保存的地方就 `ok` 了。
+
+## 从 useEffect 的源码上解决闭包问题
+众所周知，`useEffect` 是用来处理副作用函数的，那么什么是副作用呢？
+
+副作用（`Side Effect`）是指 `function` 做了和本身运算返回值无关的事，如请求数据、修改全局变量，打印、数据获取、设置订阅，以及手动更改 `React` 组件中的 `DOM`，这些操作都属于副作用。
+
+`useEffect` 与 `useState` 的阶段有所不同，共分为：初始化阶段、更新阶段、`commit` 阶段，接下来我们围绕这三个阶段全面了解它。
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/428a8de0c26a424f9eaa93ff9a998847~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+### mountEffect（初始化阶段）
+文件位置：`packages/react-reconciler/src/ReactFiberHooks.js`。
+~~~ts
+function mountEffect(
+  create: () => (() => void) | void, // 回调函数，也是副作用函数
+  deps: Array<mixed> | void | null, // 依赖项
+): void {
+  mountEffectImpl(
+    PassiveEffect | PassiveStaticEffect,
+    HookPassive,
+    create,
+    deps,
+  );
+}
+
+function mountEffectImpl(
+  fiberFlags: Flags,
+  hookFlags: HookFlags,
+  create: () => (() => void) | void,
+  deps: Array<mixed> | void | null,
+): void {
+  const hook = mountWorkInProgressHook();
+  const nextDeps = deps === undefined ? null : deps;
+  currentlyRenderingFiber.flags |= fiberFlags;
+  hook.memoizedState = pushEffect(
+    HookHasEffect | hookFlags,
+    create,
+    undefined,
+    nextDeps,
+  );
+}
+~~~
+从 `mountEffect` 进来，直接走向 `mountEffectImpl` 函数，先来看看 `mountEffectImpl` 的入参：
+- `fiberFlags`：有副作用的更新标记，用来标记 `hook` 在 `fiber` 中的位置；
+- `hookFlags`：副作用标记；
+- `create`：用户传入的回调函数，也是副作用函数；
+- `deps`：用户传递的依赖项。
+
+`mountEffectImpl` 执行流程：
+1. 初始化一个 `hook` 对象，并和 `fiber` 建立关系；
+2. 判断 `deps` 是否存在，没有的话则是 `null`（需要注意下这个参数，后续会详细讲解）；
+3. 给 `hook` 所在的 `fiber` 打上副作用的更新标记；
+4. 将副作用的操作存放到 `hook.memoizedState` 中。
+
+#### pushEffect
+副作用的操作来到了 `pushEffect`，一起来看看：
+~~~ts
+function pushEffect(tag, create, destroy, deps): Effect {
+
+  // 初始化一个effect对象
+  const effect: Effect = {
+    tag,
+    create,
+    destroy,
+    deps,
+    next: (null: any),
+  };
+  
+  let componentUpdateQueue = (currentlyRenderingFiber.updateQueue: any);
+  
+  if (componentUpdateQueue === null) { //第一个effect对象
+    componentUpdateQueue = createFunctionComponentUpdateQueue();
+    currentlyRenderingFiber.updateQueue = (componentUpdateQueue: any);
+    componentUpdateQueue.lastEffect = effect.next = effect;
+  } else { // 存放多个effect对象
+    const lastEffect = componentUpdateQueue.lastEffect;
+    if (lastEffect === null) {
+      componentUpdateQueue.lastEffect = effect.next = effect;
+    } else {
+      const firstEffect = lastEffect.next;
+      lastEffect.next = effect;
+      effect.next = firstEffect;
+      componentUpdateQueue.lastEffect = effect;
+    }
+  }
+  return effect;
+}
+~~~
+别看 `pushEffect` 中有一大坨，但是不是有种似曾相识的感觉呢？没错，它与上节的内容类似，它的作用是创建一个 `effect` 对象，然后形成一个 `effect` 链表，通过 `next` 链接 ，最后绑定在 `fiber` 中的 `updateQueue` 上。比如下面这段代码：
+~~~ts
+const [name, setName] = useState("小杜杜");
+const [count, setCount] = useState(0);
+
+useEffect(() => {
+  console.log(1);
+}, []);
+
+useEffect(() => {
+  console.log(2);
+}, [name]);
+
+useEffect(() => {
+  console.log(3);
+}, [count]);
+~~~
+转化后的 `fiber.updateQueue` 为：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/d9ee0a06fbb14654b7b95f1f7603c37a~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+#### 不同的 Effect
+值得注意的是 `fiber.updateQueue` 保存的是所有副作用，除了包含 `useEffect`，同时还包含 `useLayoutEffect` 和 `useInsertionEffect`。
+
+这里会通过不同的 `fiberFlags` 给对应的 `effect` 打上标记，之后在 `updateQueue` 链表中的 `tag` 字段体现出来，最后在 `commit` 阶段，判断到底是哪种 `effect`，是同步还是异步等。如：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/3bf98be8cc3c44c68c0e5345021b992f~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+### updateEffect（更新阶段）
+~~~ts
+function updateEffect(
+  create: () => (() => void) | void,
+  deps: Array<mixed> | void | null,
+): void {
+  updateEffectImpl(PassiveEffect, HookPassive, create, deps);
+}
+
+function updateEffectImpl(
+  fiberFlags: Flags,
+  hookFlags: HookFlags,
+  create: () => (() => void) | void,
+  deps: Array<mixed> | void | null,
+): void {
+
+  // 获取更新的hooks
+  const hook = updateWorkInProgressHook();
+  // 处理deps
+  const nextDeps = deps === undefined ? null : deps;
+  let destroy = undefined;
+
+  if (currentHook !== null) {
+    const prevEffect = currentHook.memoizedState;
+    destroy = prevEffect.destroy;
+    if (nextDeps !== null) {
+      const prevDeps = prevEffect.deps;
+      
+      // 判断依赖是否发生改变，如果没有，只更新副作用链表
+      if (areHookInputsEqual(nextDeps, prevDeps)) {
+        hook.memoizedState = pushEffect(hookFlags, create, destroy, nextDeps);
+        return;
+      }
+    }
+  }
+
+  // 如果依赖发生改变，则在更新链表的时候，打上对应的标签
+  currentlyRenderingFiber.flags |= fiberFlags;
+
+  hook.memoizedState = pushEffect(
+    HookHasEffect | hookFlags,
+    create,
+    destroy,
+    nextDeps,
+  );
+}
+~~~
+`updateEffect`：在更新阶段做的事其实很简单，就是判断 `deps` 是否发生改变，如果没有发生改变，则直接执行 `pushEffect`，如果发生改变，则附上不同的标签，最后在 `commit` 阶段，通过这些标签来判断是否执行 `effect` 函数。
+
+#### 不同类型的 deps 对 effect 函数执行的影响
+在日常的开发中，有些不熟悉 `useEffect` 的小伙伴只知道 `deps` 发生改变，则执行对应的 `effect` 函数，但对 `deps` 本身的类型并不了解，这也造就了一些莫名奇怪的 `bug`，怎么找也找不到，有时候真的有可能是规范所引起的，因此我们看看以下关于 `deps` 的问题：
+1. `deps` 不存在时，造成的后果是什么？
+2. `deps` 是空数组，造成的后果是什么（如：`[]`）？
+3. `deps` 是数组、对象、函数时，造成的后果是什么（如：`[ [1] ]、[{ a: 1 }]`）？
+
+实际上，所有的答案都在 `areHookInputsEqual` 函数中：
+~~~ts
+const nextDeps = deps === undefined ? null : deps;
+
+function areHookInputsEqual(
+  nextDeps: Array<mixed>,
+  prevDeps: Array<mixed> | null,
+): boolean {
+
+  if (prevDeps === null) {
+    return false;
+  }
+
+  for (let i = 0; i < prevDeps.length && i < nextDeps.length; i++) {
+    if (objectIs(nextDeps[i], prevDeps[i])) {
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
+// 存在Object.is，就直接使用，没有的话，手动实现Object.is
+const objectIs: (x: any, y: any) => boolean = typeof Object.is === 'function' ? Object.is : is;
+
+function is(x: any, y: any) {
+  return (
+    (x === y && (x !== 0 || 1 / x === 1 / y)) || (x !== x && y !== y) 
+  );
+}
+~~~
+从代码中，共分为三种情况：
+- 当 `deps` 不存在时，也就是 `undefined`，则会当作 `null` 处理，所以无论发生什么改变，`areHookInputsEqual` 的值始终为 `false`，从而每次都会执行；
+- 当 `deps` 为空数组时，`areHookInputsEqual` 返回值为 `true`，此时只更新链表，并没有执行对应的副作用，所以只会走一次；
+- 当 `deps` 为对象、数组、函数时，虽然保存了，但在 `objectIs` 做比较时，旧值与新值永远不相等，也就是`[1] !== [1]`、`{a: 1} !== {a: 1}`（指向不同），所以只要当 `deps` 发生变动，都会触发更新。
+
+::: tip
+注意： 如果强行比较对象、数组时，可以通过 `JSON.stringify()` 转化为字符串，当作 `deps` 的参数。
+
+`useMemo` 和 `useCallback` 中的 `deps` 也是同理。
+:::
+
+### commitRoot（commit 阶段）
+`commitRoot` 是 `commit` 阶段的入口，一起来看看。
+
+文件位置：`packages/react-reconciler/src/ReactFiberWorkLoop.js`。
+~~~ts
+function commitRoot(
+  root: FiberRoot,
+  recoverableErrors: null | Array<CapturedValue<mixed>>,
+  transitions: Array<Transition> | null,
+) {
+  // 获取优先级
+  const previousUpdateLanePriority = getCurrentUpdatePriority();
+  const prevTransition = ReactCurrentBatchConfig.transition;
+  ...
+  commitRootImpl(
+      root,
+      recoverableErrors,
+      transitions,
+      previousUpdateLanePriority,
+  );
+
+  return null;
+}
+~~~
+在 `commitRoot` 中，首先会制定函数的优先级，当执行完毕后，恢复优先级，而这个函数的主体为 `commitRootImpl` 函数。
+
+#### commitRootImpl
+`commitRootImpl` 函数非常复杂，这里我们只关注 `effect` 的逻辑即可，而关于 `effect` 的逻辑主要是 `scheduleCallback`。
+~~~ts
+function commitRootImpl(root, recoverableErrors, transitions, renderPriorityLevel ) {
+  ...
+  scheduleCallback(NormalSchedulerPriority, () => {
+    // 调度 Effect
+    flushPassiveEffects();
+    return null;
+  });
+  ...
+  return null;
+}
+~~~
+`scheduleCallback` 是 `React` 调度器（`Scheduler`）的一个 `API`，最终通过一个宏任务来异步调度传入的回调函数，使得该回调在下一轮事件循环中执行，此时浏览器已经绘制过一次。同时可以看出，`effectlist` 的优先级是：普通优先级。
+
+#### flushPassiveEffects
+~~~ts
+export function flushPassiveEffects(): boolean {
+
+  if (rootWithPendingPassiveEffects !== null) {
+    ...
+    try {
+      ReactCurrentBatchConfig.transition = null;
+      // 设置优先级
+      setCurrentUpdatePriority(priority);
+      // 调用函数
+      return flushPassiveEffectsImpl();
+    } finally {
+      setCurrentUpdatePriority(previousPriority);
+      ReactCurrentBatchConfig.transition = prevTransition;
+      releaseRootPooledCache(root, remainingLanes);
+    }
+  }
+  return false;
+}
+~~~
+到 `flushPassiveEffects` 中，也是一系列跟优先级有关的操作，最终走向 `flushPassiveEffectsImpl` 这个函数。而在这个函数中会执行两个方法，分别是：`commitPassiveUnmountEffects`（执行所有 `effect` 的销毁程序） 和 `commitPassiveMountEffects`（执行所有 `effect` 的回调函数）。
+
+接下来逐一进行分析，看看两者的的流向。
+
+#### commitPassiveMountEffects 的流向
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/e6da4e94f10844c78c637e0df48bc541~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+最终的走向为 `commitHookEffectListMount` 函数，着重看下：
+~~~ts
+function commitHookEffectListMount(flags: HookFlags, finishedWork: Fiber) {
+  const updateQueue = (finishedWork.updateQueue: any);
+  const lastEffect = updateQueue !== null ? updateQueue.lastEffect : null;
+  if (lastEffect !== null) {
+    const firstEffect = lastEffect.next;
+    let effect = firstEffect;
+    do {
+      if ((effect.tag & flags) === flags) {
+        if (enableSchedulingProfiler) {
+          if ((flags & HookPassive) !== NoHookEffect) {
+            markComponentPassiveEffectMountStarted(finishedWork);
+          } else if ((flags & HookLayout) !== NoHookEffect) {
+            markComponentLayoutEffectMountStarted(finishedWork);
+          }
+        }
+
+        // 执行effect函数， 并保存effect函数的结果给destroy
+        const create = effect.create;
+        effect.destroy = create();
+
+        if (enableSchedulingProfiler) {
+          if ((flags & HookPassive) !== NoHookEffect) {
+            markComponentPassiveEffectMountStopped();
+          } else if ((flags & HookLayout) !== NoHookEffect) {
+            markComponentLayoutEffectMountStopped();
+          }
+        }
+
+      }
+      effect = effect.next;
+    } while (effect !== firstEffect);
+  }
+}
+~~~
+主要作用是：遍历所有的 `effect list`，然后依次执行对应的 `effect` 副作用函数，并将其结果保留在 `destroy` 函数中。
+::: tip
+`effect list` 是一个用于 `effectTag` 副作用列表容器，包含第一个节点：`firstEffect`， 和最后一个节点 `lastEffect`，通过 `next` 链接，在 `commit` 阶段，根据这些 `effectTag` 来判断执行的时机，从而对相应的 `DOM` 树进行更改。
+:::
+
+#### commitPassiveUnmountEffects 的流向
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/914fb844b67a4afaae073044ddca8bd6~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+最终的走向为 `commitHookEffectListUnmount` 函数， 来看看：
+
+~~~ts
+function commitHookEffectListUnmount(
+  flags: HookFlags,
+  finishedWork: Fiber,
+  nearestMountedAncestor: Fiber | null,
+) {
+  const updateQueue= finishedWork.updateQueue;
+  const lastEffect = updateQueue !== null ? updateQueue.lastEffect : null;
+  if (lastEffect !== null) {
+    const firstEffect = lastEffect.next;
+    let effect = firstEffect;
+    do {
+      if ((effect.tag & flags) === flags) {
+        // Unmount
+        const destroy = effect.destroy;
+        effect.destroy = undefined;
+        if (destroy !== undefined) {
+          if (enableSchedulingProfiler) {
+            if ((flags & HookPassive) !== NoHookEffect) {
+              markComponentPassiveEffectUnmountStarted(finishedWork);
+            } else if ((flags & HookLayout) !== NoHookEffect) {
+              markComponentLayoutEffectUnmountStarted(finishedWork);
+            }
+          }
+           // 调用销毁逻辑
+          safelyCallDestroy(finishedWork, nearestMountedAncestor, destroy);
+          if (enableSchedulingProfiler) {
+            if ((flags & HookPassive) !== NoHookEffect) {
+              markComponentPassiveEffectUnmountStopped();
+            } else if ((flags & HookLayout) !== NoHookEffect) {
+              markComponentLayoutEffectUnmountStopped();
+            }
+          }
+        }
+      }
+      effect = effect.next;
+    } while (effect !== firstEffect);
+  }
+}
+~~~
+主要通过 `safelyCallDestroy` 走对应的销毁逻辑，这里要注意下，`effect` 的执行需要保证所有组件的 `effect` 的销毁函数执行完才能够执行。
+
+因为多个组件可能共用一个 `ref`，如果不将销毁函数执行，改变 `ref` 的值，有可能会影响其他 `effect` 执行。
+
+### 经典的闭包问题
+阅读完 `useEffect` 源码后，再来看最为经典的 `React Hooks` 的闭包问题，就会变得异常简单。相信各位小伙伴一定都踩过坑，我们解决一下这个问题，同时巩固之前所学的知识。
+
+先看下面这段代码：
+~~~tsx
+import { useState, useEffect } from "react";
+import { Button, message } from "antd";
+const Index = () => {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setCount((v) => v + 1);
+    }, 2000);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      message.info(`当前的count为：${count}`);
+    }, 3000);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, []);
+
+  return (
+    <div style={{ padding: 20 }}>
+      <div>数字：{count}</div>
+      <Button onClick={() => setCount((v) => v + 1)}>加1</Button>
+    </div>
+  );
+};
+
+export default Index;
+~~~
+例子很简单，进入页面，创建 `count`，在第一个 `useEffect` 中过 `2s` 给 `count` 加 `1`，并且在这 `2s` 中点击按钮两次，之后在第二个 `useEffect` 中过 `3s` 进行获取 `count` 值。
+
+那么你觉得 `info` 中的 `count` 是 `0`、`1` 还是 `3` ？
+
+在页面中可以看到，渲染的值变成了 `3`，但为什么在 `info` 中是 `0` 呢？这种情况就是最经典的闭包问题。
+
+首先，在绝大多数的场景下，并不会出现闭包问题，只有在延迟调用的场景下（如：`setTimeout`、`setInterval`、`Promise.then` 等），才会出现闭包问题。接下来一起看看该如何解决。
+
+我们先温习下上节的内容。当进行初始化后，`Hooks` 信息在 `Fiber` 中的 `memorizedState` 链表中，通过 `next` 链接，直到没有，则为 `null`。
+
+案例中对应 `useState`、`useEffect`、`useEffect` 3 个 `hook`，自然对应链表中的 3 个 `memorizedState`，如：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/de42f00a12a74507af71a18cb24ff48c~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+当执行 `useEffect` 时，一直拿最初的 `count = 0` 来记录引用关系。再加上 `deps` 为空数组，此时只执行一次，所以无论点击多少次按钮，其结果都为 `0`。
+
+#### 设置 deps 为 count
+既然在引用时一直拿 `count = 0` 为引用条件，那么我们将 `deps` 的参数设置为 `count`，去监听 `count`，从而初始化定时器，是不是就 `ok` 了呢？
+
+::: tip
+问：为什么要在 `useEffect` 的 `return` 中清空定时器呢？
+
+答：`useEffect` 对应的 `return` 就是源码中的 `destroy` 函数，如果不清空，那么还会执行之前的定时器。`setTimeout` 的效果可能不是很清晰，感兴趣的小伙伴可以换成 `setInterval` 试试。
+:::
+
+#### useLatest 解决
+那么 `deps` 设置为 `count` 真的能够解决闭包问题吗？
+
+我认为并不能彻底解决。在上述的问题中，`useEffect` 函数本身执行了 3 遍（2 次点击，1 次count+1），换句话说，只要 `count` 发生变化，就会执行 `useEffect` 函数。
+
+如果现在的需求变为只想在 3s 后获取到最新值，之后再点击按钮，不获取最新值，该怎么办？
+
+其实答案很简单，利用 `ref` 的高级用法——缓存数据，也就是 `useLatest` 去解决就 ok 了。如：
+~~~ts
+const countRef = useLatest(count);
+useEffect(() => {
+  const timer = setTimeout(() => {
+    message.info(`当前的count为：${countRef.current}`);
+  }, 3000);
+
+}, []);
+~~~
+
+#### 结果何时为 1
+我在一开始的问题中写了 3 个答案，分别是：0、1、3。0 和 3 讲解了原因，那么 1 是怎么出现的呢？答案是将 `setCount((v) => v + 1)` 替换为 `setCount(count + 1)`。
 
 
+## 彻底搞懂 useMemo 和 useCallback
+在 `React Hooks` 中，有专门针对优化的两个 `Hooks`，它们分别是 `useMemo` 和 `useCallback`。同时，它们哥俩也是最具争议的 `Hooks`，因为如果使用不当，非但达不到优化的效果，还有可能降低性能，让人头大。
 
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/66412f174ccc4a9ca19b4182b760f8cc~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
 
+### useMemo、useCallback 源码
+从源码角度上来看，`useMemo` 和 `useCallback` 并不复杂，甚至两者的源码十分相似，所以这里我们直接放到一起观看。
 
+#### mountMemo/mountCallback（初始化）
+~~~ts
+// mountMemo
+function mountMemo<T>(
+  nextCreate: () => T, 
+  deps: Array<mixed> | void | null,
+): T {
+  const hook = mountWorkInProgressHook();
+  const nextDeps = deps === undefined ? null : deps;
+  const nextValue = nextCreate();
+  hook.memoizedState = [nextValue, nextDeps];
+  return nextValue;
+}
 
+// mountCallback
+function mountCallback<T>(
+  callback: T,
+  deps: Array<mixed> | void | null
+): T {
+  const hook = mountWorkInProgressHook();
+  const nextDeps = deps === undefined ? null : deps;
+  hook.memoizedState = [callback, nextDeps];
+  return callback;
+}
+~~~
+在初始化中，`useMemo` 首先创建一个 `hook`，然后判断 `deps` 的类型，执行 `nextCreate`，这个参数是需要缓存的值，然后**将值与 deps 保存到 memoizedState 上**。
 
+而 `useCallback` 更加简单，**直接将 callback和 deps 存入到 memoizedState 里**。
 
+#### updateMemo/updateCallback（更新）
+~~~ts
+// mountMemo
+function mountMemo<T>(
+  nextCreate: () => T, 
+  deps: Array<mixed> | void | null,
+): T {
+  const hook = mountWorkInProgressHook();
+  const nextDeps = deps === undefined ? null : deps;
+  const nextValue = nextCreate();
+  hook.memoizedState = [nextValue, nextDeps];
+  return nextValue;
+}
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+// mountCallback
+function mountCallback<T>(
+  callback: T,
+  deps: Array<mixed> | void | null
+): T {
+  const hook = mountWorkInProgressHook();
+  const nextDeps = deps === undefined ? null : deps;
+  hook.memoizedState = [callback, nextDeps];
+  return callback;
+}
+~~~
