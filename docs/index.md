@@ -57,6 +57,9 @@ features:
 
   --vp-home-hero-image-background-image: linear-gradient(-45deg, #bd34fe 50%, #47caff 50%);
   --vp-home-hero-image-filter: blur(40px);
+
+  --vp-c-text-code: #18aa00;
+
 }
 
 @media (min-width: 640px) {

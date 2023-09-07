@@ -136,6 +136,7 @@ function sidebarGuide() {
                 { text: 'Grpc', link: '/guide/grpc' },
                 { text: 'Node', link: '/guide/node' },
                 { text: 'Nest', link: '/guide/nest' },
+                { text: 'RabbitMQ', link: '/guide/rabbitmq' },
                 { text: 'Micro-Services', link: '/guide/micro-services' },
             ],
         },
