@@ -6209,6 +6209,221 @@ eventSource.onmessage = ({ data }) => {
 注意：`WebSocket` 断连后需要手动重连，而 `SSE` 并不需要，浏览器会自动重连。它的应用场景有很多，比如站内信、构建日志实时展示、chatgpt 的消息返回等等。
 :::
 
+## Nest 中实现扫码登录
+解析掘金的登录二维码为例：
+~~~ts
+https://juejin.cn/app?next_url=https%3A%2F%2Fjuejin.cn%2Fpassport%2Fweb%2Fscan_qrcode%2F&qr_source_aid=2608&token=8af414692e05e444e9e115148d4c0bc5_hl
+~~~
+解析后的链接中有一个`qr_source_aid
+`参数，用于标识生成该二维码的具体应用或来源。通过这个参数，掘金可以追踪和记录用户通过不同应用或来源扫描登录二维码的情况。
+
+二维码分别有 5 个状态，用户扫码进行不同的操作就会修改对应的二维码状态，PC网页端会采用**轮询**的方式每隔 1 
+秒来获取二维码的最新状态，一般会设定在用户未扫码以及用户扫码后在 1 
+分钟内未做任何操作则二维码过期，PC网页端会重新生成新的二维码并继续执行获取二维码的最新状态：
+- 未扫描：
+  <br/>
+  <br/>
+  ![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/1672720770.png)
+  
+  上图中是轮询获取二维码最新状态的内容，`status`字段便是二维码的最新状态。
+- 已扫描，等待用户确认:
+  <br/>
+  <br/>
+  ![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/4145762896.png)
+  
+  这时`status`状态会变成`scanned`，`scan_app_id`代指扫码来源，也就是手机APP端
+- 已扫描，用户同意授权:
+  <br/>
+  <br/>
+  ![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/2646552216.png)
+  
+  当用户点击确定授权登录后会将状态改为`confirmed`并将用户信息返回给前端
+- 已扫描，用户取消授权:
+  <br/>
+  <br/>
+  ![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/666380194.png)
+  
+  当用户点击取消后会将状态改为`refused`并将新的二维码信息返回给前端
+- 已过期:
+  <br/>
+  <br/>
+  ![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/2444425371.png)
+  
+  当二维码过期后会将状态改为`expired`并将新的二维码信息返回给前端
+
+**流程图：**
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/qrcode.png)
+
+1. PC网页端初始时会调用`qrcode/get`接口，此接口会生成一个随机的二维码 `id`，存到 `redis` 
+里，并返回二维码。
+2. 然后会以轮询的策略每隔 1 秒调用`qrcode/check`接口，此接口会返回存储在`redis`中的二维码最新状态。
+3. 通过手机APP扫描后，如果APP端未登录会先跳转至登录页，待APP端登录后会跳转至扫码授权登录页。
+4. 扫码后APP端获取到二维码解析后的内容，然后调用`qrcode/scan`接口并将来源 `id` 以及 `token` 传递给服务端。此接口会解析 
+   `token` 来获取二维码相关信息(如：`qrcode_id`)
+   ，然后修改`redis`中存储的二维码状态为`scanned`，此时`qrcode/check`接口轮询获取的最新状态就会变成`scanned`。
+5. 当用户在APP端点击取消后会调用`qrcode/cancel`接口，此接口将来源 `id` 以及 `token` 
+   传递给服务端，解析 
+   `token` 来获取二维码相关信息(如：`qrcode_id`)，然后修改`redis`中存储的二维码状态为`refused`。当PC
+   端调用的`qrcode/check`接口获取`redis`中的二维码状态为`refused`时会重新生成新的二维码一并返回给前端。
+6. 当用户在APP端点击授权登录后会调用`qrcode/confirm`接口，此接口将来源 `id` 以及 `token` 
+   传递给服务端，解析 
+   `token` 来获取二维码相关信息(如：`qrcode_id`)
+   ，然后修改`redis`中存储的二维码状态为`confirmed`。然后再解析APP端登录认证的`token`从中获取到`user_id
+   `去查询出用户信息`user_data`合并到`redis`中存储的二维码状态信息`qrcode-[qrcode_id]`中。
+   此时`qrcode/check`接口轮询获取的最新状态就会变成`confirmed`并获取到用户信息`user_data`，然后依据`user_data
+   `来生成JWT的`token`，再设置`redirect_url`字段为根路由，然后将这些数据合并后返回给前端，前端判断是`confirmed
+   `状态就存储用户信息`user_data`以及登录凭证`token`并重定向至`redirect_url`字段中的路由地址。
+
+::: tip
+另外未扫描的初始状态和扫码后都会有一个 1 分钟内未操作则二维码过期的设定，当二维码过期后调用的`qrcode/check
+`接口会将二维码状态修改为`expired`并生成新的二维码一并返回给前端。
+:::
+
+接下来我们来简易实现一下，首先创建个新项目：
+~~~shell
+npm install -g @nestjs/cli
+
+nest new qrcode-login
+~~~
+安装二维码的包：
+~~~shell
+npm install qrcode @types/qrcode
+~~~
+引入 `jwt` 的包：
+~~~shell
+npm install @nestjs/jwt
+~~~
+在 `AppModule` 里引入它：
+~~~ts
+imports: [
+    JwtModule.register({
+      secret: '123456'
+    })
+]
+~~~
+在 `app.controller.ts` 添加：
+~~~ts
+// 引入
+import {randomUUID} from 'crypto';
+import * as qrcode from 'qrcode';
+// 生成二维码之后，要在 redis 里保存一份，这些简化使用map代替存储。
+const map = new Map<string, QrCodeInfo>();
+
+// 类型定义
+interface QrCodeInfo {
+  status: 'new' | 'scanned' | 'confirmed' | 'refused' |
+          'expired',
+  userInfo?: {
+    userId: number;
+  }
+}
+
+@Controller()
+export class AppController {
+  constructor(private readonly appService: AppService) {}
+  @Inject(JwtService)
+  private jwtService: JwtService;
+  
+  private users = [
+      {id: 1, username: 'dong', password: '111'},
+      {id: 2, username: 'guang', password: '222'},
+  ];
+  // 获取二维码接口
+  @Get('qrcode/get')
+  async get() {
+    // 生成随机的UUID
+    const uuid = randomUUID();
+    //生成base64格式的二维码, toDataURL()中的参数就是解析二维码后的内容，内容中的页面需前端去实现。
+    const dataUrl = await qrcode.toDataURL(`https://gaojianghua.cn/confirm.html?id=${uuid}`);
+    // 存储
+    map.set(`qrcode_${uuid}`, {
+      status: 'new'
+    });
+    return {
+      qrcode_id: uuid,
+      img: dataUrl
+    }
+  }
+  // 轮询接口
+  @Get('qrcode/check')
+  async check(@Query('id') id: string) {
+    const info = map.get(`qrcode_${id}`);
+    if(info.status === 'confirmed') {
+        return {
+          token: await this.jwtService.sign({
+            userId: info.userInfo.userId
+          }),
+          ...info
+        }
+    }
+    return info;
+  }
+  // 扫码接口
+  @Get('qrcode/scan')
+  async scan(@Query('id') id: string) {
+      const info = map.get(`qrcode_${id}`);
+      if(!info) {
+        throw new BadRequestException('二维码已过期');
+      }
+      info.status = 'scanned';
+      return 'success';
+  }
+  // 授权登录接口
+  @Get('qrcode/confirm')
+  async confirm(@Query('id') id: string, @Headers('Authorization') auth: string) {
+    let user;
+    try{
+      const [, token] = auth.split(' ');
+      const info = await this.jwtService.verify(token);
+
+      user = this.users.find(item => item.id == info.userId);
+    } catch(e) {
+      throw new UnauthorizedException('token 过期，请重新登录');
+    }
+
+    const info = map.get(`qrcode_${id}`);
+    if(!info) {
+      throw new BadRequestException('二维码已过期');
+    }
+    info.status = 'confirmed';
+    info.userInfo = user;
+    return 'success';
+  }
+  // 取消接口
+  @Get('qrcode/cancel')
+  async cancel(@Query('id') id: string) {
+      const info = map.get(`qrcode_${id}`);
+      if(!info) {
+        throw new BadRequestException('二维码已过期');
+      }
+      info.status = 'refused';
+      return 'success';
+  }
+  // App端登录接口
+  @Get('login')
+  async login(@Query('username') username: string, @Query('password') password: string) {
+
+    const user = this.users.find(item => item.username === username);
+
+    if(!user) {
+      throw new UnauthorizedException('用户不存在');
+    }
+    if(user.password !== password) {
+      throw new UnauthorizedException('密码错误');
+    }
+
+    return {
+      token: await this.jwtService.sign({
+        userId: user.id
+      })
+    }
+  }
+}
+~~~
+::: tip
+前端的代码实现有兴趣的同学可以自行去实现，这样我们就实现了扫码登录。
+:::
 ## 会议室预订系统
 首先，用户分为普通用户和管理员两种，各自有不同的功能：
 - **普通用户**：可以注册，注册的时候会发邮件来验证身份，注册之后就可以登录系统。
