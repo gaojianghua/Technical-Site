@@ -1121,28 +1121,80 @@ const val4: {} = unknownVar; // Error
 const val5: any = unknownVar;
 const val6: unknown = unknownVar;
 ~~~
+`unknown` 和 `any` 的一个主要差异体现在赋值给别的变量时，`any` 就像是 **我身化万千无处不在** ，所有类型都把它当自己人。而 unknown 就像是 **我虽然身化万千，但我坚信我在未来的某一刻会得到一个确定的类型** ，只有 `any` 和 `unknown` 自己把它当自己人。简单地说，`any` 放弃了所有的类型检查，而 `unknown` 并没有。这一点也体现在对 `unknown` 类型的变量进行属性访问时：
+~~~ts
+let unknownVar: unknown;
 
+unknownVar.foo(); // 报错：对象类型为 unknown
+~~~
+要对 `unknown` 类型进行属性访问，需要进行类型断言（别急，马上就讲类型断言！），即**“虽然这是一个未知的类型，但我跟你保证它在这里就是这个类型！”**：
+~~~ts
+let unknownVar: unknown;
 
+(unknownVar as { foo: () => {} }).foo();
+~~~
+::: tip
+在类型未知的情况下，更推荐使用 `unknown` 标注。这相当于你使用额外的心智负担保证了类型在各处的结构，后续重构为具体类型时也可以获得最初始的类型信息，同时还保证了类型检查的存在。当然，`unknown` 用起来很麻烦，一堆类型断言写起来可不太好看。归根结底，到底用哪个完全取决于你自己，毕竟语言只是工具嘛。
+:::
 
+如果说，`any` 与 `unknown` 是比原始类型、对象类型等更广泛的类型，也就是说它们更上层一些，就像 `string` 字符串类型比 `'linbudu'` 字符串字面量更上层一些，即 `any/unknown` -> 原始类型、对象类型 -> 字面量类型。那么，是否存在比字面量类型更底层一些的类型？
 
+这里的上层与底层，其实即意味着包含类型信息的多少。`any` 类型包括了任意的类型，字符串类型包括任意的字符串字面量类型，而字面量类型只表示一个精确的值类型。如要还要更底层，也就是再少一些类型信息，那就只能什么都没有了。
 
+而内置类型 `never` 就是这么一个**什么都没有**的类型。此前我们已经了解了另一个**什么都没有**的类型`void`。但相比于 `void`，`never` 还要更加空白一些。
 
+### 虚无的 never 类型
+是不是有点不好理解？我们看一个联合类型的例子就能 get 到一些了:
+~~~ts
+type UnionWithNever = "linbudu" | 599 | true | void | never;
+~~~
+将鼠标悬浮在类型别名之上，你会发现这里显示的类型是`"linbudu" | 599 | true | void`。`never` 类型被直接无视掉了，而 `void` 仍然存在。这是因为，`void` 作为类型表示一个空类型，就像没有返回值的函数使用 `void` 来作为返回值类型标注一样，`void` 类型就像 `JavaScript` 中的 `null` 一样代表**这里有类型，但是个空类型**。
 
+而 `never` 才是一个**什么都没有**的类型，它甚至不包括空的类型，严格来说`never`类型不携带任何的类型信息，因此会在联合类型中被直接移除，比如我们看 `void` 和 `never` 的类型兼容性：
+~~~ts
+declare let v1: never;
+declare let v2: void;
 
+v1 = v2; // X 类型 void 不能赋值给类型 never
 
+v2 = v1;
+~~~
+在编程语言的类型系统中，`never` 类型被称为 `Bottom Type`，**是整个类型系统层级中最底层的类型**。和 `null`、`undefined` 一样，它是所有类型的子类型，但只有 `never` 类型的变量能够赋值给另一个 `never` 类型变量。
 
+通常我们不会显式地声明一个 `never` 类型，它主要被类型检查所使用。但在某些情况下使用 `never` 确实是符合逻辑的，比如一个只负责抛出错误的函数：
+~~~ts
+function justThrow(): never {
+  throw new Error()
+}
+~~~
+在类型流的分析中，一旦一个返回值类型为 `never` 的函数被调用，那么下方的代码都会被视为无效的代码（即无法执行到）：
+~~~ts
+function justThrow(): never {
+  throw new Error()
+}
 
+function foo (input:number){
+  if(input > 1){
+    justThrow();
+    // 等同于 return 语句后的代码，即 Dead Code
+    const name = "linbudu";
+  }
+}
+~~~
+我们也可以显式利用它来进行类型检查，即上面在联合类型中 `never` 类型神秘消失的原因。假设，我们需要对一个联合类型的每个类型分支进行不同处理：
+~~~ts
+declare const strOrNumOrBool: string | number | boolean;
 
-
-
-
-
-
-
-
-
-
-
+if (typeof strOrNumOrBool === "string") {
+  console.log("str!");
+} else if (typeof strOrNumOrBool === "number") {
+  console.log("num!");
+} else if (typeof strOrNumOrBool === "boolean") {
+  console.log("bool!");
+} else {
+  throw new Error(`Unknown input type: ${strOrNumOrBool}`);
+}
+~~~
 
 
 
