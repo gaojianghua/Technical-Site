@@ -1682,3 +1682,518 @@ app.use(async (ctx) => {
 app.listen(4000);
 ~~~
 
+## Node 手写 WebSocket 协议
+`WebSocket` 严格来说和 `HTTP` 没什么关系，是另外一种协议格式。但是需要一次从 `HTTP` 到 `WebSocket` 的切换过程。
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/66a631eacea541b8a21077f3a70a7d30~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+### 切换过程
+请求时要带上的 `header`：
+~~~shell
+# 链接升级
+Connection: Upgrade
+# 升级目标为websocket
+Upgrade: websocket
+# 保证安全的KEY
+Sec-WebSocket-Key: Ia3dQjfWrAug/6qm7mTZOg==
+~~~
+服务端返回的 `header`：
+~~~shell
+HTTP/1.1 101 Switching Protocols
+Connection: Upgrade
+Upgrade: websocket
+# Sec-WebSocket-Accept 是对请求带过来的 Sec-WebSocket-Key 处理之后的结果
+# 加入这个 header 的校验是为了确定对方一定是有 WebSocket 能力的
+Sec-WebSocket-Accept: JkE58n3uIigYDMvC+KsBbGZsp1A=
+~~~
+实现对 `Sec-WebSocket-Key` 处理：
+~~~ts
+const crypto = require('crypto');
+
+function hashKey(key) {
+  const sha1 = crypto.createHash('sha1');
+  sha1.update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11');
+  return sha1.digest('base64');
+}
+~~~
+用客户端传过来的 `key`，加上一个固定的字符串，经过 `sha1` 加密之后，转成 `base64` 的结果
+
+`websocket` 是二进制协议，一个字节可以用来存储很多信息：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/671ce2ce334b4d68b4fdd781e132de37~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+在 WebSocket 协议中，有几个关键的字段定义了消息的结构和处理方式：
+
+1. FIN（1 bit）：
+   - 表示消息是否是最后一个分片的标记位。
+   - 若为 1，表示这是消息的最后一个分片；若为 0，表示还有后续分片。
+   - 用于处理较大消息的分片传输。
+
+2. RSV1/RSV2/RSV3（各占 1 bit）：
+   - 保留位，暂时未被使用，在未来的扩展中可能会用到。
+   - 目前应设置为 0，表示保留状态。
+
+3. Opcode（4 bits）：
+   - 标识消息的类型，定义了如何解析和处理负载数据。
+   - 常见的 Opcode 包括：
+      - 0x0：表示继续分片
+      - 0x1：表示文本消息
+      - 0x2：表示二进制消息
+      - 0x8：表示连接关闭
+      - 0x9：表示心跳 Ping
+      - 0xA：表示心跳 Pong
+   - 通过不同的 Opcode 可以区分处理不同类型的消息。
+
+4. Payload Length（7 bits 或 7+16 bits 或 7+64 bits）：
+   - 标识负载数据的长度。
+   - 若长度小于 126，使用 7 位表示。
+   - 若长度大于等于 126 且小于 65536，使用 7 位加 16 位表示。
+   - 若长度大于等于 65536，使用 7 位加 64 位表示。
+
+5. Masking Key（0 或 4 bytes）：
+   - 用于掩码处理数据，保证数据传输的安全性。
+   - 若 Masking Key 存在，它占据了 4 字节并位于负载数据长度后面。
+   - 若 Masking Key 不存在，则没有掩码处理。
+
+6. Payload Data：
+   - 实际的负载数据，可能包含文本、二进制数据等。
+   - 如果存在 Masking Key，Payload Data 需要与之进行按位异或运算解码。
+
+这些字段共同定义了 WebSocket 协议中消息的结构和含义。通过解析和理解这些字段，可以正确处理和构建 WebSocket 消息。
+
+新建个项目：
+~~~shell
+mkdir my-websocket
+
+cd my-websocket
+
+npm init -y
+~~~
+在 `src/ws.js` 定义个 `MyWebSocket` 的 `class`：
+~~~ts
+const { EventEmitter } = require('events');
+const http = require('http');  
+
+class MyWebsocket extends EventEmitter {
+  constructor(options) {
+    super(options);
+
+    const server = http.createServer();
+    server.listen(options.port || 8080);
+
+    server.on('upgrade', (req, socket) => {
+      
+    });
+  }
+}
+~~~
+继承 `EventEmitter` 是为了可以用 `emit` 发送一些事件，外界可以通过 `on` 监听这个事件来处理。
+
+我们在构造函数里创建了一个 `http` 服务，当 `ungrade` 事件发生，也就是收到了 `Connection: upgrade` 的 `header` 的时候，返回切换协议的 `header`。
+
+返回的 `header` 前面已经见过了，就是要对 `sec-websocket-key` 做下处理。
+~~~ts
+function hashKey(key) {
+  const sha1 = crypto.createHash('sha1');
+  sha1.update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11');
+  return sha1.digest('base64');
+}
+
+server.on('upgrade', (req, socket) => {
+  this.socket = socket;
+  socket.setKeepAlive(true);
+
+  const resHeaders = [
+    'HTTP/1.1 101 Switching Protocols',
+    'Upgrade: websocket',
+    'Connection: Upgrade',
+    'Sec-WebSocket-Accept: ' + hashKey(req.headers['sec-websocket-key']),
+    '',
+    ''
+  ].join('\r\n');
+  socket.write(resHeaders);
+
+  socket.on('data', (data) => {
+    console.log(data)
+  });
+  socket.on('close', (error) => {
+      this.emit('close');
+  });
+});
+~~~
+新建 `src/index.js`，引入我们实现的 ws 服务器，跑起来：
+~~~ts
+const MyWebSocket = require('./ws');
+const ws = new MyWebSocket({ port: 8080 });
+
+ws.on('data', (data) => {
+  console.log('receive data:' + data);
+});
+
+ws.on('close', (code, reason) => {
+  console.log('close:', code, reason);
+});
+~~~
+然后新建这样一个 `index.html`：
+~~~html
+<!DOCTYPE HTML>
+<html>
+<body>
+    <script>
+        const ws = new WebSocket("ws://localhost:8080");
+
+        ws.onopen = function () {
+            ws.send("发送数据");
+            setTimeout(() => {
+                ws.send("发送数据2");
+            }, 3000)
+        };
+
+        ws.onmessage = function (evt) {
+            console.log(evt)
+        };
+
+        ws.onclose = function () {
+        };
+    </script>
+</body>
+
+</html>
+~~~
+在浏览器中打开 `index.html`，打开 `devtools` 你就会发现协议切换成功了，服务端也收到了消息，不过是 `Buffer` 的，也就是二进制的，接下来只要按照协议格式解析这个 `Buffer`，并且生成响应格式的协议数据 `Buffer` 返回就可以收发 `websocket` 数据了。
+
+我们需要第一个字节的后四位，也就是 `opcode`：
+~~~ts
+const byte1 = bufferData.readUInt8(0);
+let opcode = byte1 & 0x0f; 
+~~~
+读取 8 位无符号整数的内容，也就是一个字节的内容。参数是偏移的字节，这里是 0。通过位运算取出后四位，这就是 `opcode` 了。
+
+然后再处理第二个字节，第一位是 `mask` 标志位，后 7 位是 `payload` 长度。：
+~~~ts
+const byte2 = bufferData.readUInt8(1);
+const str2 = byte2.toString(2);
+const MASK = str2[0];
+let payloadLength = parseInt(str2.substring(1), 2);
+~~~
+还是用 `buffer.readUInt8` 读取一个字节的内容。先转成二进制字符串，这时第一位就是 `mask`，然后再截取后 7 位的子串，`parseInt` 成数字，这就是 `payload` 长度了。
+
+后面咋还有俩 `payload` 长度呢？这是因为数据不一定有多长，可能需要 16 位存长度，可能需要 32 位。
+于是 `websocket` 协议就规定了如果那个 7 位的内容不超过 125，那它就是 `payload` 长度。
+如果 7 位的内容是 126，那就不用它了，用后面的 16 位的内容作为 `payload` 长度。
+如果 7 位的内容是 127，也不用它了，用后面那个 64 位的内容作为 `payload` 长度。
+其实还是容易理解的，就是 3 个 `if else`。
+用代码写出来就是这样的：
+~~~ts
+let payloadLength = parseInt(str2.substring(1), 2);
+
+let curByteIndex = 2;
+
+if (payloadLength === 126) {
+  payloadLength = bufferData.readUInt16BE(2);
+  curByteIndex += 2;
+} else if (payloadLength === 127) {
+  payloadLength = bufferData.readBigUInt64BE(2);
+  curByteIndex += 8;
+}
+~~~
+这里的 `curByteIndex` 是存储当前处理到第几个字节的。
+- 如果是 126，那就从第 3 个字节开始，读取 2 个字节也就是 16 位的长度，用 `buffer.readUInt16BE` 方法。
+- 如果是 127，那就从第 3 个字节开始，读取 8 个字节也就是 64 位的长度，用 `buffer.readBigUInt64BE` 方法。
+
+这样就拿到了 `payload` 的长度，然后再用这个长度去截取内容就好了。但在读取数据之前，还有个 `mask` 要处理，这个是用来给内容解密的：
+
+读 4 个字节，就是 `mask key`。再后面的就可以根据 `payload` 长度读出来。
+~~~ts
+let realData = null;
+
+if (MASK) {
+  const maskKey = bufferData.slice(curByteIndex, curByteIndex + 4);  
+  curByteIndex += 4;
+  const payloadData = bufferData.slice(curByteIndex, curByteIndex + payloadLength);
+  realData = handleMask(maskKey, payloadData);
+} else {
+  realData = bufferData.slice(curByteIndex, curByteIndex + payloadLength);;
+}
+~~~
+然后用 `mask key` 来解密数据。这个算法也是固定的，用每个字节的 `mask key` 和数据的每一位做按位异或就好了：
+~~~ts
+function handleMask(maskBytes, data) {
+  const payload = Buffer.alloc(data.length);
+  for (let i = 0; i < data.length; i++) {
+    payload[i] = maskBytes[i % 4] ^ data[i];
+  }
+  return payload;
+}
+~~~
+但是传给处理程序之前，还要根据类型来处理下，因为内容分几种类型，也就是 `opcode` 有几种值：
+~~~ts
+const OPCODES = {
+  CONTINUE: 0,
+  TEXT: 1, // 文本
+  BINARY: 2, // 二进制
+  CLOSE: 8,
+  PING: 9,
+  PONG: 10,
+};
+~~~
+我们只处理文本和二进制就好：
+~~~ts
+handleRealData(opcode, realDataBuffer) {
+    switch (opcode) {
+      case OPCODES.TEXT:
+        this.emit('data', realDataBuffer.toString('utf8'));
+        break;
+      case OPCODES.BINARY:
+        this.emit('data', realDataBuffer);
+        break;
+      default:
+        this.emit('close');
+        break;
+    }
+}
+~~~
+文本就转成 `utf-8` 的字符串，二进制数据就直接用 `buffer` 的数据。
+
+至此，我们 websocket 协议的解析成功了！这样的协议格式的数据叫做 `frame`，也就是帧，接下来我们再实现数据的发送。发送也是构造一样的 `frame` 格式。定义这样一个 `send` 方法：
+~~~ts
+send(data) {
+    let opcode;
+    let buffer;
+    if (Buffer.isBuffer(data)) {
+      opcode = OPCODES.BINARY;
+      buffer = data;
+    } else if (typeof data === 'string') {
+      opcode = OPCODES.TEXT;
+      buffer = Buffer.from(data, 'utf8');
+    } else {
+      console.error('暂不支持发送的数据类型')
+    }
+    this.doSend(opcode, buffer);
+}
+
+doSend(opcode, bufferDatafer) {
+   this.socket.write(encodeMessage(opcode, bufferDatafer));
+}
+~~~
+根据发送的是文本还是二进制数据来对内容作处理。然后构造 `websocket` 的 `frame`：
+~~~ts
+function encodeMessage(opcode, payload) {
+  //payload.length < 126
+  let bufferData = Buffer.alloc(payload.length + 2 + 0);;
+  
+  let byte1 = parseInt('10000000', 2) | opcode; // 设置 FIN 为 1
+  let byte2 = payload.length;
+
+  bufferData.writeUInt8(byte1, 0);
+  bufferData.writeUInt8(byte2, 1);
+
+  payload.copy(bufferData, 2);
+  
+  return bufferData;
+}
+~~~
+我们只处理数据长度小于 125 的情况。第一个字节是 `opcode`，我们把第一位置 1 ，通过按位或的方式。
+服务端给客户端回消息不需要 `mask`，所以第二个字节就是 `payload` 长度。
+分别把这前两个字节的数据写到 `buffer` 里，指定不同的 `offset`：
+~~~ts
+bufferData.writeUInt8(byte1, 0);
+bufferData.writeUInt8(byte2, 1);
+~~~
+之后把 `payload` 数据放在后面：
+~~~ts
+payload.copy(bufferData, 2);
+~~~
+这样一个 `websocket` 的 `frame` 就构造完了。
+
+完整代码如下：
+~~~ts
+//ws.js
+const { EventEmitter } = require('events');
+const http = require('http');
+const crypto = require('crypto');
+
+function hashKey(key) {
+  const sha1 = crypto.createHash('sha1');
+  sha1.update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11');
+  return sha1.digest('base64');
+}
+
+function handleMask(maskBytes, data) {
+  const payload = Buffer.alloc(data.length);
+  for (let i = 0; i < data.length; i++) {
+    payload[i] = maskBytes[i % 4] ^ data[i];
+  }
+  return payload;
+}
+
+const OPCODES = {
+  CONTINUE: 0,
+  TEXT: 1,
+  BINARY: 2,
+  CLOSE: 8,
+  PING: 9,
+  PONG: 10,
+};
+
+function encodeMessage(opcode, payload) {
+  //payload.length < 126
+  let bufferData = Buffer.alloc(payload.length + 2 + 0);;
+  
+  let byte1 = parseInt('10000000', 2) | opcode; // 设置 FIN 为 1
+  let byte2 = payload.length;
+
+  bufferData.writeUInt8(byte1, 0);
+  bufferData.writeUInt8(byte2, 1);
+
+  payload.copy(bufferData, 2);
+  
+  return bufferData;
+}
+
+class MyWebsocket extends EventEmitter {
+  constructor(options) {
+    super(options);
+
+    const server = http.createServer();
+    server.listen(options.port || 8080);
+
+    server.on('upgrade', (req, socket) => {
+      this.socket = socket;
+      socket.setKeepAlive(true);
+
+      const resHeaders = [
+        'HTTP/1.1 101 Switching Protocols',
+        'Upgrade: websocket',
+        'Connection: Upgrade',
+        'Sec-WebSocket-Accept: ' + hashKey(req.headers['sec-websocket-key']),
+        '',
+        ''
+      ].join('\r\n');
+      socket.write(resHeaders);
+
+      socket.on('data', (data) => {
+        this.processData(data);
+        // console.log(data);
+      });
+      socket.on('close', (error) => {
+          this.emit('close');
+      });
+    });
+  }
+
+  handleRealData(opcode, realDataBuffer) {
+    switch (opcode) {
+      case OPCODES.TEXT:
+        this.emit('data', realDataBuffer.toString('utf8'));
+        break;
+      case OPCODES.BINARY:
+        this.emit('data', realDataBuffer);
+        break;
+      default:
+        this.emit('close');
+        break;
+    }
+  }
+
+  processData(bufferData) {
+    const byte1 = bufferData.readUInt8(0);
+    let opcode = byte1 & 0x0f; 
+    
+    const byte2 = bufferData.readUInt8(1);
+    const str2 = byte2.toString(2);
+    const MASK = str2[0];
+
+    let curByteIndex = 2;
+    
+    let payloadLength = parseInt(str2.substring(1), 2);
+    if (payloadLength === 126) {
+      payloadLength = bufferData.readUInt16BE(2);
+      curByteIndex += 2;
+    } else if (payloadLength === 127) {
+      payloadLength = bufferData.readBigUInt64BE(2);
+      curByteIndex += 8;
+    }
+
+    let realData = null;
+    
+    if (MASK) {
+      const maskKey = bufferData.slice(curByteIndex, curByteIndex + 4);  
+      curByteIndex += 4;
+      const payloadData = bufferData.slice(curByteIndex, curByteIndex + payloadLength);
+      realData = handleMask(maskKey, payloadData);
+    } 
+    
+    this.handleRealData(opcode, realData);
+  }
+
+  send(data) {
+    let opcode;
+    let buffer;
+    if (Buffer.isBuffer(data)) {
+      opcode = OPCODES.BINARY;
+      buffer = data;
+    } else if (typeof data === 'string') {
+      opcode = OPCODES.TEXT;
+      buffer = Buffer.from(data, 'utf8');
+    } else {
+      console.error('暂不支持发送的数据类型')
+    }
+    this.doSend(opcode, buffer);
+  }
+
+  doSend(opcode, bufferDatafer) {
+    this.socket.write(encodeMessage(opcode, bufferDatafer));
+  }
+}
+
+module.exports = MyWebsocket;
+~~~
+~~~ts
+// index.js
+const MyWebSocket = require('./ws');
+const ws = new MyWebSocket({ port: 8080 });
+
+ws.on('data', (data) => {
+  console.log('receive data:' + data);
+  setInterval(() => {
+    ws.send(data + ' ' + Date.now());
+  }, 2000)
+});
+
+ws.on('close', (code, reason) => {
+  console.log('close:', code, reason);
+});
+~~~
+~~~html
+<!DOCTYPE HTML>
+<html lang="zh">
+<body>
+    <script>
+        const ws = new WebSocket("ws://localhost:8080");
+
+        ws.onopen = function () {
+            ws.send("发送数据");
+            setTimeout(() => {
+                ws.send("发送数据2");
+            }, 3000)
+        };
+
+        ws.onmessage = function (evt) {
+            console.log(evt)
+        };
+
+        ws.onclose = function () {
+        };
+    </script>
+</body>
+
+</html>
+~~~
+
+
+
+
+
+
+
