@@ -2,7 +2,7 @@
  * @Author: 高江华 g598670138@163.com
  * @Date: 2023-04-11 16:57:52
  * @LastEditors: 高江华
- * @LastEditTime: 2023-09-08 10:35:18
+ * @LastEditTime: 2023-09-11 15:57:25
  * @Description: file content
 -->
 # TypeScript
@@ -1195,28 +1195,389 @@ if (typeof strOrNumOrBool === "string") {
   throw new Error(`Unknown input type: ${strOrNumOrBool}`);
 }
 ~~~
+如果我们希望这个变量的每一种类型都需要得到妥善处理，在最后可以抛出一个错误，但这是运行时才会生效的措施，是否能在类型检查时就分析出来？
 
+实际上，由于 `TypeScript` 强大的类型分析能力，每经过一个 `if` 语句处理，`strOrNumOrBool` 的类型分支就会减少一个（因为已经被对应的 `typeof` 处理过）。而在最后的 `else` 代码块中，它的类型只剩下了 `never` 类型，即一个无法再细分、本质上并不存在的虚空类型。在这里，我们可以利用只有 `never` 类型能赋值给 `never` 类型这一点，来巧妙地分支处理检查：
+~~~ts
+if (typeof strOrNumOrBool === "string") {
+    // 一定是字符串！
+  strOrNumOrBool.charAt(1);
+} else if (typeof strOrNumOrBool === "number") {
+  strOrNumOrBool.toFixed();
+} else if (typeof strOrNumOrBool === "boolean") {
+  strOrNumOrBool === true;
+} else {
+  const _exhaustiveCheck: never = strOrNumOrBool;
+  throw new Error(`Unknown input type: ${_exhaustiveCheck}`);
+}
+~~~
+假设某个粗心的同事新增了一个类型分支，`strOrNumOrBool` 变成了 `strOrNumOrBoolOrFunc`，却忘记新增对应的处理分支，此时在 `else` 代码块中就会出现将 `Function` 类型赋值给 `never` 类型变量的类型错误。这实际上就是利用了类型分析能力与 `never` 类型只能赋值给 `never` 类型这一点，来确保联合类型变量被妥善处理。
 
+前面我们提到了主动使用 `never` 类型的两种方式，而 `never` 其实还会在某些情况下不请自来。比如说，你可能遇到过这样的类型错误：
+~~~ts
+const arr = [];
 
+arr.push("linbudu"); // 类型“string”的参数不能赋给类型“never”的参数。
+~~~
+此时这个未标明类型的数组被推导为了 `never[]` 类型，这种情况仅会在你启用了 `strictNullChecks` 配置，同时禁用了 `noImplicitAny` 配置时才会出现。解决的办法也很简单，为这个数组声明一个具体类型即可。关于这两个配置的具体作用，我们会在后面有详细的介绍。
 
+在这一部分，我们了解了 TypeScript 中 **Top Type** (any / unknown) 与 **Bottom Type**（never）它们的表现。在讲 `any` 的时候，我们在小 `tips` 中提到，可以使用类型断言来避免对 `any` 类型的滥用。那么接下来，我们就来学习类型断言这一概念。
 
+### 类型断言：警告编译器不准报错
+类型断言能够显式告知类型检查程序当前这个变量的类型，可以进行类型分析地修正、类型。它其实就是一个将变量的已有类型更改为新指定类型的操作，它的基本语法是 `as NewType`，你可以将 `any / unknown` 类型断言到一个具体的类型：
+~~~ts
+let unknownVar: unknown;
 
+(unknownVar as { foo: () => {} }).foo();  
+~~~
+还可以 `as` 到 `any` 来为所欲为，跳过所有的类型检查：
+~~~ts
+const str: string = "linbudu";
 
+(str as any).func().foo().prop;
+~~~
+也可以在联合类型中断言一个具体的分支：
+~~~ts
+function foo(union: string | number) {
+  if ((union as string).includes("linbudu")) { }
 
+  if ((union as number).toFixed() === '599') { }
+}
+~~~
+但是类型断言的正确使用方式是，在 TypeScript 类型分析不正确或不符合预期时，将其断言为此处的正确类型：
+~~~ts
+interface IFoo {
+  name: string;
+}
 
+declare const obj: {
+  foo: IFoo
+}
 
+const {
+  foo = {} as IFoo
+} = obj
+~~~
+这里从 `{}` 字面量类型断言为了 `IFoo` 类型，即为解构赋值默认值进行了预期的类型断言。当然，更严谨的方式应该是定义为 `Partial<IFoo>` 类型，即 `IFoo` 的属性均为可选的。
 
+除了使用 `as` 语法以外，你也可以使用 `<>` 语法。它虽然书写更简洁，但效果一致，只是在 `TSX` 中尖括号断言并不能很好地被分析出来。你也可以通过 `TypeScript ESLint` 提供的 `consistent-type-assertions` 规则来约束断言风格。
 
+需要注意的是，类型断言应当是在迫不得己的情况下使用的。虽然说我们可以用类型断言纠正不正确的类型分析，但类型分析在大部分场景下还是可以智能地满足我们需求的。
 
+总的来说，在实际场景中，还是 `as any` 这一种操作更多。但这也是让你的代码编程 AnyScript 的罪魁祸首之一，请务必小心使用。
 
+### 双重断言
+如果在使用类型断言时，原类型与断言类型之间差异过大，也就是指鹿为马太过离谱，离谱到了指鹿为霸王龙的程度，`TypeScript` 会给你一个类型报错：
+~~~ts
+const str: string = "linbudu";
 
+// 从 X 类型 到 Y 类型的断言可能是错误的，blabla
+(str as { handler: () => {} }).handler()
+~~~
+此时它会提醒你先断言到 `unknown` 类型，再断言到预期类型，就像这样：
+~~~ts
+const str: string = "linbudu";
 
+(str as unknown as { handler: () => {} }).handler();
 
+// 使用尖括号断言
+(<{ handler: () => {} }>(<unknown>str)).handler();
+~~~
+这是因为你的断言类型和原类型的差异太大，需要先断言到一个通用的类，即 `any / unknown`。这一通用类型包含了所有可能的类型，因此**断言到它和从它断言到另一个类型**差异不大。
 
+### 非空断言
+非空断言其实是类型断言的简化，它使用 `!` 语法，即 `obj!.func()!.prop` 的形式标记前面的一个声明一定是非空的（实际上就是剔除了 `null` 和 `undefined` 类型），比如这个例子：
+~~~ts
+declare const foo: {
+  func?: () => ({
+    prop?: number | null;
+  })
+};
 
+foo.func().prop.toFixed();
+~~~
+此时，`func` 在 `foo` 中不一定存在，`prop` 在 `func` 调用结果中不一定存在，且可能为 `null`，我们就会收获两个类型报错。如果不管三七二十一地坚持调用，想要解决掉类型报错就可以使用非空断言：
+~~~ts
+foo.func!().prop!.toFixed();
+~~~
+其应用位置类似于可选链：
+~~~ts
+foo.func?.().prop?.toFixed();
+~~~
+但不同的是，非空断言的运行时仍然会保持调用链，因此在运行时可能会报错。而可选链则会在某一个部分收到 `undefined` 或 `null` 时直接短路掉，不会再发生后面的调用。
 
+非空断言的常见场景还有 `document.querySelector`、`Array.find` 方法等：
+~~~ts
+const element = document.querySelector("#id")!;
+const target = [1, 2, 3, 599].find(item => item === 599)!;
+~~~
+为什么说非空断言是类型断言的简写？因为上面的非空断言实际上等价于以下的类型断言操作：
+~~~ts
+((foo.func as () => ({
+  prop?: number;
+}))().prop as number).toFixed();
+~~~
+怎么样，非空断言是不是简单多了？你可以通过 `non-nullable-type-assertion-style` 规则来检查代码中是否存在类型断言能够被简写为非空断言的情况。
 
+类型断言还有一种用法是作为代码提示的辅助工具，比如对于以下这个稍微复杂的接口：
+~~~ts
+interface IStruct {
+  foo: string;
+  bar: {
+    barPropA: string;
+    barPropB: number;
+    barMethod: () => void;
+    baz: {
+      handler: () => Promise<void>;
+    };
+  };
+}
+~~~
+假设你想要基于这个结构随便实现一个对象，你可能会使用类型标注：
+~~~ts
+const obj: IStruct = {};
+~~~
+这个时候等待你的是一堆类型报错，你必须规规矩矩地实现整个接口结构才可以。但如果使用类型断言，我们可以在保留类型提示的前提下，不那么完整地实现这个结构：
+~~~ts
+// 这个例子是不会报错的
+const obj = <IStruct>{
+  bar: {
+    baz: {},
+  },
+};
+~~~
+类型提示仍然存在：
 
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/aa8331c0f2e7484784c442dc822a2c98~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
 
+在你错误地实现结构时仍然可以给到你报错信息：
 
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/533a1b0315934f0fb4e6a831970b71c0~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+### 类型层级初探
+前面我们已经说到，`any` 与 `unknown` 属于 `Top Type`，表现在它们包含了所有可能的类型，而 `never` 属于 `Bottom Type`，表现在它是一个虚无的、不存在的类型。那么加上此前学习的原始类型与字面量类型等，按照类型的包含来进行划分，我们大概能梳理出这么个类型层级关系。
+- 最顶级的类型，`any` 与 `unknown`
+- 特殊的 `Object` ，它也包含了所有的类型，但和 `Top Type` 比还是差了一层
+- `String`、`Boolean`、`Number` 这些装箱类型
+- 原始类型与对象类型
+- 字面量类型，即更精确的原始类型与对象类型嘛，需要注意的是 `null` 和 `undefined` 并不是字面量类型的子类型
+- 最底层的 `never`
+
+::: tip
+实际上这个层级链并不完全，因为还有联合类型、交叉类型、函数类型的情况，我们会在后面专门有一节进行讲解~
+:::
+
+而实际上类型断言的工作原理也和类型层级有关，在判断断言是否成立，即差异是否能接受时，实际上判断的即是这两个类型是否能够找到一个公共的父类型。比如 `{ }` 和 `{ name: string }` 其实可以认为拥有公共的父类型 `{}`（一个新的 `{}！`你可以理解为这是一个基类，参与断言的 `{ }` 和 `{ name: string }` 其实是它的派生类）。
+
+如果找不到具有意义的公共父类型呢？这个时候就需要请出 **Top Type** 了，如果我们把它先断言到 **Top Type**，那么就拥有了公共父类型 **Top Type**，再断言到具体的类型也是同理。你可以理解为先向上断言，再向下断言，比如前面的双重断言可以改写成这样：
+~~~ts
+const str: string = "linbudu";
+
+(str as (string | { handler: () => {} }) as { handler: () => {} }).handler();
+~~~
+
+## 类型工具
+在实际的类型编程中，为了满足各种需求下的类型定义，我们通常会结合使用这些类型工具。因此，我们一定要清楚这些类型工具各自的使用方法和功能。如果按照使用方式来划分，类型工具可以分成三类：**操作符**、**关键字**与**专用语法**。而按照使用目的来划分，类型工具可以分为 **类型创建** 与 **类型安全保护** 两类。
+
+### 类型别名
+类型别名可以说是 `TypeScript` 类型编程中最重要的一个功能，从一个简单的函数类型别名，到让你眼花缭乱的类型体操，都离不开类型别名。虽然很重要，但它的使用却并不复杂：
+~~~ts
+type A = string;
+~~~
+我们通过 `type` 关键字声明了一个类型别名 `A` ，同时它的类型等价于 `string` 类型。类型别名的作用主要是对一组类型或一个特定类型结构进行封装，以便于在其它地方进行复用。
+
+比如抽离一组联合类型：
+~~~ts
+type StatusCode = 200 | 301 | 400 | 500 | 502;
+type PossibleDataTypes = string | number | (() => unknown);
+
+const status: StatusCode = 502;
+~~~
+抽离一个函数类型：
+~~~ts
+type Handler = (e: Event) => void;
+
+const clickHandler: Handler = (e) => { };
+const moveHandler: Handler = (e) => { };
+const dragHandler: Handler = (e) => { };
+~~~
+声明一个对象类型，就像接口那样：
+~~~ts
+type ObjType = {
+  name: string;
+  age: number;
+}
+~~~
+看起来类型别名真的非常简单，不就是声明了一个变量让类型声明更简洁和易于拆分吗？如果真的只是把它作为类型别名，用来进行特定类型的抽离封装，那的确很简单。然而，类型别名还能作为工具类型。**工具类同样基于类型别名，只是多了个泛型。**
+
+::: tip
+如果你还不了解泛型也无需担心，现阶段我们只要了解它和类型别名相关的使用就可以了。至于更复杂的泛型使用场景，我们后面会详细了解。
+:::
+
+在类型别名中，类型别名可以这么声明自己能够接受泛型（我称之为泛型坑位）。一旦接受了泛型，我们就叫它工具类型：
+~~~ts
+type Factory<T> = T | number | string;
+~~~
+虽然现在类型别名摇身一变成了工具类型，但它的基本功能仍然是创建类型，只不过工具类型能够接受泛型参数，实现**更灵活的类型创建功能**。从这个角度看，工具类型就像一个函数一样，泛型是入参，内部逻辑基于入参进行某些操作，再返回一个新的类型。比如在上面这个工具类型中，我们就简单接受了一个泛型，然后把它作为联合类型的一个成员，返回了这个联合类型。
+~~~ts
+const foo: Factory<boolean> = true;
+~~~
+当然，我们一般不会直接使用工具类型来做类型标注，而是再度声明一个新的类型别名：
+~~~ts
+type FactoryWithBool = Factory<boolean>;
+
+const foo: FactoryWithBool = true;
+~~~
+同时，泛型参数的名称（上面的 T ）也不是固定的。通常我们使用大写的 T / K / U / V / M / O ...这种形式。如果为了可读性考虑，我们也可以写成大驼峰形式（即在驼峰命名的基础上，首字母也大写）的名称，比如：
+~~~ts
+type Factory<NewType> = NewType | number | string;
+~~~
+声明一个简单、有实际意义的工具类型：
+~~~ts
+type MaybeNull<T> = T | null;
+~~~
+这个工具类型会接受一个类型，并返回一个包括 `null` 的联合类型。这样一来，在实际使用时就可以确保你处理了可能为空值的属性读取与方法调用：
+~~~ts
+type MaybeNull<T> = T | null;
+
+function process(input: MaybeNull<{ handler: () => {} }>) {
+  input?.handler();
+}
+~~~
+类似的还有 `MaybePromise`、`MaybeArray`。这也是我在日常开发中最常使用的一类工具类型：
+~~~ts
+type MaybeArray<T> = T | T[];
+
+// 函数泛型我们会在后面了解~
+function ensureArray<T>(input: MaybeArray<T>): T[] {
+  return Array.isArray(input) ? input : [input];
+}
+~~~
+另外，类型别名中可以接受任意个泛型，以及为泛型指定约束、默认值等，这些内容我们都会在泛型一节深入了解。
+
+总之，对于工具类型来说，它的主要意义是**基于传入的泛型进行各种类型操作**，得到一个新的类型。而这个类型操作的指代就非常非常广泛了，甚至说类型编程的大半难度都在这儿呢，这也是这本小册占据篇幅最多的部分。
+
+### 联合类型与交叉类型
+在原始类型与对象类型一节，我们了解了联合类型。但实际上，联合类型还有一个和它有点像的孪生兄弟：**交叉类型**。它和联合类型的使用位置一样，只不过符号是`&`，即按位与运算符。
+
+实际上，正如联合类型的符号是`|`，它代表了按位或，即只需要符合联合类型中的一个类型，既可以认为实现了这个联合类型，如`A | B`，**只需要实现 `A` 或 `B` 即可**。
+
+我们声明一个交叉类型：
+~~~ts
+interface NameStruct {
+  name: string;
+}
+
+interface AgeStruct {
+  age: number;
+}
+
+type ProfileStruct = NameStruct & AgeStruct;
+
+const profile: ProfileStruct = {
+  name: "linbudu",
+  age: 18
+}
+~~~
+很明显这里的 `profile` 对象需要同时符合这两个对象的结构。从另外一个角度来看，`ProfileStruct` 其实就是一个新的，同时包含 `NameStruct` 和 `AgeStruct` 两个接口所有属性的类型。这里是对于对象类型的合并，那对于原始类型呢？
+~~~ts
+type StrAndNum = string & number; // never
+~~~
+我们可以看到，它竟然变成 `never` 了！看起来很奇怪，但想想我们前面给出的定义，新的类型会同时符合交叉类型的所有成员，存在既是 string 又是 `number` 的类型吗？当然不。实际上，这也是 `never` 这一 `BottomType` 的实际意义之一，描述**根本不存在的类型**嘛。
+
+对于对象类型的交叉类型，其内部的同名属性类型同样会按照交叉类型进行合并：
+~~~ts
+type Struct1 = {
+  primitiveProp: string;
+  objectProp: {
+    name: string;
+  }
+}
+
+type Struct2 = {
+  primitiveProp: number;
+  objectProp: {
+    age: number;
+  }
+}
+
+type Composed = Struct1 & Struct2;
+
+type PrimitivePropType = Composed['primitiveProp']; // never
+type ObjectPropType = Composed['objectProp']; // { name: string; age: number; }
+~~~
+如果是两个联合类型组成的交叉类型呢？其实还是类似的思路，既然只需要实现一个联合类型成员就能认为是实现了这个联合类型，那么各实现两边联合类型中的一个就行了，也就是两边联合类型的交集：
+~~~ts
+type UnionIntersection1 = (1 | 2 | 3) & (1 | 2); // 1 | 2
+type UnionIntersection2 = (string | number | symbol) & string; // string
+~~~
+总结一下交叉类型和联合类型的区别就是，联合类型只需要符合成员之一即可（`||`），而交叉类型需要严格符合每一位成员（`&&`）。
+
+### 索引类型
+索引类型指的不是某一个特定的类型工具，它其实包含三个部分：**索引签名类型**、**索引类型查询**与**索引类型访问**。目前很多社区的学习教程并没有这一点进行说明，实际上这三者都是独立的类型工具。唯一共同点是，**它们都通过索引的形式来进行类型操作**，但索引签名类型是**声明**，后两者则是**读取**。接下来，我们来依次介绍三个部分。
+
+#### 索引签名类型
+索引签名类型主要指的是在接口或类型别名中，通过以下语法来**快速声明一个键值类型一致的类型结构**：
+~~~ts
+interface AllStringTypes {
+  [key: string]: string;
+}
+
+type AllStringTypes = {
+  [key: string]: string;
+}
+~~~
+这时，即使你还没声明具体的属性，对于这些类型结构的属性访问也将全部被视为 string 类型：
+~~~ts
+interface AllStringTypes {
+  [key: string]: string;
+}
+
+type PropType1 = AllStringTypes['linbudu']; // string
+type PropType2 = AllStringTypes['599']; // string
+~~~
+在这个例子中我们声明的键的类型为 `string（[key: string]）`，这也意味着在实现这个类型结构的变量中**只能声明字符串类型的键**：
+~~~ts
+interface AllStringTypes {
+  [key: string]: string;
+}
+
+const foo: AllStringTypes = {
+  "linbudu": "599"
+}
+~~~
+但由于 `JavaScript` 中，对于 `obj[prop]` 形式的访问会将**数字索引访问转换为字符串索引访问**，也就是说， `obj[599]` 和 `obj['599']` 的效果是一致的。因此，在字符串索引签名类型中我们仍然可以声明数字类型的键。类似的，`symbol` 类型也是如此：
+~~~ts
+const foo: AllStringTypes = {
+  "linbudu": "599",
+  599: "linbudu",
+  [Symbol("ddd")]: 'symbol',
+}
+~~~
+索引签名类型也可以和具体的键值对类型声明并存，但这时这些具体的键值类型也需要符合索引签名类型的声明：
+~~~ts
+interface AllStringTypes {
+  // 类型“number”的属性“propA”不能赋给“string”索引类型“boolean”。
+  propA: number;
+  [key: string]: boolean;
+}
+~~~
+这里的符合即指子类型，因此自然也包括联合类型：
+~~~ts
+interface StringOrBooleanTypes {
+  propA: number;
+  propB: boolean;
+  [key: string]: number | boolean;
+}
+~~~
+索引签名类型的一个常见场景是在重构 `JavaScript` 代码时，为内部属性较多的对象声明一个 `any` 的索引签名类型，以此来暂时支持**对类型未明确属性的访问**，并在后续一点点补全类型：
+~~~ts
+interface AnyTypeHere {
+  [key: string]: any;
+}
+
+const foo: AnyTypeHere['linbudu'] = 'any value';
+~~~
+
+#### 索引类型查询
 
