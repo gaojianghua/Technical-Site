@@ -131,7 +131,7 @@ function sidebarGuide() {
             text: '服务端',
             collapsible: true,
             items: [
-                { text: 'GoLang', link: '/guide/goLang' },
+                { text: 'Go', link: '/guide/go' },
                 { text: 'Gin', link: '/guide/gin' },
                 { text: 'Grpc', link: '/guide/grpc' },
                 { text: 'Node', link: '/guide/node' },
