@@ -6424,6 +6424,59 @@ export class AppController {
 ::: tip
 前端的代码实现有兴趣的同学可以自行去实现，这样我们就实现了扫码登录。
 :::
+
+## Nest 中使用 REPL 模式
+新建项目：
+~~~shell
+nest new repl-test
+~~~
+创建两个模块：
+~~~shell
+nest g resource aaa
+nest g resource bbb
+~~~
+在 `src` 下创建个 `repl.ts`，写入如下内容：
+~~~ts
+import { repl } from '@nestjs/core';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  await repl(AppModule);
+}
+bootstrap();
+~~~
+启动项目：
+~~~shell
+npm run start:dev -- --entryFile repl
+~~~
+这里的 `--entryFile` 是指定入口文件是 `repl.ts`，前面带了个 `--` 是指后面的参数不是传给 `npm run start:dev` 的，要原封不动保留。也就是会传给 `nest start`，当然，你直接执行 `nest start` 也可以：
+~~~shell
+nest start --watch --entryFile repl
+~~~
+测试 `controller` 的话，`repl` 的方式是有一些限制的，它只是单纯的传参调用这个函数，不会解析装饰器。
+
+执行 `debug()`，会打印所有的 `module` 和 `module` 下的 `controllers` 和 `providers`。
+
+`methods()` 可以查看某个 `controller` 或者 `provider` 的方法。
+
+`get()` 或者 `$()` 可以拿到某个 `controller` 或者 `provider` 调用它的方法。
+
+要保留命令历史可以改一下 repl.ts：
+~~~ts
+import { repl } from '@nestjs/core';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+    const replServer = await repl(AppModule);
+    replServer.setupHistory(".nestjs_repl_history", (err) => {
+        if (err) {
+            console.error(err);
+        }
+    });
+}
+bootstrap();
+~~~
+
 ## 会议室预订系统
 首先，用户分为普通用户和管理员两种，各自有不同的功能：
 - **普通用户**：可以注册，注册的时候会发邮件来验证身份，注册之后就可以登录系统。
