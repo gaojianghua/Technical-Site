@@ -4833,3 +4833,774 @@ function commitAttachRef(finishedWork: Fiber) {
 说白了，在每次更新的时候，`markRef` 认为 `current.ref !== ref`，就会打上新的标签，导致在 `commit` 阶段会更新 `ref`，从而会打印两次。
 
 ## 探索 useSyncExternalStore 的神秘面纱
+在 `React v18` 中提供了一个全新的 **Hooks：useSyncExternalStore**，它会通过强制的同步状态更新，使得外部 `store` 可以支持并发读取。
+
+实际上 `useSyncExternalStore` 是 `useMutableSource` 演变而来，主要解决**外部数据撕裂**的问题，并且官方明确指出它是提供给三方库（如：`redux`、`mobx`）使用，而非日常开发中使用。
+
+但在 `React` 文档中（[Subscribing to a browser API](https://react.dev/reference/react/useSyncExternalStore#subscribing-to-a-browser-api)）发现这样一段话：
+
+Subscribing to a browser API 
+Another reason to add useSyncExternalStore is when you want to subscribe to some value exposed by the browser that changes over time. For example, suppose that you want your component to display whether the network connection is active. The browser exposes this information via a property called navigator.onLine.
+
+This value can change without React’s knowledge, so you should read it with useSyncExternalStore.
+
+大致意思说：添加 `useSyncExternalStore` 另一个原因是使用浏览器的某些值时，这个值可能在**将来某个时刻发生变化**，如：网络连接的状态（`navigator.onLine`），此时更加推荐使用 `useSyncExternalStore`。
+
+通过上面这段话，可以得出 `useSyncExternalStore` 解决外部数据撕裂中的“外部”不仅仅是“第三方库”，也有可能是“浏览器“。当我们需要访问 `windows` 对象上的一些值时，也需要它的帮助。
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/bc11624e4ade44069a5db7cc4dbd5a77~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+### useSyncExternalStore 使用示例
+我们先来看看官网的示例：在 `useSyncExternalStore` 的基础上封装了 `useOnlineStatus`，去检查网络连接的状态：
+~~~ts
+// useOnlineStatus
+import { useSyncExternalStore } from "react";
+
+export function useOnlineStatus() {
+  const isOnline = useSyncExternalStore(subscribe, getSnapshot);
+  return isOnline;
+}
+
+function getSnapshot() {
+  return navigator.onLine;
+}
+
+function subscribe(callback: any) {
+  window.addEventListener("online", callback);
+  window.addEventListener("offline", callback);
+  return () => {
+    window.removeEventListener("online", callback);
+    window.removeEventListener("offline", callback);
+  };
+}
+~~~
+~~~ts
+// Index
+import { useOnlineStatus } from "./useOnlineStatus";
+
+function StatusBar() {
+  const isOnline = useOnlineStatus();
+  return <h1>{isOnline ? "✅ Online" : "❌ Disconnected"}</h1>;
+}
+
+function SaveButton() {
+  const isOnline = useOnlineStatus();
+
+  function handleSaveClick() {
+    console.log("✅ Progress saved");
+  }
+
+  return (
+    <button disabled={!isOnline} onClick={handleSaveClick}>
+      {isOnline ? "Save progress" : "Reconnecting..."}
+    </button>
+  );
+}
+
+const Index = () => {
+  return (
+    <>
+      <SaveButton />
+      <StatusBar />
+    </>
+  );
+};
+
+export default Index;
+~~~
+`useSyncExternalStore` 解决的问题是**数据撕裂**问题，那么什么是数据撕裂呢？一起来看看。
+
+### 什么是数据撕裂？
+**撕裂**： 是图形编程中的一个传统术语，是指视觉上的不一致（参考：[#What is tearing?](https://github.com/reactwg/react-18/discussions/69)）。
+
+在 `React v18` 中增加**并发**机制，换句话说，React 由之前的**同步渲染**变为了**并发渲染**，接下来一起看看两者在渲染上的区别。
+
+**同步渲染**：
+当我们渲染 React 树时，通过 external store 提供数据，如下图：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/0954981c3d734569abe728b4c10eaa6e~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+同步渲染流程如下：
+- 第一张图，当 `external store` 的数据变为蓝色，`React` 树开始渲染，对应的组件变为了蓝色。
+- 第二张图，由于 `JS` 是单线程的，所以会一直执行下去，此时的组件都会取到 `external store` 对应的颜色。所以在第三张图中，我们可以看到所有的组件都渲染成了蓝色，`UI` 显示的状态始终与 `external store` 的颜色一致。
+- 第四张图，**当 React 渲染完成后，才允许改变 external store 的值**。 如果 `store` 在 `React` 未渲染时更新，此时将进行下一次渲染，继续循环这个过程。
+
+大多数 `UI` 框架（包括 `React v17` 版本）都遵从同步渲染的流程，所渲染的 `UI` 也总是一致的。但在 `React v18` 上增加了**并发机制**，程序并不一定执行下去，会有中断的可能。
+
+**并发渲染**：在并发模式下，程序并不会一直执行下去，当 `external store` 渲染组件变为蓝色的过程中，用户也可以改变 `store` 中的值，让用户感受到页面更加丝滑。如下图：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/e8f4b74012b745c4b963d046199541c2~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+并发渲染流程如下：
+- 第一张图中，`external store` 的值为蓝色，渲染的组件也为蓝色。
+- 在执行的过程中，将 `external store` 的值改为红色，此时再渲染剩余的组件，因为 `store` 发生变化，所以剩余的组件也变成了红色。
+- 第四张图，当渲染完成后，发现一个组件是蓝色，另外两个组件是红色，它们虽然读取相同的数据，但却是不同的值，此时所渲染的 `UI` 并不是统一的，这种情况就是 **“撕裂”**。
+
+### 为什么不能用 useState 和 useEffect 代替？
+在示例中，我们用 `useSyncExternalStore` 来监听网络的状态，这种方式明显比较麻烦，为什么不能用 `useState` 和 `useEffect` 来代替呢（如：之前介绍的 `useNetwork`）？
+
+其本质原因跟 `React v18` 的并发机制有关，也就是并发渲染。因为通过并发渲染，`React` 会维护不同的 `UI`，一个是屏幕展示（`current fiber`），另一个是准备更新的树（`workInProgress fiber`），同时为了让用户体验更加丝滑，`React` 允许暂停优先级低的事件，优先处理优先级高的响应事件。
+
+所以，在一次渲染的过程中，处理事件前后获取的外部 `store` 有可能不同，如果使用自身的状态，`React` 无法对此感知，这时就会触发撕裂的情况，即同一个 `state` 渲染出了不同的值。
+
+而 `useSyncExternalStore` 就是为了解决这类情况的出现。它会在渲染期间检测外部的 `state` 是否发生变化，如果展示的 UI 并不统一，会进行**同步阻塞渲染**，强制更新，使 `UI` 保持一致。
+
+接下来，我们一起看看 `useSyncExternalStore` 的源码，共同揭开它神秘的面纱。
+
+### useSyncExternalStore 原理
+`useSyncExternalStore` 的源码分为两个阶段，分别是：`mountSyncExternalStore`（初始化阶段）和 `updateSyncExternalStore`（更新阶段）。
+
+#### mountSyncExternalStore（初始化阶段）
+文件位置：`packages/react-reconciler/src/ReactFiberHooks.js`。
+~~~ts
+function mountSyncExternalStore<T>(
+  subscribe: (() => void) => () => void,
+  getSnapshot: () => T,
+  getServerSnapshot?: () => T,
+): T {
+  const fiber = currentlyRenderingFiber;
+  const hook = mountWorkInProgressHook();
+
+  let nextSnapshot;
+  
+  // 是否属于 hydrate 模式
+  const isHydrating = getIsHydrating();
+  if (isHydrating) {
+    // hydrate 模式下
+    nextSnapshot = getServerSnapshot();
+  } else {
+  
+    nextSnapshot = getSnapshot();
+    const root: FiberRoot | null = getWorkInProgressRoot();
+
+    // 并发模式下，一致性检查
+    if (!includesBlockingLane(root, renderLanes)) {
+      pushStoreConsistencyCheck(fiber, getSnapshot, nextSnapshot);
+    }
+  }
+
+  hook.memoizedState = nextSnapshot;
+  
+  const inst: StoreInstance<T> = {
+    value: nextSnapshot,
+    getSnapshot,
+  };
+  hook.queue = inst;
+
+  // useEffect 中的 mountEffect
+  mountEffect(subscribeToStore.bind(null, fiber, inst, subscribe), [subscribe]);
+
+  fiber.flags |= PassiveEffect;
+  
+  // 打上对应的标记，与useEffect中一样
+  pushEffect(
+    HookHasEffect | HookPassive,
+    updateStoreInstance.bind(null, fiber, inst, nextSnapshot, getSnapshot),
+    undefined,
+    null,
+  );
+
+  return nextSnapshot;
+}
+~~~
+`mountSyncExternalStore` 对应三个入参，分别是：
+- **subscribe**：订阅函数，用于**注册一个回调函数，当存储值发生更改时被调用**；
+- **getSnapshot**：返回当前存储值的函数；
+- **getServerSnapshot**：返回服务端（`hydration` 模式下）渲染期间使用的存储值的函数（这里我们绕过 `hydration` 模式下的处理）。
+
+**mountSyncExternalStore 整体流程：**
+
+1. 首先拿到对应的 `fiber` 节点，创建一个 `hook` 对象，`React` 先判断当前的环境是不是 `hydration` 模式；
+2. 接下来生成 `store` 的快照，获取当前 `store` 的状态值，只是 `hydration` 模式下通过 `getServerSnapshot` 获取，否则通过 `getSnapshot` 获取。并将获取的状态值存储在对应的 `memoizedState` 中；
+3. 对 `render` 阶段结束时会对 `store` 进行一致性检查；
+4. 最后执行 `mountEffect` 和 `pushEffect`，这两步与 `useEffect` 的初始化步骤对应，打上对应的标记，在 `commit` 阶段进行一致性检查，防止 `store` 的状态不一致。
+
+阅读完 `mountSyncExternalStore`，核心点有 `pushStoreConsistencyCheck`、`subscribeToStore`、`updateSyncExternalStore` 三个函数，接下来我们逐一进行分析。
+
+##### pushStoreConsistencyCheck
+**pushStoreConsistencyCheck**：检查一致性，如果是并发模式，会创建一个 `check` 对象，并添加到 `fiber` 中的 `updateQueue` 对象的 `store` 数组中。
+~~~ts
+function pushStoreConsistencyCheck<T>(
+  fiber: Fiber,
+  getSnapshot: () => T,
+  renderedSnapshot: T,
+): void {
+  fiber.flags |= StoreConsistency;
+  
+  const check: StoreConsistencyCheck<T> = {
+    getSnapshot,
+    value: renderedSnapshot,
+  };
+  
+  let componentUpdateQueue: null | FunctionComponentUpdateQueue = (currentlyRenderingFiber.updateQueue: any);
+  
+  if (componentUpdateQueue === null) { // 第一个 check 对象
+    componentUpdateQueue = createFunctionComponentUpdateQueue();
+    currentlyRenderingFiber.updateQueue = (componentUpdateQueue: any);
+    
+    componentUpdateQueue.stores = [check];
+  } else { // 多个 check 对象
+    const stores = componentUpdateQueue.stores;
+    
+    if (stores === null) {
+      componentUpdateQueue.stores = [check];
+    } else {
+      stores.push(check);
+    }
+  }
+}
+~~~
+从源码可以看出，收集 `check` 的过程和 `useEffect` 中收集 `effect` 对象类似， `createFunctionComponentUpdateQueue()` 用来创建一个更新队列，最终放入 `stores` 数组中。
+
+##### subscribeToStore
+**subscribeToStore**： 通过 `store` 提供的 `subscribe` 方法订阅对应的状态变化，如果发生变化，则会采用同步阻塞模式渲染。
+~~~ts
+function subscribeToStore<T>(
+  fiber: Fiber,
+  inst: StoreInstance<T>,
+  subscribe: (() => void) => () => void,
+): any {
+ // 通过 store 的 dispatch 方法修改 store 会触发
+ const handleStoreChange = () => {
+    if (checkIfSnapshotChanged(inst)) {
+      forceStoreRerender(fiber);
+    }
+  };
+  return subscribe(handleStoreChange);
+}
+
+// 判断 store 的值是否发生变化
+function checkIfSnapshotChanged<T>(inst: StoreInstance<T>): boolean {
+  const latestGetSnapshot = inst.getSnapshot;
+  
+  // 旧值
+  const prevValue = inst.value;
+  try {
+    // 新值
+    const nextValue = latestGetSnapshot();
+    // 与 useEffect 中的一致，进行浅比较
+    return !is(prevValue, nextValue);
+  } catch (error) {
+    return true;
+  }
+}
+
+// 使用阻塞模式渲染
+function forceStoreRerender(fiber: Fiber) {
+  const root = enqueueConcurrentRenderForLane(fiber, SyncLane);
+  if (root !== null) {
+    scheduleUpdateOnFiber(root, fiber, SyncLane, NoTimestamp);
+  }
+}
+~~~
+在 `subscribeToStore` 中，会进行一层判断：`checkIfSnapshotChanged` 函数，它会判断 `store` 是否发生变化，判断的依据也跟 `useEffect` 中的一致，通过 `is` 进行**浅比较**，如果发生了变化，则会执行 `forceStoreRerender` 方法，手动触发 `Sync` 阻塞渲染，处理优先级和挂载更新节点。
+
+简单点说，我们通过 `store` 的 `dispatch` 修改内容时，`store` 会遍历依赖列表，按照顺序依次执行回调函数。
+
+##### updateStoreInstance
+**updateStoreInstance**： 在 `commit` 阶段中，会统一处理 `render` 阶段的所有 `effect`，此时会再次检查 `store` 是否发生变化，防止 `store` 的状态不一致。
+~~~ts
+function updateStoreInstance<T>(
+  fiber: Fiber,
+  inst: StoreInstance<T>,
+  nextSnapshot: T,
+  getSnapshot: () => T,
+): void {
+  inst.value = nextSnapshot;
+  inst.getSnapshot = getSnapshot;
+
+  // 在 commit 阶段中，检查 store 是否发生变化
+  if (checkIfSnapshotChanged(inst)) {
+    // 触发同步阻塞渲染
+    forceStoreRerender(fiber);
+  }
+}
+~~~
+
+#### updateSyncExternalStore（更新阶段）
+~~~ts
+function updateSyncExternalStore<T>(
+  subscribe: (() => void) => () => void,
+  getSnapshot: () => T,
+  getServerSnapshot?: () => T,
+): T {
+  const fiber = currentlyRenderingFiber;
+  
+  // 获取更新的hooks
+  const hook = updateWorkInProgressHook();
+  
+  // 获取新的 store 状态
+  const nextSnapshot = getSnapshot();
+  const prevSnapshot = (currentHook || hook).memoizedState;
+  const snapshotChanged = !is(prevSnapshot, nextSnapshot);
+  if (snapshotChanged) {
+    hook.memoizedState = nextSnapshot;
+    markWorkInProgressReceivedUpdate();
+  }
+  const inst = hook.queue;
+
+  updateEffect(subscribeToStore.bind(null, fiber, inst, subscribe), [
+    subscribe,
+  ]);
+
+  if (
+    inst.getSnapshot !== getSnapshot ||
+    snapshotChanged ||
+    (workInProgressHook !== null &&
+      workInProgressHook.memoizedState.tag & HookHasEffect)
+  ) {
+    fiber.flags |= PassiveEffect;
+    pushEffect(
+      HookHasEffect | HookPassive,
+      updateStoreInstance.bind(null, fiber, inst, nextSnapshot, getSnapshot),
+      undefined,
+      null,
+    );
+
+    const root: FiberRoot | null = getWorkInProgressRoot();
+
+    if (!includesBlockingLane(root, renderLanes)) {
+      pushStoreConsistencyCheck(fiber, getSnapshot, nextSnapshot);
+    }
+  }
+
+  return nextSnapshot;
+}
+~~~
+可以看出 `updateSyncExternalStore` 和 `mountSyncExternalStore` 的步骤基本类似，来看看对应的流程：
+1. 获取更新的 `hooks` 对象、新的 `store` 状态，存储到 `memoizedState` 中；
+2. 通过 `updateEffect` 方法在节点更新后执行对应的 `subscribe` 方法。与 `useEffect` 的更新方法对应，只不过这里检查的并不是 `deps`，而是 `subscribe`。也就是说，如果 `subscribe` 不发生改变，则不会执行；
+3. 接下来操作与 `mountSyncExternalStore` 一致，在 `render` 阶段结束时，`commit` 阶段会分别对 `store` 进行一致性检查，防止 `store` 的状态不一致。
+
+### 实现 useSyncExternalStore
+实际上 `useSyncExternalStore` 的原理并没有那么难懂，从源码的角度来看，就是在渲染前后去检查 `store` 的值是否发生改变，如果发生改变，则更新值。你可以认为 `useSyncExternalStore` 就是 `useState`、`useEffect`、 `useLayoutEffect` 配合形成的。在 `React` 源码中也有对应的实现。
+
+文件位置：`packages/use-sync-external-store/src/useSyncExternalStoreShimClient.js`。
+~~~ts
+import { useState, useEffect, useLayoutEffect } from "react";
+
+const useSyncExternalStore = <T,>(
+  subscribe: any,
+  getSnapshot: () => T,
+  getServerSnapshot?: () => T
+) => {
+  const value = getSnapshot();
+  const [{ inst }, forceUpdate] = useState({ inst: { value, getSnapshot } });
+
+  // 同步执行
+  useLayoutEffect(() => {
+    inst.value = value;
+    inst.getSnapshot = getSnapshot;
+
+    if (checkIfSnapshotChanged(inst)) {
+      forceUpdate({ inst });
+    }
+  }, [subscribe, value, getSnapshot]);
+
+  // 异步执行
+  useEffect(() => {
+    if (checkIfSnapshotChanged(inst)) {
+      forceUpdate({ inst });
+    }
+    const handleStoreChange: any = () => {
+      if (checkIfSnapshotChanged(inst)) {
+        forceUpdate({ inst });
+      }
+    };
+    // 取消订阅
+    return subscribe(handleStoreChange);
+  }, [subscribe]);
+
+  return value;
+};
+
+// 检查 store 是否发生变化
+function checkIfSnapshotChanged<T>(inst: {
+  value: T;
+  getSnapshot: () => T;
+}): boolean {
+  const latestGetSnapshot = inst.getSnapshot;
+  const prevValue = inst.value;
+  try {
+    const nextValue = latestGetSnapshot();
+    // 对应 is 方法
+    return !Object.is(prevValue, nextValue);
+  } catch (error) {
+    return true;
+  }
+}
+
+export default useSyncExternalStore;
+~~~
+实现流程：
+- 首先，通过 `getSnapshot` 方法生成快照，并保存在 `value` 中；
+- 然后使用 `useState` 创建一个变量 `inst`，将 `value` 和 `getSnapshot` 作为初始化值；
+- 之后分别用 `useLayoutEffect` 和 `useEffect` 创建一个副作用，通过 `checkIfSnapshotChanged` 检查外部状态管理工具的状态快照是否发生变化，如果发生变化，则通过 `forceUpdate` 去更新状态；
+- 最后通过 `useDebugValue` 将 `value` 展示在 `React` 开发者工具中。
+
+这里将副作用分为 `useLayoutEffect` 和 `useEffect`，也就是分为同步、异步两种模式，这样可以更好地控制组件的生命周期，避免出现意外。
+::: tip
+上述代码与源码略有不同，感兴趣的可以自己尝试一下。
+
+此外，在 `SSR` 中，如果使用 `useSyncExternalStore`，必须定义 `getServerSnapshot`，否则会引发错误。
+
+如果在服务端渲染时不能提供一个初值，可以将组件转换成一个只在客户端渲染的组件，方法是在服务端渲染时抛出一个异常通过 `<Suspense>` 展示 `fallback` 的 `UI`（具体可参照：[useSyncExternalStore First Look](https://julesblom.com/writing/usesyncexternalstore)）。
+:::
+
+## 探究 useTransition 和 useDeferredValue
+在 `React v18` 中，引入了 `useTransition` 和 `useDeferredValue` 两个 `Hooks`，它们都是用来处理数据量大的数据，比如百度的搜索框、散点图等。
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/d772e19658374698b80f5e906a41f4da~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+我们先回顾一下什么是过渡更新任务和紧急更新任务？
+- 紧急更新任务：用户立马能够看到效果的任务，如输入框、按钮等操作，在视图上产生效果的任务。
+- 过渡更新任务：由其他因素引起的任务，导致无法在视图上看到效果的任务，如请求接口数据，需要一个 `loading...` 的状态。
+
+::: tip
+这里的任务只是针对单一状态，同一操作可能会有多种任务发生。
+:::
+为了更好的理解，我们先来看这样一个例子。
+
+假设我们有一个 `input` 输入框，这个输入框的值要维护一个很大列表（假设列表有 2w 条数据），比如说过滤、搜索等情况，这时有两种变化：
+- `input` 框内的变化；
+- 根据 `input` 的值，1w 条数据的变化。
+
+`input` 框内的变化是实时获取的，也就是受控的，此时的行为就是**紧急更新任务**。
+
+而这 2w 条数据的变化，就会有过滤、重新渲染的情况，此时这种行为被称为**过渡更新任务**。　
+
+了解完紧急更新任务和过渡更新任务后，正式来看看 `useTransition` 究竟是如何处理大数据的。
+
+### useTransition 的诞生
+在介绍并发的时候提及到 `useTransition` 内更新的事件会采取 `Concurrent` 模式，而 `Concurrent` 模式可以中断，让优先级高的任务先进行渲染，让用户有更好的体验。
+
+换言之，`useTransition` 是用于一些**不是很急迫的更新上**，同时解决并发渲染的问题而诞生的。
+::: tip
+值得注意的是：`useTransition` 一定是处理数据量大的数据。
+:::
+接下来我们模拟一下上述的场景，具体来看看效果。
+
+**模拟案例：**
+~~~tsx
+// utils 
+export const count = 20000; // 渲染次数
+
+import { useState } from "react";
+import { Input } from "antd";
+import { count } from "./utils";
+
+// 正常情况
+const Index: React.FC<any> = () => {
+  const [list, setList] = useState<string[]>([]);
+
+  return (
+    <>
+      <Input
+        onChange={(e) => {
+          const res: string[] = [];
+          for (let i = 0; i < count; i++) {
+            res.push(e.target.value);
+          }
+          setList(res);
+        }}
+      />
+      {list.map((item, index) => (
+        <div key={index}>{item}</div>
+      ))}
+    </>
+  );
+};
+
+export default Index;
+~~~
+在案例中，我们有一个输入框，输入内容时会在下方输出 2w 数据。
+
+在正常情况下，输入内容，页面会异常的卡顿，这种体验明显非常不好。
+
+在 `useTransition` 中，可以看出在输入数字时，`input` 框内会正常显示，而列表会滞后，同时 `useTransition` 提供 `isPending` 来处理更新是否完成。这种效果明显给用户带来了极好的体验。
+
+### 对比防抖、节流、定时器
+可能有小伙伴会问，这不就是防抖和节流嘛，为什么要多出一个 `useTransition` 呢？是不是有点多此一举？
+
+的确，在 `React v18` 之前，我们都用防抖、节流去解决，接下来我们先分别看下两种方式的效果。
+
+**防抖(Debouncing)**：指在一定时间内，多次触发同一个事件，只执行最后一次操作。
+
+**节流(Throttling)**：指在一定时间内，多次触发同一个事件，只执行第一次操作。
+
+我们知道，防抖和节流本质上都是定时器，`setTimeout` 效果跟节流的效果类似。但相比于正常情况下的效果要好一些。
+
+### useTransition 与定时器的异同
+我们先看看防抖、节流、`setTimeout` 存在的问题。
+- **防抖**：延迟 `React` 更新操作，换言之，快速长时间输入，列表依旧等不到响应，但列表得到响应后，渲染引擎依旧会出现阻塞，导致页面卡顿。
+- **节流**：节流在一段时间内开始处理，渲染引擎也会出现阻塞，页面会卡顿，而节流的时间需要手动配置。
+- **setTimeout**：`setTimeout` 也是同理，依旧会出现阻塞、卡顿，所以依然会阻止页面交互。
+
+我们知道，防抖和节流的本质都是**定时器**，虽然能在一定的程度上改善交互效果，但依旧不能解决卡顿或卡死的情况。因为 **React 的更新不可中断，导致 JS 引擎长时间占据浏览器的主线程，使得渲染引擎被长时间阻塞。**
+
+针对这个问题，`React v18` 推出 `useTransition` 来解决这个问题，那么它与定时器有何作用：
+1. 使用 `useTransition` 会触发 `Concurrent` 模式，所以渲染进程不会长时间被阻塞，使得其他操作得到及时响应，从而使用户体验得到了极大的提升；
+2. 其次，定时器的本质是**异步延时执行**，而 `useTransition` 属于**同步执行**，通过标记 `transition` 来决定是否完成此次更新。所以 `useTransition` 要比定时器更新得要早，整体的效果要好很多；
+3. 对于防抖、节流、`setTimeout` 来说，相当于合并渲染的次数，简单地说，就是控制了 `render` 的渲染次数，而 `useTransition` 并没有减少渲染的次数，这点要切记。
+
+::: tip
+问：减少 `render` 的渲染次数不是很好吗？为什么还要用 `useTransition` 呢？
+
+答：在上面的示例中，我们发现无论是防抖还是节流都会出现轻微卡顿的现象，但要特别注意，我们渲染的数据是写死的 2w 条，在真实的环境下，我们无法确定实际的数量。
+
+换言之，我们并不好控制防抖和节流的延时时间，如果时间过长，导致一种滞后的感觉，如果时间过短，就会出现卡顿的效果。
+
+而 `useTransition` 并不需要考虑这些因素，通过中断渲染，让浏览器在空闲时间下执行，达到更佳的效果。
+:::
+
+### useTransition 源码
+#### mountTransition（初始化）
+文件位置：`packages/react-reconciler/src/ReactFiberHooks.js`。
+~~~ts
+function mountTransition(): [
+  boolean,
+  (callback: () => void, options?: StartTransitionOptions) => void,
+] {
+  const [isPending, setPending] = mountState(false);
+  const start = startTransition.bind(null, setPending);
+  const hook = mountWorkInProgressHook();
+  hook.memoizedState = start;
+  return [isPending, start];
+}
+~~~
+在 `mountTransition` 中，首先由 `isPending` 来定义状态，然后会走 `startTransition` 方法，返回的 `start` 会保存在 `memoizedState` 中，那么我们一起看看 `startTransition` 做了哪些事。
+
+##### startTransition
+~~~ts
+function startTransition(
+  setPending: boolean => void,
+  callback: () => void,
+  options?: StartTransitionOptions,
+): void {
+
+  // 获取优先级
+  const previousPriority = getCurrentUpdatePriority();
+  
+  // 将当前任务重新设置优先级，并且等级要低于 ContinuousEventPriority
+  setCurrentUpdatePriority(
+    higherEventPriority(previousPriority, ContinuousEventPriority),
+  );
+
+  setPending(true);
+
+  // 标记一个过渡位
+  const prevTransition = ReactCurrentBatchConfig.transition;
+  ReactCurrentBatchConfig.transition = ({}: BatchConfigTransition);
+  const currentTransition = ReactCurrentBatchConfig.transition;
+
+  if (enableTransitionTracing) {
+    if (options !== undefined && options.name !== undefined) {
+      ReactCurrentBatchConfig.transition.name = options.name;
+      ReactCurrentBatchConfig.transition.startTime = now();
+    }
+  }
+
+ 
+  try {
+    setPending(false);
+    callback();
+  } finally {
+    setCurrentUpdatePriority(previousPriority);
+    ReactCurrentBatchConfig.transition = prevTransition;
+
+  }
+}
+
+// higherEventPriority
+export function higherEventPriority(
+  a: EventPriority,
+  b: EventPriority,
+): EventPriority {
+  return a !== 0 && a < b ? a : b;
+}
+~~~
+在 `startTransition` 中的流程为：
+1. 首先通过 `getCurrentUpdatePriority` 获取优先级，通过 `higherEventPriority` 方法重新给 `ContinuousEventPriority`（连续事件优先级）设置优先级，如果该任务的优先级低于 `ContinuousEventPriority`，则继续使用该任务的优先级。
+2. 之后通过 `setPending` 将 `isPending` 设置为 `true`， 然后会设置一个标记位，此时更新会**优先处理**。
+3. 然后再将 `isPending` 改为 `false`，并在 `callback` 中触发定义的更新，此过程会触发 `setPending`， 最终设置回原来的优先级。
+
+##### isPending 工作原理
+首先我们要知道，`mountTransition` 中用 `mountState` 定义的 `isPending` 就是 `useTransition` 中的第一个参数，也就是中间状态。
+
+但在 `startTransition` 中连续调用了三次 `setPending`，换言之，调用了三次 `useState`，而在实际的效果中，只触发了两次 `React` 更新呢？
+
+我们很容易想到，`useState` 具有批量更新的机制，但应该将三次触发更新合并成一次更新，为什么是两次呢？
+
+实际原因是：
+~~~ts
+ReactCurrentBatchConfig.transition = ({}: BatchConfigTransition);
+~~~
+将 `transition` 设置为空，使得前后逻辑中的上下文不一致，导致采用的模式不同，分别采用 `legacy`（同步阻塞）模式和 `concurrent`（并发）模式。 而后面的两次更新会触发批量更新，合并为一次。所以，一共会触发两次更新。
+
+#### updateTransition（更新）
+~~~ts
+function updateTransition(): [
+  boolean,
+  (callback: () => void, options?: StartTransitionOptions) => void,
+] {
+  const [isPending] = updateState(false);
+  const hook = updateWorkInProgressHook();
+  const start = hook.memoizedState;
+  return [isPending, start];
+}
+~~~
+可以看出，`useTransition` 在更新过程中并没有什么特殊的逻辑，只是调用 `updateState` 去更新 `isPending` 的状态。
+
+##### 对比 startTransition
+对比 `Hooks` 中的 `useTransition`，我们顺便看看类中的 `startTransition`，两者有何区别。
+
+在 `startTransition` 中，当用户连续输入时，会出现轻微的卡顿，可以看出 `startTransition` 并没有防抖的效果，具体原因下文介绍，我们先来看看对应的源码：
+
+文件位置：`packages/react/src/ReactStartTransition.js`。
+~~~ts
+export function startTransition(
+  scope: () => void,
+  options?: StartTransitionOptions,
+) {
+  const prevTransition = ReactCurrentBatchConfig.transition;
+  
+  // 设置状态
+  ReactCurrentBatchConfig.transition = ({}: BatchConfigTransition);
+
+  try {
+    // 执行更新
+    scope();
+  } finally {
+    // 恢复原来的状态
+    ReactCurrentBatchConfig.transition = prevTransition;
+  }
+}
+~~~
+在 `startTransition` 源码中，我们发现并没有 `isPending` 的逻辑，这是直接导致 `startTransition` 不具备防抖效果的原因。
+
+要知道，在 `Concurrent` 模式下，**低优先级更新会被高优先级中断，此时，低优先级更新已经开始的协调会被清除，并且会被重置为未开始的状态。**
+
+当被重置后，导致 `transition` 更新只有在用户停止输入（或超过 5s）时才会得到有效的处理。
+
+通过设置 `isPending` 为 `true` 时可以形成中断，形成类似防抖的作用；而 `startTransition` 本身并没有中断，连续的输入并不会重置 `transition` 更新，然后开始浏览器渲染过程，因此没有防抖的作用。
+
+通过源码的阅读，我们发现 `useTransition` 实际上是 `useState + startTransition` 的结合体，而 `isPending` 的状态通过 `ReactCurrentBatchConfig.transition` 的变化进行更新，以此来捕获过渡时间。
+
+### useDeferredValue
+当我们介绍完 `useTransition` 后，我们再一起看看它的“兄弟”：`useDeferredValue`。
+
+之所以称为“兄弟”，是因为这两个 `Hooks` 极为相似，有点类似于 `useMemo` 和 `useCallback` 的关系，`useTransition` 用来处理更新函数，而 `useDeferredValue` 用来处理数据本身。
+
+`useDeferredValue` 可以让**状态滞后派生**，推迟屏幕优先级不高的部分。
+
+#### 使用示例
+`useDeferredValue` 是趋向于值的维护，当我们存在批量查找的时候，它会是一个好帮手，举个例子：
+~~~tsx
+import { useState, useDeferredValue } from "react";
+import { Input } from "antd";
+
+const getList = (key: any) => {
+  const arr = [];
+  for (let i = 0; i < 20000; i++) {
+    if (String(i).includes(key)) {
+      arr.push(<li key={i}>{i}</li>);
+    }
+  }
+  return arr;
+};
+
+const Index: React.FC<any> = () => {
+  const [input, setInput] = useState("");
+  const deferredValue = useDeferredValue(input);
+
+  return (
+    <>
+      <div>寻找2w以内匹配的数据：</div>
+      <Input value={input} onChange={(e: any) => setInput(e.target.value)} />
+      <div>
+        <ul>{deferredValue ? getList(deferredValue) : null}</ul>
+      </div>
+    </>
+  );
+};
+
+export default Index;
+~~~
+我们通过 `useDeferredValue` 去维护 `Input` 中的值，从两万条数据中去查询包含的值，然后输出到列表中。
+
+了解完 `useDeferredValue` 的使用，再来看看它的源码，同样分为：`mountDeferredValue`（初始化）和 `updateDeferredValue`（更新）两个步骤。
+
+#### mountDeferredValue（初始化）
+文件位置：`packages/react-reconciler/src/ReactFiberHooks.js`。
+~~~ts
+function mountDeferredValue<T>(value: T): T {
+  const hook = mountWorkInProgressHook();
+  hook.memoizedState = value;
+  return value;
+}
+~~~
+`mountDeferredValue` 的功能很简单，只是进行了一个初始化 `hook`，将值保存在 `memoizedState` 中。
+
+#### updateDeferredValue（更新）
+~~~ts
+function updateDeferredValue<T>(value: T): T {
+  const hook = updateWorkInProgressHook();
+  const resolvedCurrentHook: Hook = (currentHook: any);
+  const prevValue: T = resolvedCurrentHook.memoizedState;
+  return updateDeferredValueImpl(hook, prevValue, value);
+}
+
+function updateDeferredValueImpl<T>(hook: Hook, prevValue: T, value: T): T {
+  const shouldDeferValue = !includesOnlyNonUrgentLanes(renderLanes); // 对比优先级
+  
+  if (shouldDeferValue) {
+    if (!is(value, prevValue)) {
+      // 设置优先级
+      currentlyRenderingFiber.lanes = mergeLanes(
+        currentlyRenderingFiber.lanes,
+        deferredLane,
+      );
+      markSkippedUpdateLanes(deferredLane);
+      hook.baseState = true;
+    }
+
+    return prevValue;
+  } else {
+    // 如果 baseState 存在，则会触发更新流程
+    if (hook.baseState) {
+      hook.baseState = false;
+      markWorkInProgressReceivedUpdate();
+    }
+
+    hook.memoizedState = value;
+    return value;
+  }
+}
+~~~
+在 `updateDeferredValue` 中，首先拿到上一次记录的值（`prevValue`），然后走向 `updateDeferredValueImpl` 函数。
+
+`updateDeferredValueImpl` 函数首先会对比优先级，如果优先级高于当前优先级，`shouldDeferValue` 则为 `true`，通过 is 去比较新值（`value`）与旧值（`prevValue`）是否相等，如果不相等，则更新优先级，并且将 `baseState` 设置为 `true`，用作后续是否更新视图的依据。
+
+此时，`baseState` 为 `true` 代表新值与旧值不同，则会触发 `markWorkInProgressReceivedUpdate()` 函数（与 `useState` 的 `updateReducer` 一致），触发更新渲染流程，最终返回最新值。
+
+### useTransition 与 useDeferredValue 的使用场景
+通过上面的源码，我们发现 `useTransition` 和 `useDeferredValue` 都是将包裹的任务标记成**过渡更新任务**。换言之，它们包裹的数据都属于**优先级比较低的**，所以在渲染的时候会有一定的滞后性，从而用更多的资源去渲染优先级更高的更新。
+
+同时，它们都适合**大数据**处理的优化，如案例中 2w 条数据的处理、百度输入框、散点图等，除此之外，一般的场景没有必要去使用这两个 `hooks`，因为它们本身会带来一定的性能损耗， 只有处理**数据量大的数据**时，才去考虑去使用它们。
+
+最后，对同一个资源优化时，只需要用它们两个的其中一个即可，因为它们优化的效果一致，如果两个都使用，肯定会带来一定的损耗，所以两者并不建议同时使用。
+
+::: tip
+问：既然 `useTransition` 与 `useDeferredValue` 这么相似，那我们如何更好地区分它们呢？
+
+答：能使用 `useTransition` 的时候就使用 `useTransition`，除非不能用 `useTransition`，才去考虑 `useDeferredValue`。
+
+因为 `useTransition` 用来处理函数，也就是说它可以一次性处理几个更新函数，并且在大多数场景下 `useTransition` 要比 `useDeferredValue` 的性能更好，所以这里更加推荐 `useTransition`。
+
+但我们使用一些三方库的时候，比如 `ahooks`，它的更新函数并没有直接暴露给我们，只返回对应的值给我们，这种情况下可使用 `useDeferredValue` 来做优化。
+:::
+
+
+
+
+
