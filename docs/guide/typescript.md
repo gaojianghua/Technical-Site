@@ -1046,7 +1046,7 @@ class Utils {
 - **D（依赖倒置原则）**：这是实现开闭原则的基础，它的核心思想即是**对功能的实现应该依赖于抽象层**，即不同的逻辑通过实现不同的抽象类。
 还是登录的例子，我们的登录提供方法应该基于共同的登录抽象类实现（`LoginHandler`），最终调用方法也基于这个抽象类，而不是在一个高阶登录方法中去依赖多个低阶登录提供方。
 
-## 探秘内置类型：any、unknown、never 与类型断言
+## any、unknown、never 与类型断言
 此前我们学习基础类型标注、字面量类型与枚举、函数与 `Class` 等概念时，实际上一直在用 `JavaScript` 的概念来进行映射，或者说这可以看作是 `JavaScript` 代码到 `TypeScript` 代码的第一步迁移。
 接下来让我们使用 `TypeScript` 提供的内置类型在类型世界里获得更好的编程体验。
 
@@ -1580,4 +1580,1766 @@ const foo: AnyTypeHere['linbudu'] = 'any value';
 ~~~
 
 #### 索引类型查询
+刚才我们已经提到了索引类型查询，也就是 keyof 操作符。严谨地说，它可以将对象中的所有键转换为对应字面量类型，然后再组合成联合类型。注意，**这里并不会将数字类型的键名转换为字符串类型字面量，而是仍然保持为数字类型字面量**。
+~~~ts
+interface Foo {
+  linbudu: 1,
+  599: 2
+}
+
+type FooKeys = keyof Foo; // "linbudu" | 599
+// 在 VS Code 中悬浮鼠标只能看到 'keyof Foo'
+// 看不到其中的实际值，你可以这么做：
+type FooKeys = keyof Foo & {}; // "linbudu" | 599
+~~~
+如果觉得不太好理解，我们可以写段伪代码来模拟 “**从键名到联合类型**” 的过程。
+~~~ts
+type FooKeys = Object.keys(Foo).join(" | ");
+~~~
+除了应用在已知的对象类型结构上以外，你还可以直接 `keyof any` 来生产一个联合类型，它会由所有可用作对象键值的类型组成：`string | number | symbol`。也就是说，它是由无数字面量类型组成的，由此我们可以知道， **keyof 的产物必定是一个联合类型。**
+
+#### 索引类型访问
+在 `JavaScript` 中我们可以通过 `obj[expression]` 的方式来动态访问一个对象属性（即计算属性），`expression` 表达式会先被执行，然后使用返回值来访问属性。而 `TypeScript` 中我们也可以通过类似的方式，只不过这里的 `expression` 要换成类型。接下来，我们来看个例子：
+~~~ts
+interface NumberRecord {
+  [key: string]: number;
+}
+
+type PropType = NumberRecord[string]; // number
+~~~
+这里，我们使用 `string` 这个类型来访问 `NumberRecord`。由于其内部声明了数字类型的索引签名，这里访问到的结果即是 `number` 类型。注意，其访问方式与返回值均是类型。
+
+更直观的例子是通过字面量类型来进行索引类型访问：
+~~~ts
+interface Foo {
+  propA: number;
+  propB: boolean;
+}
+
+type PropAType = Foo['propA']; // number
+type PropBType = Foo['propB']; // boolean
+~~~
+看起来这里就是普通的值访问，但实际上这里的`'propA'`和`'propB'`都是**字符串字面量类型**，**而不是一个 JavaScript 字符串值**。索引类型查询的本质其实就是，**通过键的字面量类型（'propA'）访问这个键对应的键值类型（number）**。
+
+看到这你肯定会想到，上面的 `keyof` 操作符能一次性获取这个对象所有的键的字面量类型，是否能用在这里？当然，这可是 `TypeScript` 啊。
+~~~ts
+interface Foo {
+  propA: number;
+  propB: boolean;
+  propC: string;
+}
+
+type PropTypeUnion = Foo[keyof Foo]; // string | number | boolean
+~~~
+使用字面量联合类型进行索引类型访问时，其结果就是将联合类型每个分支对应的类型进行访问后的结果，重新组装成联合类型。**索引类型查询、索引类型访问通常会和映射类型一起搭配使用**，前两者负责访问键，而映射类型在其基础上访问键值类型，我们在下面一个部分就会讲到。
+
+注意，在未声明索引签名类型的情况下，我们不能使用 `NumberRecord[string]` 这种原始类型的访问方式，而只能通过键名的字面量类型来进行访问。
+~~~ts
+interface Foo {
+  propA: number;
+}
+
+// 类型“Foo”没有匹配的类型“string”的索引签名。
+type PropAType = Foo[string]; 
+~~~
+索引类型的最佳拍档之一就是映射类型，同时映射类型也是类型编程中常用的一个手段。
+
+### 映射类型：类型编程的第一步
+不同于索引类型包含好几个部分，映射类型指的就是一个确切的类型工具。看到映射这个词你应该能联想到 JavaScript 中数组的 map 方法，实际上也是如此，映射类型的主要作用即是**基于键名映射到键值类型**。概念不好理解，我们直接来看例子：
+~~~ts
+type Stringify<T> = {
+  [K in keyof T]: string;
+};
+~~~
+这个工具类型会接受一个对象类型（假设我们只会这么用），使用 `keyof` 获得这个对象类型的键名组成字面量联合类型，然后通过映射类型（即这里的 `in` 关键字）将这个联合类型的每一个成员映射出来，并将其键值类型设置为 `string`。
+
+具体使用的表现是这样的：
+~~~ts
+interface Foo {
+  prop1: string;
+  prop2: number;
+  prop3: boolean;
+  prop4: () => void;
+}
+
+type StringifiedFoo = Stringify<Foo>;
+
+// 等价于
+interface StringifiedFoo {
+  prop1: string;
+  prop2: string;
+  prop3: string;
+  prop4: string;
+}
+~~~
+我们还是可以用伪代码的形式进行说明：
+~~~ts
+const StringifiedFoo = {};
+for (const k of Object.keys(Foo)){
+  StringifiedFoo[k] = string;
+}
+~~~
+看起来好像很奇怪，我们应该很少会需要把一个接口的所有属性类型映射到 `string`？这有什么意义吗？别忘了，既然拿到了键，那键值类型其实也能拿到：
+~~~ts
+type Clone<T> = {
+  [K in keyof T]: T[K];
+};
+~~~
+这里的`T[K]`其实就是上面说到的索引类型访问，我们使用键的字面量类型访问到了键值的类型，这里就相当于克隆了一个接口。需要注意的是，这里其实只有 `K in` 属于映射类型的语法，`keyof T` 属于 `keyof` 操作符，`[K in keyof T]`的`[]`属于索引签名类型，`T[K]`属于索引类型访问。
+
+### 总结
+以下这张表格概括了类型工具的实现方式与常见搭配：
+
+类型工具 | 创建新类型的方式 | 常见搭配
+-----|----------|-----
+类型别名（Type Alias） | 将一组类型/类型结构封装，作为一个新的类型 | 联合类型、映射类型
+工具类型（Tool Type） | 在类型别名的基础上，基于泛型去动态创建新类型 | 基本所有类型工具
+联合类型（Union Type） | 创建一组类型集合，满足其中一个类型即满足这个联合类型（||） | 类型别名、工具类型
+交叉类型（Intersection Type） | 创建一组类型集合，满足其中所有类型才满足映射联合类型（&&） | 类型别名、工具类型
+索引签名类型（Index Signature Type） | 声明一个拥有任意属性，键值类型一致的接口结构 | 映射类型
+索引类型查询（Indexed Type Query） | 从一个接口结构，创建一个由其键名字符串字面量组成的联合类型 | 映射类型
+索引类型访问（Indexed Access Type） | 从一个接口结构，使用键名字符串字面量访问到对应的键值类型 | 类型别名、映射类型
+映射类型 （Mapping Type） | 从一个联合类型依次映射到其内部的每一个类型 | 工具类型
+
+前面我们主要了解了类型别名、联合类型与交叉类型、索引类型与映射类型这几样类型工具。在大部分时候，这些类型工具的作用是**基于已有的类型去创建出新的类型**，即类型工具的重要作用之一。
+
+而除了类型的创建以外，**类型的安全保障**同样属于类型工具的能力之一，我们本节要介绍的就是两个主要用于类型安全的类型工具：**类型查询操作符与类型守卫**。
+
+### 类型查询操作符：熟悉又陌生的 typeof
+`TypeScript` 存在两种功能不同的 `typeof` 操作符。我们最常见的一种 `typeof` 操作符就是 `JavaScript` 中，用于检查变量类型的 `typeof` ，它会返回 `"string"` / `"number"` / `"object"` / `"undefined"` 等值。而除此以外， `TypeScript` 还新增了用于类型查询的 `typeof` ，即 `Type Query Operator`，这个 `typeof` 返回的是一个 `TypeScript` 类型：
+~~~ts
+const str = "linbudu";
+
+const obj = { name: "linbudu" };
+
+const nullVar = null;
+const undefinedVar = undefined;
+
+const func = (input: string) => {
+  return input.length > 10;
+}
+
+type Str = typeof str; // "linbudu"
+type Obj = typeof obj; // { name: string; }
+type Null = typeof nullVar; // null
+type Undefined = typeof undefined; // undefined
+type Func = typeof func; // (input: string) => boolean
+~~~
+你不仅可以直接在类型标注中使用 `typeof`，还能在工具类型中使用 `typeof`。
+~~~ts
+const func = (input: string) => {
+  return input.length > 10;
+}
+
+const func2: typeof func = (name: string) => {
+  return name === 'linbudu'
+}
+~~~
+这里我们暂时不用深入了解 `ReturnType` 这个工具类型，只需要知道它会返回一个函数类型中返回值位置的类型：
+~~~ts
+const func = (input: string) => {
+  return input.length > 10;
+}
+
+// boolean
+type FuncReturnType = ReturnType<typeof func>;
+~~~
+绝大部分情况下，`typeof` 返回的类型就是当你把鼠标悬浮在变量名上时出现的推导后的类型，并且是**最窄的推导程度（即到字面量类型的级别）**。你也不必担心混用了这两种 `typeof`，在逻辑代码中使用的 `typeof` 一定会是 `JavaScript` 中的 `typeof`，而类型代码（如类型标注、类型别名中等）中的一定是类型查询的 `typeof` 。同时，为了更好地避免这种情况，也就是隔离类型层和逻辑层，类型查询操作符后是不允许使用表达式的：
+~~~ts
+const isInputValid = (input: string) => {
+  return input.length > 10;
+}
+
+// 不允许表达式
+let isValid: typeof isInputValid("linbudu");
+~~~
+
+### 类型守卫
+`TypeScript` 中提供了非常强大的类型推导能力，它会随着你的代码逻辑不断尝试收窄类型，这一能力称之为**类型的控制流分析**（也可以简单理解为类型推导）。
+
+这么说有点抽象，我们可以想象有一条河流，它从上而下流过你的程序，随着代码的分支分出一条条支流，在最后重新合并为一条完整的河流。在河流流动的过程中，如果遇到了有特定条件才能进入的河道（比如 `if else` 语句、`switch case` 语句等），那河流流过这里就会收集对应的信息，等到最后合并时，它们就会嚷着交流：**“我刚刚流过了一个只有字符串类型才能进入的代码分支！” “我刚刚流过了一个只有函数类型才能进入的代码分支！”**……就这样，它会把整个程序的类型信息都收集完毕。
+~~~ts
+function foo (input: string | number) {
+  if(typeof input === 'string') {}
+  if(typeof input === 'number') {}
+  // ...
+}
+~~~
+我们在 `never` 类型一节中学到的也是如此。在类型控制流分析下，每流过一个 `if` 分支，后续联合类型的分支就少了一个，因为这个类型已经在这个分支处理过了，不会进入下一个分支：
+~~~ts
+declare const strOrNumOrBool: string | number | boolean;
+
+if (typeof strOrNumOrBool === "string") {
+  // 一定是字符串！
+  strOrNumOrBool.charAt(1);
+} else if (typeof strOrNumOrBool === "number") {
+  // 一定是数字！
+  strOrNumOrBool.toFixed();
+} else if (typeof strOrNumOrBool === "boolean") {
+  // 一定是布尔值！
+  strOrNumOrBool === true;
+} else {
+  // 要是走到这里就说明有问题！
+  const _exhaustiveCheck: never = strOrNumOrBool;
+  throw new Error(`Unknown input type: ${_exhaustiveCheck}`);
+}
+~~~
+在这里，我们实际上通过 `if` 条件中的表达式进行了类型保护，即告知了流过这里的分析程序每个 if 语句代码块中变量会是何类型。这即是编程语言的类型能力中最重要的一部分：**与实际逻辑紧密关联的类型**。我们从逻辑中进行类型地推导，再反过来让类型为逻辑保驾护航。
+
+前面我们说到，类型控制流分析就像一条河流一样流过，那 `if` 条件中的表达式要是现在被提取出来了怎么办？
+~~~ts
+function isString(input: unknown): boolean {
+  return typeof input === "string";
+}
+
+function foo(input: string | number) {
+  if (isString(input)) {
+    // 类型“string | number”上不存在属性“replace”。
+    (input).replace("linbudu", "linbudu599")
+  }
+  if (typeof input === 'number') { }
+  // ...
+}
+~~~
+奇怪的事情发生了，我们只是把逻辑提取到了外面而已，如果 `isString` 返回了 `true`，那 `input` 肯定也是 `string` 类型啊？
+
+想象类型控制流分析这条河流，刚流进 `if (isString(input))` 就戛然而止了。因为 `isString` 这个函数在另外一个地方，内部的判断逻辑并不在函数 `foo` 中。这里的类型控制流分析做不到跨函数上下文来进行类型的信息收集（但别的类型语言中可能是支持的）。
+
+实际上，将判断逻辑封装起来提取到函数外部进行复用非常常见。为了解决这一类型控制流分析的能力不足，`TypeScript` 引入了 **is 关键字**来显式地提供类型信息：
+~~~ts
+function isString(input: unknown): input is string {
+  return typeof input === "string";
+}
+
+function foo(input: string | number) {
+  if (isString(input)) {
+    // 正确了
+    (input).replace("linbudu", "linbudu599")
+  }
+  if (typeof input === 'number') { }
+  // ...
+}
+~~~
+`isString` 函数称为类型守卫，在它的返回值中，我们不再使用 `boolean` 作为类型标注，而是使用 `input is string` 这么个奇怪的搭配，拆开来看它是这样的：
+- `input` 函数的某个参数；
+- `is string`，即 **is 关键字 + 预期类型**，即如果这个函数成功返回为 `true`，那么 `is` 关键字前这个入参的类型，就会**被这个类型守卫调用方后续的类型控制流分析收集到**。
+
+需要注意的是，类型守卫函数中并不会对判断逻辑和实际类型的关联进行检查：
+~~~ts
+function isString(input: unknown): input is number {
+  return typeof input === "string";
+}
+
+function foo(input: string | number) {
+  if (isString(input)) {
+    // 报错，在这里变成了 number 类型
+    (input).replace("linbudu", "linbudu599")
+  }
+  if (typeof input === 'number') { }
+  // ...
+}
+~~~
+**从这个角度来看，其实类型守卫有些类似于类型断言，但类型守卫更宽容，也更信任你一些。你指定什么类型，它就是什么类型。** 除了使用简单的原始类型以外，我们还可以在类型守卫中使用对象类型、联合类型等，比如下面我开发时常用的两个守卫：
+~~~ts
+export type Falsy = false | "" | 0 | null | undefined;
+
+export const isFalsy = (val: unknown): val is Falsy => !val;
+
+// 不包括不常用的 symbol 和 bigint
+export type Primitive = string | number | boolean | undefined;
+
+export const isPrimitive = (val: unknown): val is Primitive => ['string', 'number', 'boolean' , 'undefined'].includes(typeof val);
+~~~
+除了使用 `typeof` 以外，我们还可以使用许多类似的方式来进行类型保护，只要它能够在联合类型的类型成员中起到筛选作用。
+
+### 基于 in 与 instanceof 的类型保护
+in [操作符](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/in) 并不是 `TypeScript` 中新增的概念，而是 `JavaScript` 中已有的部分，它可以通过 `key in object` 的方式来判断 `key` 是否存在于 `object` 或其原型链上（返回 `true` 说明存在）。
+
+既然能起到区分作用，那么 `TypeScript` 中自然也可以用它来保护类型：
+~~~ts
+interface Foo {
+  foo: string;
+  fooOnly: boolean;
+  shared: number;
+}
+
+interface Bar {
+  bar: string;
+  barOnly: boolean;
+  shared: number;
+}
+
+function handle(input: Foo | Bar) {
+  if ('foo' in input) {
+    input.fooOnly;
+  } else {
+    input.barOnly;
+  }
+}
+~~~
+这里的 `foo` / `bar`、`fooOnly` / `barOnly`、`shared` 属性们其实有着不同的意义。我们使用 `foo` 和 `bar` 来区分 `input` 联合类型，然后就可以在对应的分支代码块中正确访问到 `Foo` 和 `Bar` 独有的类型 `fooOnly` / `barOnly`。但是，如果用 `shared` 来区分，就会发现在分支代码块中 `input` 仍然是初始的联合类型：
+~~~ts
+function handle(input: Foo | Bar) {
+  if ('shared' in input) {
+    // 类型“Foo | Bar”上不存在属性“fooOnly”。类型“Bar”上不存在属性“fooOnly”。
+    input.fooOnly;
+  } else {
+    // 类型“never”上不存在属性“barOnly”。
+    input.barOnly;
+  }
+}
+~~~
+这里需要注意的是，`Foo` 与 `Bar` 都满足 `'shared' in input` 这个条件。因此在 `if` 分支中， `Foo` 与 `Bar` 都会被保留，那在 `else` 分支中就只剩下 `never` 类型。
+
+这个时候肯定有人想问，为什么 `shared` 不能用来区分？答案很明显，因为它同时存在两个类型中不具有辨识度。而 `foo` / `bar` 和 `fooOnly` / `barOnly` 是各个类型独有的属性，因此可以作为**可辨识属性**（`Discriminant Property` 或 `Tagged Property`）。`Foo` 与 `Bar` 又因为存在这样具有区分能力的辨识属性，可以称为**可辨识联合类型**（`Discriminated Unions` 或 `Tagged Union`）。虽然它们是一堆类型的联合体，但其中每一个类型都具有一个独一无二的，能让它鹤立鸡群的属性。
+
+这个可辨识属性可以是结构层面的，比如结构 `A` 的属性 `prop` 是数组，而结构 `B` 的属性 `prop` 是对象，或者结构 `A` 中存在属性 `prop` 而结构 `B` 中不存在。
+
+它甚至可以是共同属性的字面量类型差异：
+~~~ts
+function ensureArray(input: number | number[]): number[] {
+  if (Array.isArray(input)) {
+    return input;
+  } else {
+    return [input];
+  }
+}
+
+interface Foo {
+  kind: 'foo';
+  diffType: string;
+  fooOnly: boolean;
+  shared: number;
+}
+
+interface Bar {
+  kind: 'bar';
+  diffType: number;
+  barOnly: boolean;
+  shared: number;
+}
+
+function handle1(input: Foo | Bar) {
+  if (input.kind === 'foo') {
+    input.fooOnly;
+  } else {
+    input.barOnly;
+  }
+}
+~~~
+如上例所示，对于同名但不同类型的属性，我们需要使用字面量类型的区分，并不能使用简单的 `typeof`：
+~~~ts
+function handle2(input: Foo | Bar) {
+  // 报错，并没有起到区分的作用，在两个代码块中都是 Foo | Bar
+  if (typeof input.diffType === 'string') {
+    input.fooOnly;
+  } else {
+    input.barOnly;
+  }
+}
+~~~
+除此之外，`JavaScript` 中还存在一个功能类似于 `typeof` 与 `in` 的操作符：[instanceof](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/instanceof)，它判断的是原型级别的关系，如 `foo instanceof Base` 会沿着 `foo` 的原型链查找 `Base.prototype` 是否存在其上。当然，在 `ES6` 已经无处不在的今天，我们也可以简单地认为这是判断 `foo` 是否是 `Base` 类的实例。同样的，`instanceof` 也可以用来进行类型保护：
+~~~ts
+class FooBase {}
+
+class BarBase {}
+
+class Foo extends FooBase {
+  fooOnly() {}
+}
+class Bar extends BarBase {
+  barOnly() {}
+}
+
+function handle(input: Foo | Bar) {
+  if (input instanceof FooBase) {
+    input.fooOnly();
+  } else {
+    input.barOnly();
+  }
+}
+~~~
+除了使用 `is` 关键字的类型守卫以外，其实还存在使用 `asserts` 关键字的类型断言守卫。
+
+### 类型断言守卫
+如果你写过测试用例或者使用过 `NodeJs` 的 `assert` 模块，那对断言这个概念应该不陌生：
+~~~ts
+import assert from 'assert';
+
+let name: any = 'linbudu';
+
+assert(typeof name === 'number');
+
+// number 类型
+name.toFixed();
+~~~
+上面这段代码在运行时会抛出一个错误，因为 `assert` 接收到的表达式执行结果为 `false`。这其实也类似类型守卫的场景：如果断言不成立，比如在这里意味着值的类型不为 `number`，那么在断言下方的代码就执行不到（相当于 `Dead Code`）。如果断言通过了，不管你最开始是什么类型，断言后的代码中就一定是符合断言的类型，比如在这里就是 `number`。
+
+但断言守卫和类型守卫最大的不同点在于，在判断条件不通过时，断言守卫需要抛出一个错误，类型守卫只需要剔除掉预期的类型。 这里的抛出错误可能让你想到了 `never` 类型，但实际情况要更复杂一些，断言守卫并不会始终都抛出错误，所以它的返回值类型并不能简单地使用 `never` 类型。为此，`TypeScript 3.7` 版本专门引入了 `asserts` 关键字来进行断言场景下的类型守卫，比如前面 `assert` 方法的签名可以是这样的：
+~~~ts
+function assert(condition: any, msg?: string): asserts condition {
+  if (!condition) {
+    throw new Error(msg);
+  }
+}
+~~~
+这里使用的是 `asserts condition` ，而 `condition` 来自于实际逻辑！这也意味着，我们**将 `condition` 这一逻辑层面的代码，作为了类型层面的判断依据**，相当于在返回值类型中使用一个逻辑表达式进行了类型标注。
+
+举例来说，对于 `assert(typeof name === 'number')`; 这么一个断言，如果函数成功返回，就说明其后续的代码中 `condition` 均成立，也就是 `name` 神奇地变成了一个 `number` 类型。
+
+这里的 `condition` 甚至还可以结合使用 `is` 关键字来提供进一步的类型守卫能力：
+~~~ts
+let name: any = 'linbudu';
+
+function assertIsNumber(val: any): asserts val is number {
+  if (typeof val !== 'number') {
+    throw new Error('Not a number!');
+  }
+}
+
+assertIsNumber(name);
+
+// number 类型！
+name.toFixed();
+~~~
+在这种情况下，你无需再为断言守卫传入一个表达式，而是可以将这个判断用的表达式放进断言守卫的内部，来获得更独立地代码逻辑。
+
+### 接口的合并
+在交叉类型一节中，你可能会注意到，接口和类型别名都能直接使用交叉类型。但除此以外，接口还能够使用继承进行合并，在继承时子接口可以声明同名属性，但并不能覆盖掉父接口中的此属性。**子接口中的属性类型需要能够兼容（extends）父接口中的属性类型**：
+~~~ts
+interface Struct1 {
+  primitiveProp: string;
+  objectProp: {
+    name: string;
+  };
+  unionProp: string | number;
+}
+
+// 接口“Struct2”错误扩展接口“Struct1”。
+interface Struct2 extends Struct1 {
+  // “primitiveProp”的类型不兼容。不能将类型“number”分配给类型“string”。
+  primitiveProp: number;
+  // 属性“objectProp”的类型不兼容。
+  objectProp: {
+    age: number;
+  };
+  // 属性“unionProp”的类型不兼容。
+  // 不能将类型“boolean”分配给类型“string | number”。
+  unionProp: boolean;
+}
+~~~
+类似的，如果你直接声明多个同名接口，虽然接口会进行合并，但这些同名属性的类型仍然需要兼容，此时的表现其实和显式扩展接口基本一致：
+~~~ts
+interface Struct1 {
+  primitiveProp: string;
+}
+
+interface Struct1 {
+// 后续属性声明必须属于同一类型。
+// 属性“primitiveProp”的类型必须为“string”，但此处却为类型“number”。
+  primitiveProp: number;
+}
+~~~
+这也是接口和类型别名的重要差异之一。
+
+那么接口和类型别名之间的合并呢？其实规则一致，如接口**继承**类型别名，和类型别名使用交叉类型**合并**接口：
+~~~ts
+type Base = {
+  name: string;
+};
+
+interface IDerived extends Base {
+  // 报错！就像继承接口一样需要类型兼容
+  name: number;
+  age: number;
+}
+
+interface IBase {
+  name: string;
+}
+
+// 合并后的 name 同样是 never 类型
+type Derived = IBase & {
+  name: number;
+};
+~~~
+
+### 更强大的可辨识联合类型分析
+类型控制流分析其实是一直在不断增强的，在 4.5、4.6、4.7 版本中都有或多或少的场景增强。而这里说的增强，其实就包括了**对可辨识联合类型的分析能力**。比如下面这个例子在此前（4.6 版本以前）的 `TypeScript` 代码中会报错：
+~~~ts
+type Args = ['a', number] | ['b', string];
+
+type Func = (...args: ["a", number] | ["b", string]) => void;
+
+const f1: Func = (kind, payload) => {
+  if (kind === "a") {
+    // 仍然是 string | number
+    payload.toFixed();
+  }
+  if (kind === "b") {
+    // 仍然是 string | number
+    payload.toUpperCase();
+  }
+};
+~~~
+而在 4.6 版本中则对这一情况下的 **联合类型辨识（即元组）** 做了支持。
+
+如果你有兴趣了解 `TypeScript` 中的类型控制流分析以及更多可辨识联合类型的场景，可以阅读：[TypeScript 中的类型控制流分析演进](https://zhuanlan.zhihu.com/p/461842201)。
+
+## 无处不在的泛型
+在类型工具学习中，我们已经接触过类型别名中的泛型，比如类型别名如果声明了泛型坑位，那其实就等价于一个接受参数的函数：
+~~~ts
+type Factory<T> = T | number | string;
+~~~
+上面这个类型别名的本质就是一个函数，`T` 就是它的变量，返回值则是一个包含 `T` 的联合类型，我们可以写段伪代码来加深一下记忆：
+~~~ts
+function Factory(typeArg){
+  return [typeArg, number, string]
+}
+~~~
+类型别名中的泛型大多是用来进行工具类型封装，比如我们在上一节的映射类型中学习的工具类型：
+~~~ts
+type Stringify<T> = {
+  [K in keyof T]: string;
+};
+
+type Clone<T> = {
+  [K in keyof T]: T[K];
+};
+~~~
+`Stringify` 会将一个对象类型的所有属性类型置为 `string` ，而 `Clone` 则会进行类型的完全复制。我们可以提前看一个 `TypeScript` 的内置工具类型实现：
+~~~ts
+type Partial<T> = {
+    [P in keyof T]?: T[P];
+};
+~~~
+工具类型 `Partial` 会将传入的对象类型复制一份，但会额外添加一个`?`，还记得这代表什么吗？可选，也就是说现在我们获得了一个属性均为可选的山寨版：
+~~~ts
+interface IFoo {
+  prop1: string;
+  prop2: number;
+  prop3: boolean;
+  prop4: () => void;
+}
+
+type PartialIFoo = Partial<IFoo>;
+
+// 等价于
+interface PartialIFoo {
+  prop1?: string;
+  prop2?: number;
+  prop3?: boolean;
+  prop4?: () => void;
+}
+~~~
+类型别名与泛型的结合中，除了映射类型、索引类型等类型工具以外，还有一个非常重要的工具：条件类型。我们先来简单了解一下：
+~~~ts
+type IsEqual<T> = T extends true ? 1 : 2;
+
+type A = IsEqual<true>; // 1
+type B = IsEqual<false>; // 2
+type C = IsEqual<'linbudu'>; // 2
+~~~
+在条件类型参与的情况下，通常泛型会被作为条件类型中的判断条件（`T extends Condition`，或者 `Type extends T`）以及返回值（即 `:` 两端的值），这也是我们筛选类型需要依赖的能力之一。
+
+### 泛型约束与默认值
+像函数可以声明一个参数的默认值一样，泛型同样有着默认值的设定，比如：
+~~~ts
+type Factory<T = boolean> = T | number | string;
+~~~
+这样在你调用时就可以不带任何参数了，默认会使用我们声明的默认值来填充。
+~~~ts
+const foo: Factory = false;
+~~~
+再看个伪代码帮助理解：
+~~~ts
+function Factory(typeArg = boolean){
+  return [typeArg, number, string]
+}
+~~~
+除了声明默认值以外，泛型还能做到一样函数参数做不到的事：泛型约束。也就是说，你可以要求传入这个工具类型的泛型必须符合某些条件，否则你就拒绝进行后面的逻辑。在函数中，我们只能在逻辑中处理：
+~~~ts
+function add(source: number, add: number){
+  if(typeof source !== 'number' || typeof add !== 'number'){
+    throw new Error("Invalid arguments!")
+  }
+  
+  return source + add;
+}
+~~~
+而在泛型中，我们可以使用 `extends` 关键字来约束传入的泛型参数必须符合要求。关于 `extends`，`A extends B` 意味着 **A 是 B 的子类型**，这里我们暂时只需要了解非常简单的判断逻辑，也就是说 `A` 比 `B` 的类型更精确，或者说更复杂。具体来说，可以分为以下几类。
+- 更精确，如**字面量类型是对应原始类型的子类型**，即 `'linbudu' extends string`，`599 extends number` 成立。类似的，**联合类型子集均为联合类型的子类型**，即 `1`、 `1 | 2` 是 `1 | 2 | 3 | 4` 的子类型。
+- 更复杂，如 `{ name: string }` 是 `{}` 的子类型，因为在 `{}` 的基础上增加了额外的类型，基类与派生类（父类与子类）同理。
+
+我们来看下面这个例子：
+~~~ts
+type ResStatus<ResCode extends number> = ResCode extends 10000 | 10001 | 10002
+  ? 'success'
+  : 'failure';
+~~~
+这个例子会根据传入的请求码判断请求是否成功，这意味着它只能处理数字字面量类型的参数，因此这里我们通过 `extends number` 来标明其类型约束，如果传入一个不合法的值，就会出现类型错误：
+~~~ts
+type ResStatus<ResCode extends number> = ResCode extends 10000 | 10001 | 10002
+  ? 'success'
+  : 'failure';
+
+
+type Res1 = ResStatus<10000>; // "success"
+type Res2 = ResStatus<20000>; // "failure"
+
+type Res3 = ResStatus<'10000'>; // 类型“string”不满足约束“number”。
+~~~
+与此同时，如果我们想让这个类型别名可以无需显式传入泛型参数也能调用，并且默认情况下是成功地，这样就可以为这个泛型参数声明一个默认值：
+~~~ts
+type ResStatus<ResCode extends number = 10000> = ResCode extends 10000 | 10001 | 10002
+  ? 'success'
+  : 'failure';
+
+type Res4 = ResStatus; // "success"
+~~~
+在 `TypeScript` 中，泛型参数存在默认约束（在下面的函数泛型、`Class` 泛型中也是）。这个默认约束值在 `TS 3.9` 版本以前是 `any`，而在 `3.9` 版本以后则为 `unknown`。在 `TypeScript ESLint` 中，你可以使用 [no-unnecessary-type-constraint](https://github.com/typescript-eslint/typescript-eslint/blob/main/packages/eslint-plugin/docs/rules/no-unnecessary-type-constraint.md) 规则，来避免代码中声明了与默认约束相同的泛型约束。
+
+### 多泛型关联
+我们不仅可以同时传入多个泛型参数，还可以让这几个泛型参数之间也存在联系。我们可以先看一个简单的场景，条件类型下的多泛型参数：
+~~~ts
+type Conditional<Type, Condition, TruthyResult, FalsyResult> =
+  Type extends Condition ? TruthyResult : FalsyResult;
+
+//  "passed!"
+type Result1 = Conditional<'linbudu', string, 'passed!', 'rejected!'>;
+
+// "rejected!"
+type Result2 = Conditional<'linbudu', boolean, 'passed!', 'rejected!'>;
+~~~
+这个例子表明，**多泛型参数其实就像接受更多参数的函数，其内部的运行逻辑（类型操作）会更加抽象，表现在参数（泛型参数）需要进行的逻辑运算（类型操作）会更加复杂**。
+
+上面我们说，多个泛型参数之间的依赖，其实指的即是在后续泛型参数中，使用前面的泛型参数作为约束或默认值：
+~~~ts
+type ProcessInput<
+  Input,
+  SecondInput extends Input = Input,
+  ThirdInput extends Input = SecondInput
+> = number;
+~~~
+这里的内部类型操作并不是重点，我们直接忽略即可。从这个类型别名中你能获得哪些信息？
+- 这个工具类型接受 1-3 个泛型参数。
+- 第二、三个泛型参数的类型需要是**首个泛型参数**的子类型。
+- 当只传入一个泛型参数时，其第二个泛型参数会被赋值为此参数，而第三个则会赋值为第二个泛型参数，相当于**均使用了这唯一传入的泛型参数**。
+- 当传入两个泛型参数时，第三个泛型参数**会默认赋值为第二个泛型参数的值**。
+
+多泛型关联在一些复杂的工具类型中非常常见，我们会在后续的内置类型讲解、内置类型进阶等章节中再实战，这里先了解即可。
+
+### 对象类型中的泛型
+由于泛型提供了对类型结构的复用能力，我们也经常在对象类型结构中使用泛型。最常见的一个例子应该还是响应类型结构的泛型处理：
+~~~ts
+interface IRes<TData = unknown> {
+  code: number;
+  error?: string;
+  data: TData;
+}
+~~~
+这个接口描述了一个通用的响应类型结构，预留出了实际响应数据的泛型坑位，然后在你的请求函数中就可以传入特定的响应类型了：
+~~~ts
+interface IUserProfileRes {
+  name: string;
+  homepage: string;
+  avatar: string;
+}
+
+function fetchUserProfile(): Promise<IRes<IUserProfileRes>> {}
+
+type StatusSucceed = boolean;
+function handleOperation(): Promise<IRes<StatusSucceed>> {}
+~~~
+而泛型嵌套的场景也非常常用，比如对存在分页结构的数据，我们也可以将其分页的响应结构抽离出来：
+~~~ts
+interface IPaginationRes<TItem = unknown> {
+  data: TItem[];
+  page: number;
+  totalCount: number;
+  hasNextPage: boolean;
+}
+
+function fetchUserProfileList(): Promise<IRes<IPaginationRes<IUserProfileRes>>> {}
+~~~
+这些结构看起来很复杂，但其实就是**简单的泛型参数填充**而已。就像我们会封装请求库、请求响应拦截器一样，对请求中的参数、响应中的数据的类型的封装其实也不应该落下。甚至在理想情况下，这些结构体封装应该在请求库封装一层中就被处理掉。
+
+直到目前为止，我们了解的泛型似乎就是一个类型别名的参数，它需要手动传入，可以设置类型层面约束和默认值，看起来似乎没有特别神奇的地方？
+
+接下来，我们要来看看泛型的另一面，也是你实际上会打交道最频繁的一面：**类型的自动提取**。
+
+### 函数中的泛型
+假设我们有这么一个函数，它可以接受多个类型的参数并进行对应处理，比如：
+- 对于字符串，返回部分截取；
+- 对于数字，返回它的 n 倍；
+- 对于对象，修改它的属性并返回。
+
+这个时候，我们要如何对函数进行类型声明？是 any 大法好？
+~~~ts
+function handle(input: any): any {}
+~~~
+还是用联合类型来包括所有可能类型？
+~~~ts
+function handle(input: string | number | {}): string | number | {} {}
+~~~
+第一种我们肯定要直接 `pass`，第二种虽然麻烦了一点，但似乎可以满足需要？但如果我们真的调用一下就知道不合适了。
+~~~ts
+const shouldBeString = handle("linbudu");
+const shouldBeNumber = handle(599);
+const shouldBeObject = handle({ name: "linbudu" });
+~~~
+虽然我们约束了入参的类型，但返回值的类型并没有像我们预期的那样和入参关联起来，上面三个调用结果的类型仍然是一个宽泛的联合类型 `string | number | {}`。难道要用重载一个个声明可能的关联关系？
+~~~ts
+function handle(input: string): string
+function handle(input: number): number
+function handle(input: {}): {}
+function handle(input: string | number | {}): string | number | {} { }
+~~~
+天，如果再多一些复杂的情况，别说你愿不愿意补充每一种关联了，同事看到这样的代码都会质疑你的水平。这个时候，我们就该请出泛型了：
+~~~ts
+function handle<T>(input: T): T {}
+~~~
+我们为函数声明了一个泛型参数 T，并将参数的类型与返回值类型指向这个泛型参数。这样，在这个函数接收到参数时，**T 会自动地被填充为这个参数的类型**。这也就意味着你不再需要预先确定参数的可能类型了，而**在返回值与参数类型关联的情况下，也可以通过泛型参数来进行运算**。
+
+在基于参数类型进行填充泛型时，其类型信息会被推断到尽可能精确的程度，如这里会**推导到字面量类型而不是基础类型**。这是因为在直接传入一个值时，这个值是不会再被修改的，因此可以推导到最精确的程度。而如果你使用一个变量作为参数，那么只会使用这个变量标注的类型（在没有标注时，会使用推导出的类型）。
+~~~ts
+function handle<T>(input: T): T {}
+
+const author = "linbudu"; // 使用 const 声明，被推导为 "linbudu"
+
+let authorAge = 18; // 使用 let 声明，被推导为 number
+
+handle(author); // 填充为字面量类型 "linbudu"
+handle(authorAge); // 填充为基础类型 number
+~~~
+你也可以将鼠标悬浮在表达式上，来查看填充的泛型信息：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/c0ee934c84ce4e8ab600bb47c22d29d5~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+再看一个例子：
+~~~ts
+function swap<T, U>([start, end]: [T, U]): [U, T] {
+  return [end, start];
+}
+
+const swapped1 = swap(["linbudu", 599]);
+const swapped2 = swap([null, 599]);
+const swapped3 = swap([{ name: "linbudu" }, {}]);
+~~~
+在这里返回值类型对泛型参数进行了一些操作，而同样你可以看到其调用信息符合预期：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/251765b69571411eb607680aff6f7c5a~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+函数中的泛型同样存在约束与默认值，比如上面的 `handle` 函数，现在我们希望做一些代码拆分，不再处理对象类型的情况了：
+~~~ts
+function handle<T extends string | number>(input: T): T {}
+~~~
+而 `swap` 函数，现在我们只想处理数字元组的情况：
+~~~ts
+function swap<T extends number, U extends number>([start, end]: [T, U]): [U, T] {
+  return [end, start];
+}
+~~~
+而多泛型关联也是如此，比如 `lodash` 的 `pick` 函数，这个函数首先接受一个对象，然后接受一个对象属性名组成的数组，并从这个对象中截取选择的属性部分：
+~~~ts
+const object = { 'a': 1, 'b': '2', 'c': 3 };
+
+_.pick(object, ['a', 'c']);
+// => { 'a': 1, 'c': 3 }
+~~~
+这个函数很明显需要在泛型层面声明关联，即数组中的元素只能来自于对象的属性名（组成的字面量联合类型！），因此我们可以这么写（部分简化）：
+~~~ts
+pick<T extends object, U extends keyof T>(object: T, ...props: Array<U>): Pick<T, U>;
+~~~
+这里 `T` 声明约束为对象类型，而 `U` 声明约束为 `keyof T`。同时对应的，其返回值类型中使用了 `Pick<T, U>` 这一工具类型，它与 `pick` 函数的作用一致，对一个对象结构进行裁剪，我们会在后面内置工具类型一节讲到。
+
+函数的泛型参数也会被内部的逻辑消费，如：
+~~~ts
+function handle<T>(payload: T): Promise<[T]> {
+  return new Promise<[T]>((res, rej) => {
+    res([payload]);
+  });
+}
+~~~
+对于箭头函数的泛型，其书写方式是这样的：
+~~~ts
+const handle = <T>(input: T): T => {}
+~~~
+需要注意的是在 `tsx` 文件中泛型的尖括号可能会造成报错，编译器无法识别这是一个组件还是一个泛型，此时你可以让它长得更像泛型一些：
+~~~ts
+const handle = <T extends any>(input: T): T => {}
+~~~
+函数的泛型是日常使用较多的一部分，更明显地体现了**泛型在调用时被填充**这一特性，而类型别名中，我们更多是手动传入泛型。这一差异的缘由其实就是它们的场景不同，我们通常使用类型别名来**对已经确定的类型结构进行类型操作**，比如将一组确定的类型放置在一起。而在函数这种场景中，我们并不能确定泛型在实际运行时会被什么样的类型填充。
+
+需要注意的是，不要为了用泛型而用泛型，就像这样：
+~~~ts
+function handle<T>(arg: T): void {
+  console.log(arg);
+};
+~~~
+在这个函数中，泛型参数 `T` **没有被返回值消费，也没有被内部的逻辑消费**，这种情况下即使随着调用填充了泛型参数，也是没有意义的。因此这里你就完全可以用 `any` 来进行类型标注。
+
+### Class 中的泛型
+`Class` 中的泛型和函数中的泛型非常类似，只不过函数中泛型参数的消费方是参数和返回值类型，`Class` 中的泛型消费方则是属性、方法、乃至装饰器等。同时 `Class` 内的方法还可以再声明自己独有的泛型参数。我们直接来看完整的示例：
+~~~ts
+class Queue<TElementType> {
+  private _list: TElementType[];
+
+  constructor(initial: TElementType[]) {
+    this._list = initial;
+  }
+
+  // 入队一个队列泛型子类型的元素
+  enqueue<TType extends TElementType>(ele: TType): TElementType[] {
+    this._list.push(ele);
+    return this._list;
+  }
+
+  // 入队一个任意类型元素（无需为队列泛型子类型）
+  enqueueWithUnknownType<TType>(element: TType): (TElementType | TType)[] {
+    return [...this._list, element];
+  }
+
+  // 出队
+  dequeue(): TElementType[] {
+    this._list.shift();
+    return this._list;
+  }
+}
+~~~
+其中，`enqueue` 方法的入参类型 `TType` 被约束为队列类型的子类型，而 `enqueueWithUnknownType` 方法中的 `TType` 类型参数则不会受此约束，它会在其被调用时再对应地填充，同时也会在返回值类型中被使用。
+
+### 内置方法中的泛型
+`TypeScript` 中为非常多的内置对象都预留了泛型坑位，如 `Promise` 中
+~~~ts
+function p() {
+  return new Promise<boolean>((resolve, reject) => {
+    resolve(true);
+  });
+}
+~~~
+在你填充 `Promise` 的泛型以后，其内部的 `resolve` 方法也自动填充了泛型，而在 `TypeScript` 内部的 `Promise` 类型声明中同样是通过泛型实现：
+~~~ts
+interface PromiseConstructor {
+    resolve<T>(value: T | PromiseLike<T>): Promise<T>;
+}
+
+declare var Promise: PromiseConstructor;
+~~~
+还有数组 `Array<T>` 当中，其泛型参数代表数组的元素类型，几乎贯穿所有的数组方法：
+~~~ts
+const arr: Array<number> = [1, 2, 3];
+
+// 类型“string”的参数不能赋给类型“number”的参数。
+arr.push('linbudu');
+// 类型“string”的参数不能赋给类型“number”的参数。
+arr.includes('linbudu');
+
+// number | undefined
+arr.find(() => false);
+
+// 第一种 reduce
+arr.reduce((prev, curr, idx, arr) => {
+  return prev;
+}, 1);
+
+// 第二种 reduce
+// 报错：不能将 number 类型的值赋值给 never 类型
+arr.reduce((prev, curr, idx, arr) => {
+  return [...prev, curr]
+}, []);
+~~~
+`reduce` 方法是相对特殊的一个，它的类型声明存在几种不同的重载：
+- 当你不传入初始值时，泛型参数会从数组的元素类型中进行填充。
+- 当你传入初始值时，如果初始值的类型与数组元素类型一致，则使用数组的元素类型进行填充。即这里第一个 `reduce` 调用。
+- 当你传入一个数组类型的初始值，比如这里的第二个 `reduce` 调用，`reduce` 的泛型参数会默认从这个初始值推导出的类型进行填充，如这里是 `never[]`。
+
+其中第三种情况也就意味着**信息不足，无法推导出正确的类型**，我们可以手动传入泛型参数来解决：
+~~~ts
+arr.reduce<number[]>((prev, curr, idx, arr) => {
+  return prev;
+}, []);
+~~~
+在 `React` 中，我们同样可以找到无处不在的泛型坑位：
+~~~ts
+const [state, setState] = useState<number[]>([]);
+// 不传入默认值，则类型为 number[] | undefined
+const [state, setState] = useState<number[]>();
+
+// 体现在 ref.current 上
+const ref = useRef<number>();
+
+const context =  createContext<ContextType>({});
+~~~
+关于 `React` 中的更多泛型坑位以及 `TypeScript` 结合使用，我们会在后面的实战一节进行详细讲解。
+
+## 类型兼容性判断的幕后
+在 `TypeScript` 中，你可能遇见过以下这样“看起来不太对，但竟然能正常运行”的代码：
+~~~ts
+class Cat {
+  eat() { }
+}
+
+class Dog {
+  eat() { }
+}
+
+function feedCat(cat: Cat) { }
+
+feedCat(new Dog())
+~~~
+这里的 `feedCat` 函数明明需要的是一只猫，可为什么上传一只狗也可以呢？实际上，这就是 `TypeScript` 的类型系统特性：**结构化类型系统**，也是我们这一节要学习的概念。我们会了解结构化类型系统的比较方式，对比另一种类型系统（**标称类型系统**）的工作方式，以及在 `TypeScript` 中去模拟另一种类型系统。
+
+结构化类型系统的概念非常基础但十分重要，它不仅能让你明确类型比较的核心原理，从根上理解条件类型等类型工具，也能够在日常开发中帮你解决许多常见的类型报错。
+
+### 结构化类型系统
+首先回到我们开头提出的问题，如果我们为 `Cat` 类新增一个独特的方法，这个时候的表现才是符合预期的，即我们只能用真实的 `Cat` 类来进行调用：
+~~~ts
+class Cat {
+  meow() { }
+  eat() { }
+}
+
+class Dog {
+  eat() { }
+}
+
+function feedCat(cat: Cat) { }
+
+// 报错！
+feedCat(new Dog())
+~~~
+这是因为，`TypeScript` 比较两个类型并非通过类型的名称（即 `feedCat` 函数只能通过 `Cat` 类型调用），而是比较这两个类型上实际拥有的属性与方法。也就是说，这里实际上是比较 `Cat` 类型上的属性是否都存在于 `Dog` 类型上。
+
+在我们最初的例子里，`Cat` 与 `Dog` 类型上的方法是一致的，所以它们虽然是两个名字不同的类型，但仍然被视为结构一致，这就是结构化类型系统的特性。你可能听过结构类型的别称**鸭子类型（Duck Typing）**，这个名字来源于**鸭子测试（Duck Test）**。其核心理念是，**如果你看到一只鸟走起来像鸭子，游泳像鸭子，叫得也像鸭子，那么这只鸟就是鸭子。**
+
+也就说，鸭子类型中两个类型的关系是通过对象中的属性方法来判断的。比如最开始的 `Cat` 类型和 `Dog` 类型被视为同一个类型，而为 `Cat` 类型添加独特的方法之后就不再能被视为一个类型。但如果为 `Dog` 类型添加一个独特方法呢？
+~~~ts
+class Cat {
+  eat() { }
+}
+
+class Dog {
+  bark() { }
+  eat() { }
+}
+
+function feedCat(cat: Cat) { }
+
+feedCat(new Dog())
+~~~
+这个时候为什么却没有类型报错了？这是因为，结构化类型系统认为 `Dog` 类型完全实现了 `Cat` 类型。至于额外的方法 `bark`，可以认为是 `Dog` 类型继承 `Cat` 类型后添加的新方法，即此时 `Dog` 类可以被认为是 `Cat` 类的子类。同样的，面向对象编程中的里氏替换原则也提到了鸭子测试：**如果它看起来像鸭子，叫起来也像鸭子，但是却需要电池才能工作，那么你的抽象很可能出错了。**
+
+更进一步，在比较对象类型的属性时，同样会采用结构化类型系统进行判断。而对结构中的函数类型（即方法）进行比较时，同样存在类型的兼容性比较：
+~~~ts
+class Cat {
+  eat(): boolean {
+    return true
+  }
+}
+
+class Dog {
+  eat(): number {
+    return 599;
+  }
+}
+
+function feedCat(cat: Cat) { }
+
+// 报错！
+feedCat(new Dog())
+~~~
+这就是结构化类型系统的核心理念，即基于类型结构进行判断类型兼容性。结构化类型系统在 `C#`、`Python`、`Objective-C` 等语言中都被广泛使用或支持。
+
+严格来说，鸭子类型系统和结构化类型系统并不完全一致，结构化类型系统意味着**基于完全的类型结构来判断类型兼容性**，而鸭子类型则只基于**运行时访问的部分**来决定。也就是说，如果我们调用了走、游泳、叫这三个方法，那么传入的类型只需要存在这几个方法即可（而不需要类型结构完全一致）。但由于 TypeScript 本身并不是在运行时进行类型检查（也做不到），同时官方文档中同样认为这两个概念是一致的（**One of TypeScript’s core principles is that type checking focuses on the shape that values have. This is sometimes called “duck typing” or “structural typing”.**）。因此在这里，我们可以直接认为鸭子类型与结构化类型是同一概念。
+
+除了**基于类型结构进行兼容性判断的结构化类型系统**以外，还有一种**基于类型名进行兼容性判断的类型系统**，标称类型系统。
+
+### 标称类型系统
+标称类型系统（**Nominal Typing System**）要求，两个可兼容的类型，**其名称必须是完全一致的**，比如以下代码：
+~~~ts
+type USD = number;
+type CNY = number;
+
+const CNYCount: CNY = 200;
+const USDCount: USD = 200;
+
+function addCNY(source: CNY, input: CNY) {
+  return source + input;
+}
+
+addCNY(CNYCount, USDCount)
+~~~
+在结构化类型系统中，`USD` 与 `CNY` （分别代表美元单位与人民币单位）被认为是两个完全一致的类型，因此在 `addCNY` 函数中可以传入 `USD` 类型的变量。这就很离谱了，人民币与美元这两个单位实际的意义并不一致，怎么能进行相加？
+
+在标称类型系统中，`CNY` 与 `USD` 被认为是两个完全不同的类型，因此能够避免这一情况发生。在《编程与类型系统》一书中提到，类型的重要意义之一是**限制了数据的可用操作与实际意义**，这一点在标称类型系统中的体现要更加明显。比如，上面我们可以通过类型的结构，来让结构化类型系统认为两个类型具有父子类型关系，而对于标称类型系统，父子类型关系只能通过显式的继承来实现，称为**标称子类型（Nominal Subtyping）**。
+~~~ts
+class Cat { }
+// 实现一只短毛猫！
+class ShorthairCat extends Cat { }
+~~~
+`C++`、`Java`、`Rust` 等语言中都主要使用标称类型系统。那么，我们是否可以在 `TypeScript` 中模拟出标称类型系统？
+
+### 在 TypeScript 中模拟标称类型系统
+再看一遍这句话：**类型的重要意义之一是限制了数据的可用操作与实际意义**。这往往是通过类型附带的**额外信息**来实现的（类似于元数据），要在 `TypeScript` 中实现，其实我们也只需要为类型额外附加元数据即可，比如 `CNY` 与 `USD`，我们分别附加上它们的单位信息即可，但同时又需要保留原本的信息（即原本的 `number` 类型）。
+
+我们可以通过交叉类型的方式来实现信息的附加：
+~~~ts
+export declare class TagProtector<T extends string> {
+  protected __tag__: T;
+}
+
+export type Nominal<T, U extends string> = T & TagProtector<U>;
+~~~
+在这里我们使用 `TagProtector` 声明了一个具有 `protected` 属性的类，使用它来携带额外的信息，并和原本的类型合并到一起，就得到了 `Nominal` 工具类型。
+
+有了 `Nominal` 这个工具类型，我们可以尝试来改进下上面的例子了：
+~~~ts
+export type CNY = Nominal<number, 'CNY'>;
+
+export type USD = Nominal<number, 'USD'>;
+
+const CNYCount = 100 as CNY;
+
+const USDCount = 100 as USD;
+
+function addCNY(source: CNY, input: CNY) {
+  return (source + input) as CNY;
+}
+
+addCNY(CNYCount, CNYCount);
+
+// 报错了！
+addCNY(CNYCount, USDCount);
+~~~
+这一实现方式本质上只在类型层面做了数据的处理，在运行时无法进行进一步的限制。我们还可以从逻辑层面入手进一步确保安全性：
+~~~ts
+class CNY {
+  private __tag!: void;
+  constructor(public value: number) {}
+}
+class USD {
+  private __tag!: void;
+  constructor(public value: number) {}
+}
+~~~
+相应的，现在使用方式也要进行变化：
+~~~ts
+const CNYCount = new CNY(100);
+const USDCount = new USD(100);
+
+function addCNY(source: CNY, input: CNY) {
+  return (source.value + input.value);
+}
+
+addCNY(CNYCount, CNYCount);
+// 报错了！
+addCNY(CNYCount, USDCount);
+~~~
+通过这种方式，我们可以在运行时添加更多的检查逻辑，同时在类型层面也得到了保障。
+
+这两种方式的本质都是通过额外属性实现了类型信息的附加，从而使得结构化类型系统将结构一致的两个类型也判断为不可兼容。
+
+在 `type-fest` 中也通过 [Opaque Type](https://codemix.com/opaque-types-in-javascript/) 支持了类似的功能，其实现如下：
+~~~ts
+declare const tag: unique symbol;
+
+declare type Tagged<Token> = {
+    readonly [tag]: Token;
+};
+
+export type Opaque<Type, Token = unknown> = Type & Tagged<Token>;
+~~~
+总结一下，在 `TypeScript` 中我们可以通过类型或者逻辑的方式来模拟标称类型，这两种方式其实并没有非常明显的优劣之分，基于类型实现更加轻量，你的代码逻辑不会受到影响，但难以进行额外的逻辑检查工作。而使用逻辑实现稍显繁琐，但你能够进行更进一步或更细致的约束。
+
+### 类型、类型系统与类型检查
+对于类型、类型系统、类型检查，你可以认为它们是不同的概念。
+- 类型：限制了数据的可用操作、意义、允许的值的集合，总的来说就是**访问限制与赋值限制**。在 `TypeScript` 中即是原始类型、对象类型、函数类型、字面量类型等基础类型，以及类型别名、联合类型等经过类型编程后得到的类型。
+- 类型系统：一组为变量、函数等结构分配、实施类型的规则，通过显式地指定或类型推导来分配类型。同时类型系统也定义了如何判断类型之间的兼容性：在 `TypeScript` 中即是结构化类型系统。
+- 类型检查：确保**类型遵循类型系统下的类型兼容性**，对于静态类型语言，在**编译时**进行，而对于动态语言，则在**运行时**进行。`TypeScript` 就是在编译时进行类型检查的。
+
+一个需要注意的地方是，静态类型与动态类型指的是**类型检查发生的时机**，并不等于这门语言的类型能力。比如 `JavaScript` 实际上是动态类型语言，它的类型检查发生在运行时。
+
+另外一个静态类型与动态类型的重要区别体现在变量赋值时，如在 `TypeScript` 中无法给一个声明为 `number` 的变量使用字符串赋值，因为这个变量在声明时的类型就已经确定了。而在 `JavaScript` 中则没有这样的限制，你可以随时切换一个变量的类型。
+
+另外，在编程语言中还有强类型、弱类型的概念，它们体现在对变量类型检查的程度，如在 `JavaScript` 中可以实现 `'1' - 1` 这样神奇的运算（通过隐式转换），这其实就是弱类型语言的显著特点之一。
+
+## 从 Top Type 到 Bottom Type
+如果说类型系统是 `TypeScript` 中的重要基础知识，那么类型层级就是类型系统中的重要概念之一。对于没有类型语言经验学习的同学，说类型层级是最重要的基础概念也不为过。
+
+类型层级一方面能帮助我们明确各种类型的层级与兼容性，而兼容性问题往往就是许多类型错误产生的原因。另一方面，类型层级也是我们后续学习条件类型必不可少的前置知识。我也建议你能同时学习这两篇内容，遇到不理解、不熟悉的地方可以多看几遍。
+
+类型层级实际上指的是，**TypeScript 中所有类型的兼容关系，从最上面一层的 any 类型，到最底层的 never 类型。那么，从上至下的类型兼容关系到底长什么样呢？** 这一节，我们就从原始类型变量和字面量类型开始比较，分别向上、向下延伸，依次把这些类型串起来形成层级链，让你能够构建出 `TypeScript` 的整个类型体系。
+
+### 判断类型兼容性的方式
+在开始前，我们需要先了解一下如何直观地判断两个类型的兼容性。本节中我们主要使用条件类型来判断类型兼容性，类似这样：
+~~~ts
+type Result = 'linbudu' extends string ? 1 : 2;
+~~~
+如果返回 `1`，则说明 `'linbudu'` 为 `string` 的子类型。否则，说明不成立。但注意，不成立并不意味着 `string` 就是 `'linbudu'` 的子类型了。还有一种备选的，通过赋值来进行兼容性检查的方式，其大致使用方式是这样的：
+~~~ts
+declare let source: string;
+
+declare let anyType: any;
+declare let neverType: never;
+
+anyType = source;
+
+// 不能将类型“string”分配给类型“never”。
+neverType = source;
+~~~
+对于变量 a = 变量 b，如果成立，意味着 `<变量 b 的类型> extends <变量 a 的类型>` 成立，即 **b 类型是 a 类型的子类型**，在这里即是 `string extends never` ，这明显是不成立的。
+
+觉得不好理解？那可以试着这么想，我们有一个“狗”类型的变量，还有两个分别是“柯基”类型与“橘猫”类型的变量。
+- 狗 = 柯基，意味着将柯基作为狗，这是没问题的。
+- 狗 = 橘猫，很明显不对，程序对“狗”这个变量的使用，都建立在它是一个“狗”类型的基础上，你给个猫，让后面咋办？
+
+这两种判断方式并没有明显的区别，只在使用场景上略有差异。在需要判断多个类型的层级时，条件类型更为直观，而如果只是两个类型之间的兼容性判断时，使用类型声明则更好理解一些，你可以依据自己的习惯来进行选择。
+
+### 从原始类型开始
+了解了类型兼容性判断的方式后，我们就可以开始探讨类型层级了。首先，我们从原始类型、对象类型（后文统称为基础类型）和它们对应的字面量类型开始。
+~~~ts
+type Result1 = "linbudu" extends string ? 1 : 2; // 1
+type Result2 = 1 extends number ? 1 : 2; // 1
+type Result3 = true extends boolean ? 1 : 2; // 1
+type Result4 = { name: string } extends object ? 1 : 2; // 1
+type Result5 = { name: 'linbudu' } extends object ? 1 : 2; // 1
+type Result6 = [] extends object ? 1 : 2; // 1
+~~~
+很明显，一个基础类型和它们对应的字面量类型必定存在父子类型关系。严格来说，`object` 出现在这里并不恰当，因为它实际上代表着**所有非原始类型的类型，即数组、对象与函数类型**，所以这里 `Result6` 成立的原因即是`[]`这个字面量类型也可以被认为是 `object` 的字面量类型。我们将结论简记为，**字面量类型 < 对应的原始类型。**
+
+接下来，我们就从这个原始类型与字面量出发，向上、向下去探索类型层级。
+
+### 向上探索，直到穹顶之上
+#### 联合类型
+我们之前讲过，在联合类型中，只需要符合其中一个类型，我们就可以认为实现了这个联合类型，用条件类型表达是这样的：
+~~~ts
+type Result7 = 1 extends 1 | 2 | 3 ? 1 : 2; // 1
+type Result8 = 'lin' extends 'lin' | 'bu' | 'du' ? 1 : 2; // 1
+type Result9 = true extends true | false ? 1 : 2; // 1
+~~~
+在这一层面上，并不需要联合类型的**所有成员均为字面量类型**，或者**字面量类型来自于同一基础类型**这样的前提，只需要这个类型存在于联合类型中。
+
+对于原始类型，联合类型的比较其实也是一致的：
+~~~ts
+type Result10 = string extends string | false | number ? 1 : 2; // 1
+~~~
+结论：**字面量类型 < 包含此字面量类型的联合类型，原始类型 < 包含此原始类型的联合类型。**
+
+而如果一个联合类型由同一个基础类型的类型字面量组成，那这个时候情况又有点不一样了。既然你的所有类型成员都是字符串字面量类型，那你岂不就是我 `string` 类型的小弟？如果你的所有类型成员都是对象、数组字面量类型或函数类型，那你岂不就是我 `object` 类型的小弟？
+~~~ts
+type Result11 = 'lin' | 'bu' | 'budu' extends string ? 1 : 2; // 1
+type Result12 = {} | (() => void) | [] extends object ? 1 : 2; // 1
+~~~
+结论：**同一基础类型的字面量联合类型 < 此基础类型。**
+
+合并一下结论，去掉比较特殊的情况，我们得到了这个最终结论：**字面量类型 < 包含此字面量类型的联合类型（同一基础类型） < 对应的原始类型**，即：
+~~~ts
+// 2
+type Result13 = 'linbudu' extends 'linbudu' | '599'
+  ? 'linbudu' | '599' extends string
+    ? 2
+    : 1
+  : 0;
+~~~
+对于这种嵌套的联合类型，我们这里直接观察最后一个条件语句的结果即可，因为如果所有条件语句都成立，那结果就是最后一个条件语句为真时的值。另外，由于联合类型实际上是一个比较特殊的存在，大部分类型都存在至少一个联合类型作为其父类型，因此在后面我们不会再体现联合类型。
+
+现在，我们关注的类型变成了基础类型，即 `string` 与 `object` 这一类。
+
+#### 装箱类型
+在「原始类型与对象类型」一节中，我们已经讲到了 `JavaScript` 中装箱对象 `String` 在 `TypeScript` 中的体现： `String` 类型，以及在原型链顶端傲视群雄的 `Object` 对象与 `Object` 类型。
+
+很明显，`string` 类型会是 `String` 类型的子类型，`String` 类型会是 `Object` 类型的子类型，那中间还有吗？还真有，而且你不一定能猜到。我们直接看从 `string` 到 `Object` 的类型层级：
+~~~ts
+type Result14 = string extends String ? 1 : 2; // 1
+type Result15 = String extends {} ? 1 : 2; // 1
+type Result16 = {} extends object ? 1 : 2; // 1
+type Result18 = object extends Object ? 1 : 2; // 1
+~~~
+这里看着像是混进来一个很奇怪的东西，`{}` 不是 `object` 的字面量类型吗？为什么能在这里比较，并且 `String` 还是它的子类型？
+
+这时请回忆我们在结构化类型系统中一节学习到的概念，假设我们把 `String` 看作一个普通的对象，上面存在一些方法，如：
+~~~ts
+interface String {
+  replace: // ...
+  replaceAll: // ...
+  startsWith: // ...
+  endsWith: // ...
+  includes: // ...
+}
+~~~
+这个时候，是不是能看做 `String` 继承了 `{}` 这个空对象，然后自己实现了这些方法？当然可以！**在结构化类型系统的比较下，String 会被认为是 `{}` 的子类型**。这里从 `string < {} < object` 看起来构建了一个类型链，但实际上 `string extends object` 并不成立：
+~~~ts
+type Tmp = string extends object ? 1 : 2; // 2
+~~~
+由于结构化类型系统这一特性的存在，我们能得到一些看起来矛盾的结论：
+~~~ts
+type Result16 = {} extends object ? 1 : 2; // 1
+type Result18 = object extends {} ? 1 : 2; // 1
+
+type Result17 = object extends Object ? 1 : 2; // 1
+type Result20 = Object extends object ? 1 : 2; // 1
+
+type Result19 = Object extends {} ? 1 : 2; // 1
+type Result21 = {} extends Object ? 1 : 2; // 1
+~~~
+16-18 和 19-21 这两对，为什么无论如何判断都成立？难道说明 `{}` 和 `object` 类型相等，也和 `Object` 类型一致？
+
+当然不，这里的 `{} extends` 和 `extends {}` 实际上是两种完全不同的比较方式。`{} extends object` 和 `{} extends Object` 意味着，`{}` 是 `object` 和 `Object` 的字面量类型，是从**类型信息的层面**出发的，即**字面量类型在基础类型之上提供了更详细的类型信息**。`object extends {}` 和 `Object extends {}` 则是**从结构化类型系统的比较**出发的，即 `{}` 作为一个一无所有的空对象，几乎可以被视作是所有类型的基类，万物的起源。如果混淆了这两种类型比较的方式，就可能会得到 `string extends object` 这样的错误结论。
+
+而 `object extends Object` 和 `Object extends object` 这两者的情况就要特殊一些，它们是因为“系统设定”的问题，`Object` 包含了所有除 `Top Type` 以外的类型（基础类型、函数类型等），`object` 包含了所有非原始类型的类型，即数组、对象与函数类型，这就导致了你中有我、我中有你的神奇现象。
+
+在这里，我们暂时只关注从类型信息层面出发的部分，即结论为：**原始类型 < 原始类型对应的装箱类型 < Object 类型**。
+
+现在，我们关注的类型为 `Object` 。
+
+#### Top Type
+再往上，我们就到达了类型层级的顶端（是不是很快），这里只有 `any` 和 `unknown` 这两兄弟。我们在 **any、unknown 与 never** 一节中已经了解，`any` 与 `unknown` 是系统中设定为 `Top Type` 的两个类型，它们无视一切因果律，是类型世界的规则产物。因此，`Object` 类型自然会是 `any` 与 `unknown` 类型的子类型。
+~~~ts
+type Result22 = Object extends any ? 1 : 2; // 1
+type Result23 = Object extends unknown ? 1 : 2; // 1
+~~~
+但如果我们把条件类型的两端对调一下呢？
+~~~ts
+type Result24 = any extends Object ? 1 : 2; // 1 | 2
+type Result25 = unknown extends Object ? 1 : 2; // 2
+~~~
+你会发现，`any` 竟然调过来，值竟然变成了 `1 | 2`？我们再多试几个看看：
+~~~ts
+type Result26 = any extends 'linbudu' ? 1 : 2; // 1 | 2
+type Result27 = any extends string ? 1 : 2; // 1 | 2
+type Result28 = any extends {} ? 1 : 2; // 1 | 2
+type Result29 = any extends never ? 1 : 2; // 1 | 2
+~~~
+是不是感觉匪夷所思？实际上，还是因为“系统设定”的原因。`any` 代表了任何可能的类型，当我们使用 `any extends` 时，它包含了“**让条件成立的一部分**”，以及“**让条件不成立的一部分**”。而从实现上说，在 `TypeScript` 内部代码的条件类型处理中，如果接受判断的是 `any`，那么会直接**返回条件类型结果组成的联合类型**。
+
+因此 `any extends string` 并不能简单地认为等价于以下条件类型：
+~~~ts
+type Result30 = ("I'm string!" | {}) extends string ? 1 : 2; // 2
+~~~
+这种情况下，由于联合类型的成员并非均是字符串字面量类型，条件显然不成立。
+
+在前面学习 `any` 类型时，你可能也感受到了奇怪之处，在赋值给其他类型时，`any` 来者不拒，而 `unknown` 则只允许赋值给 `unknown` 类型和 `any` 类型，这也是由于“系统设定”的原因，即 **any 可以表达为任何类型**。你需要我赋值给这个变量？那我现在就是这个变量的子类型了，我是不是很乖巧？
+
+另外，`any` 类型和 `unknown` 类型的比较也是互相成立的：
+~~~ts
+type Result31 = any extends unknown ? 1 : 2;  // 1
+type Result32 = unknown extends any ? 1 : 2;  // 1
+~~~
+虽然还是存在系统设定的部分，但我们仍然只关注类型信息层面的层级，即结论为：**Object < any / unknown**。而到这里，我们已经触及了类型世界的最高一层，接下来我们再回到字面量类型，只不过这一次我们要向下探索了。
+
+### 向下探索，直到万物虚无
+向下地探索其实就简单多了，首先我们能确认一定有个 `never` 类型，因为它代表了“虚无”的类型，一个根本不存在的类型。对于这样的类型，它会是任何类型的子类型，当然也包括字面量类型：
+~~~ts
+type Result33 = never extends 'linbudu' ? 1 : 2; // 1
+~~~
+但你可能又想到了一些特别的部分，比如 `null`、`undefined`、`void`。
+~~~ts
+type Result34 = undefined extends 'linbudu' ? 1 : 2; // 2
+type Result35 = null extends 'linbudu' ? 1 : 2; // 2
+type Result36 = void extends 'linbudu' ? 1 : 2; // 2
+~~~
+上面三种情况当然不应该成立。别忘了在 `TypeScript` 中，`void`、`undefined`、`null` 都是**切实存在、有实际意义的类型**，它们和 `string`、`number`、`object` 并没有什么本质区别。
+
+因此，这里我们得到的结论是，**never < 字面量类型**。这就是类型世界的最底层，有点像我的世界那样，当你挖穿地面后，出现的是一片茫茫的空白与虚无。
+
+那现在，我们可以开始组合整个类型层级了。
+
+### 类型层级链
+结合我们上面得到的结论，可以书写出这样一条类型层级链：
+~~~ts
+type TypeChain = never extends 'linbudu'
+  ? 'linbudu' extends 'linbudu' | '599'
+  ? 'linbudu' | '599' extends string
+  ? string extends String
+  ? String extends Object
+  ? Object extends any
+  ? any extends unknown
+  ? unknown extends any
+  ? 8
+  : 7
+  : 6
+  : 5
+  : 4
+  : 3
+  : 2
+  : 1
+  : 0
+~~~
+其返回的结果为 `8` ，也就意味着所有条件均成立。当然，结合上面的结构化类型系统与类型系统设定，我们还可以构造出一条更长的类型层级链：
+~~~ts
+type VerboseTypeChain = never extends 'linbudu'
+  ? 'linbudu' extends 'linbudu' | 'budulin'
+  ? 'linbudu' | 'budulin' extends string
+  ? string extends {}
+  ? string extends String
+  ? String extends {}
+  ? {} extends object
+  ? object extends {}
+  ? {} extends Object
+  ? Object extends {}
+  ? object extends Object
+  ? Object extends object
+  ? Object extends any
+  ? Object extends unknown
+  ? any extends unknown
+  ? unknown extends any
+  ? 8
+  : 7
+  : 6
+  : 5
+  : 4
+  : 3
+  : 2
+  : 1
+  : 0
+  : -1
+  : -2
+  : -3
+  : -4
+  : -5
+  : -6
+  : -7
+  : -8
+~~~
+结果仍然为 `8` 。
+
+### 其他比较场景
+除了我们上面提到的类型比较，其实还存在着一些比较情况，我们稍作补充。
+- 对于基类和派生类，通常情况下**派生类会完全保留基类的结构**，而只是自己新增新的属性与方法。在结构化类型的比较下，其类型自然会存在子类型关系。更不用说派生类本身就是 `extends` 基类得到的。
+- 联合类型的判断，前面我们只是判断联合类型的单个成员，那如果是多个成员呢？
+  ~~~ts
+  type Result36 = 1 | 2 | 3 extends 1 | 2 | 3 | 4 ? 1 : 2; // 1
+  type Result37 = 2 | 4 extends 1 | 2 | 3 | 4 ? 1 : 2; // 1
+  type Result38 = 1 | 2 | 5 extends 1 | 2 | 3 | 4 ? 1 : 2; // 2
+  type Result39 = 1 | 5 extends 1 | 2 | 3 | 4 ? 1 : 2; // 2
+  ~~~
+  实际上，对于联合类型地类型层级比较，我们只需要比较**一个联合类型是否可被视为另一个联合类型的子集**，即**这个联合类型中所有成员在另一个联合类型中都能找到**。
+- 数组和元组
+  
+  数组和元组是一个比较特殊的部分，我们直接来看例子：
+  ~~~ts
+  type Result40 = [number, number] extends number[] ? 1 : 2; // 1
+  type Result41 = [number, string] extends number[] ? 1 : 2; // 2
+  type Result42 = [number, string] extends (number | string)[] ? 1 : 2; // 1
+  type Result43 = [] extends number[] ? 1 : 2; // 1
+  type Result44 = [] extends unknown[] ? 1 : 2; // 1
+  type Result45 = number[] extends (number | string)[] ? 1 : 2; // 1
+  type Result46 = any[] extends number[] ? 1 : 2; // 1
+  type Result47 = unknown[] extends number[] ? 1 : 2; // 2
+  type Result48 = never[] extends number[] ? 1 : 2; // 1
+  ~~~
+  我们一个个来讲解：
+  - 40，这个元组类型实际上能确定其内部成员全部为 `number` 类型，因此是 `number[]` 的子类型。而 41 中混入了别的类型元素，因此认为不成立。
+  - 42混入了别的类型，但其判断条件为 `(number | string)[]` ，即其成员需要为 `number` 或 `string` 类型。
+  - 43的成员是未确定的，等价于 `never[] extends number[]`，44 同理。
+  - 45类似于41，即可能存在的元素类型是符合要求的。
+  - 46、47，还记得身化万千的 `any` 类型和小心谨慎的 `unknown` 类型嘛？
+  - 48，类似于 43、44，由于 `never` 类型本就位于最下方，这里显然成立。只不过 `never[]` 类型的数组也就无法再填充值了。
+
+基础的类型层级可以用以下这张图表示：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/8459e958e581479faa284390e3c6a09c~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+## 条件类型与 infer
+### 条件类型基础
+条件类型的语法类似于我们平时常用的三元表达式，它的基本语法如下（伪代码）：
+~~~ts
+ValueA === ValueB ? Result1 : Result2;
+TypeA extends TypeB ? Result1 : Result2;
+~~~
+但需要注意的是，条件类型中使用 `extends` 判断类型的兼容性，而非判断类型的全等性。这是因为在类型层面中，对于能够进行赋值操作的两个变量，我们**并不需要它们的类型完全相等，只需要具有兼容性**，而两个完全相同的类型，其 `extends` 自然也是成立的。
+
+条件类型绝大部分场景下会和泛型一起使用，我们知道，泛型参数的实际类型会在实际调用时才被填充（类型别名中显式传入，或者函数中隐式提取），而条件类型在这一基础上，可以基于填充后的泛型参数做进一步的类型操作，比如这个例子：
+~~~ts
+type LiteralType<T> = T extends string ? "string" : "other";
+
+type Res1 = LiteralType<"linbudu">; // "string"
+type Res2 = LiteralType<599>; // "other"
+~~~
+同三元表达式可以嵌套一样，条件类型中也常见多层嵌套，如：
+~~~ts
+export type LiteralType<T> = T extends string
+	? "string"
+	: T extends number
+	? "number"
+	: T extends boolean
+	? "boolean"
+	: T extends null
+	? "null"
+	: T extends undefined
+	? "undefined"
+	: never;
+
+type Res1 = LiteralType<"linbudu">; // "string"
+type Res2 = LiteralType<599>; // "number"
+type Res3 = LiteralType<true>; // "boolean"
+~~~
+而在函数中，条件类型与泛型的搭配同样很常见。考考你，以下这个函数，我们应该如何标注它的返回值类型？
+~~~ts
+function universalAdd<T extends number | bigint | string>(x: T, y: T) {
+    return x + (y as any);
+}
+~~~
+当我们调用这个函数时，由于两个参数都引用了泛型参数 `T` ，因此泛型会被填充为一个联合类型：
+~~~ts
+universalAdd(599, 1); // T 填充为 599 | 1
+universalAdd("linbudu", "599"); // T 填充为 linbudu | 599
+~~~
+那么此时的返回值类型就需要从这个字面量联合类型中推导回其原本的基础类型。在类型层级一节中，我们知道**同一基础类型的字面量联合类型，其可以被认为是此基础类型的子类型**，即 `599 | 1` 是 `number` 的子类型。
+
+因此，我们可以使用嵌套的条件类型来进行字面量类型到基础类型地提取：
+~~~ts
+function universalAdd<T extends number | bigint | string>(
+	x: T,
+	y: T
+): LiteralToPrimitive<T> {
+	return x + (y as any);
+}
+
+export type LiteralToPrimitive<T> = T extends number
+	? number
+	: T extends bigint
+	? bigint
+	: T extends string
+	? string
+	: never;
+
+universalAdd("linbudu", "599"); // string
+universalAdd(599, 1); // number
+universalAdd(10n, 10n); // bigint
+~~~
+条件类型还可以用来对更复杂的类型进行比较，比如函数类型：
+~~~ts
+type Func = (...args: any[]) => any;
+
+type FunctionConditionType<T extends Func> = T extends (
+  ...args: any[]
+) => string
+  ? 'A string return func!'
+  : 'A non-string return func!';
+
+//  "A string return func!"
+type StringResult = FunctionConditionType<() => string>;
+// 'A non-string return func!';
+type NonStringResult1 = FunctionConditionType<() => boolean>;
+// 'A non-string return func!';
+type NonStringResult2 = FunctionConditionType<() => number>;
+~~~
+在这里，我们的条件类型用于判断两个函数类型是否具有兼容性，而条件中并不限制参数类型，仅比较二者的返回值类型。
+
+与此同时，存在泛型约束和条件类型两个 `extends` 可能会让你感到疑惑，但它们产生作用的时机完全不同，泛型约束要求你传入符合结构的类型参数，相当于**参数校验**。而条件类型使用类型参数进行条件判断（就像 `if else`），相当于**实际内部逻辑**。
+
+我们上面讲到的这些条件类型，本质上就是在泛型基于调用填充类型信息的基础上，新增了**基于类型信息的条件判断**。看起来很不错，但你可能也发现了一个无法满足的场景：**提取传入的类型信息**。
+
+### infer 关键字
+在上面的例子中，假如我们不再比较填充的函数类型是否是 `(...args: any[]) => string` 的子类型，而是要拿到其返回值类型呢？或者说，我们希望拿到填充的类型信息的一部分，而不是只是用它来做条件呢？
+
+`TypeScript` 中支持通过 `infer` 关键字来**在条件类型中提取类型的某一部分信息**，比如上面我们要提取函数返回值类型的话，可以这么放：
+~~~ts
+type FunctionReturnType<T extends Func> = T extends (
+  ...args: any[]
+) => infer R
+  ? R
+  : never;
+~~~
+看起来是新朋友，其实还是老伙计。上面的代码其实表达了，当传入的类型参数满足 `T extends (...args: any[] ) => infer R` 这样一个结构（不用管 `infer R`，当它是 `any` 就行），返回 `infer R` 位置的值，即 `R`。否则，返回 `never`。
+
+`infer`，意为推断，如 `infer R` 中 `R` 就表示 **待推断的类型**。`infer` 只能在条件类型中使用，因为我们实际上仍然需要**类型结构是一致的**，比如上例中类型信息需要是一个函数类型结构，我们才能提取出它的返回值类型。如果连函数类型都不是，那我只会给你一个 `never` 。
+
+这里的**类型结构**当然并不局限于函数类型结构，还可以是数组：
+~~~ts
+type Swap<T extends any[]> = T extends [infer A, infer B] ? [B, A] : T;
+
+type SwapResult1 = Swap<[1, 2]>; // 符合元组结构，首尾元素替换[2, 1]
+type SwapResult2 = Swap<[1, 2, 3]>; // 不符合结构，没有发生替换，仍是 [1, 2, 3]
+~~~
+由于我们声明的结构是一个仅有两个元素的元组，因此三个元素的元组就被认为是不符合类型结构了。但我们可以使用 `rest` 操作符来处理任意长度的情况：
+~~~ts
+// 提取首尾两个
+type ExtractStartAndEnd<T extends any[]> = T extends [
+  infer Start,
+  ...any[],
+  infer End
+]
+  ? [Start, End]
+  : T;
+
+// 调换首尾两个
+type SwapStartAndEnd<T extends any[]> = T extends [
+  infer Start,
+  ...infer Left,
+  infer End
+]
+  ? [End, ...Left, Start]
+  : T;
+
+// 调换开头两个
+type SwapFirstTwo<T extends any[]> = T extends [
+  infer Start1,
+  infer Start2,
+  ...infer Left
+]
+  ? [Start2, Start1, ...Left]
+  : T;
+~~~
+是的，`infer` 甚至可以和 `rest` 操作符一样同时提取一组不定长的类型，而 `...any[]` 的用法是否也让你直呼神奇？上面的输入输出仍然都是数组，而实际上我们完全可以进行结构层面的转换。比如从数组到联合类型：
+~~~ts
+type ArrayItemType<T> = T extends Array<infer ElementType> ? ElementType : never;
+
+type ArrayItemTypeResult1 = ArrayItemType<[]>; // never
+type ArrayItemTypeResult2 = ArrayItemType<string[]>; // string
+type ArrayItemTypeResult3 = ArrayItemType<[string, number]>; // string | number
+~~~
+原理即是这里的 `[string, number]` 实际上等价于 `(string | number)[]`。
+
+除了数组，`infer` 结构也可以是接口：
+~~~ts
+// 提取对象的属性类型
+type PropType<T, K extends keyof T> = T extends { [Key in K]: infer R }
+  ? R
+  : never;
+
+type PropTypeResult1 = PropType<{ name: string }, 'name'>; // string
+type PropTypeResult2 = PropType<{ name: string; age: number }, 'name' | 'age'>; // string | number
+
+// 反转键名与键值
+type ReverseKeyValue<T extends Record<string, unknown>> = T extends Record<infer K, infer V> ? Record<V & string, K> : never
+
+type ReverseKeyValueResult1 = ReverseKeyValue<{ "key": "value" }>; // { "value": "key" }
+~~~
+在这里，为了体现 `infer` 作为类型工具的属性，我们结合了索引类型与映射类型，以及使用 `& string` 来确保属性名为 `string` 类型的小技巧。
+
+为什么需要这个小技巧，如果不使用又会有什么问题呢？
+~~~ts
+// 类型“V”不满足约束“string | number | symbol”。
+type ReverseKeyValue<T extends Record<string, string>> = T extends Record<
+  infer K,
+  infer V
+>
+  ? Record<V, K>
+  : never;
+~~~
+明明约束已经声明了 `V` 的类型是 `string`，为什么还是报错了？
+
+这是因为，泛型参数 `V` 的来源是从键值类型推导出来的，`TypeScript` 中这样对键值类型进行 `infer` 推导，将导致类型信息丢失，而不满足索引签名类型只允许 `string | number | symbol` 的要求。
+
+还记得映射类型的判断条件吗？需要同时满足其两端的类型，我们使用 `V & string` 这一形式，就确保了最终符合条件的类型参数 `V` 一定会满足 `string | never` 这个类型，因此可以被视为合法的索引签名类型。
+
+`infer` 结构还可以是 `Promise` 结构！
+~~~ts
+type PromiseValue<T> = T extends Promise<infer V> ? V : T;
+
+type PromiseValueResult1 = PromiseValue<Promise<number>>; // number
+type PromiseValueResult2 = PromiseValue<number>; // number，但并没有发生提取
+~~~
+就像条件类型可以嵌套一样，`infer` 关键字也经常被使用在嵌套的场景中，包括对类型结构深层信息地提取，以及对提取到类型信息的筛选等。比如上面的 `PromiseValue`，如果传入了一个嵌套的 `Promise` 类型就失效了：
+~~~ts
+type PromiseValueResult3 = PromiseValue<Promise<Promise<boolean>>>; // Promise<boolean>，只提取了一层
+~~~
+这种时候我们就需要进行嵌套地提取了：
+~~~ts
+type PromiseValue<T> = T extends Promise<infer V>
+  ? V extends Promise<infer N>
+    ? N
+    : V
+  : T;
+~~~
+当然，在这时应该使用递归来处理任意嵌套深度：
+~~~ts
+type PromiseValue<T> = T extends Promise<infer V> ? PromiseValue<V> : T;
+~~~
+条件类型在泛型的基础上支持了基于类型信息的动态条件判断，但无法直接消费填充类型信息，而 `infer` 关键字则为它补上了这一部分的能力，让我们可以进行更多奇妙的类型操作。`TypeScript` 内置的工具类型中还有一些基于 `infer` 关键字的应用，我们会在内置工具类型讲解一章中了解它们的具体实现。而我们上面了解的 `rest infer（...infer Left）`，结合其他类型工具、递归 `infer` 等，都是日常比较常用的操作，这些例子应当能让你再一次意识到“类型编程”的真谛。
+
+### 分布式条件类型
+分布式条件类型听起来真的很高级，但这里和分布式和分布式服务并不是一回事。**分布式条件类型（Distributive Conditional Type），也称条件类型的分布式特性**，只不过是条件类型在满足一定情况下会执行的逻辑而已。我们来看一个例子：
+~~~ts
+type Condition<T> = T extends 1 | 2 | 3 ? T : never;
+
+// 1 | 2 | 3
+type Res1 = Condition<1 | 2 | 3 | 4 | 5>;
+
+// never
+type Res2 = 1 | 2 | 3 | 4 | 5 extends 1 | 2 | 3 ? 1 | 2 | 3 | 4 | 5 : never;
+~~~
+这个例子可能让你感觉充满了疑惑，某些地方似乎和我们学习的知识并不一样？先不说这两个理论上应该执行结果一致的类型别名，为什么在 `Res1` 中诡异地返回了一个联合类型？
+
+仔细观察这两个类型别名的差异你会发现，唯一的差异就是在 `Res1` 中，进行判断的联合类型被作为泛型参数传入给另一个独立的类型别名，而 `Res2` 中直接对这两者进行判断。
+
+记住第一个差异：**是否通过泛型参数传入**。我们再看一个例子：
+~~~ts
+type Naked<T> = T extends boolean ? "Y" : "N";
+type Wrapped<T> = [T] extends [boolean] ? "Y" : "N";
+
+// "N" | "Y"
+type Res3 = Naked<number | boolean>;
+
+// "N"
+type Res4 = Wrapped<number | boolean>;
+~~~
+现在我们都是通过泛型参数传入了，但诡异的事情又发生了，为什么第一个还是个联合类型？第二个倒是好理解一些，元组的成员有可能是数字类型，显然不兼容于 `[boolean]`。再仔细观察这两个例子你会发现，它们唯一的差异是条件类型中的**泛型参数是否被数组包裹了**。
+
+同时，你会发现在 `Res3` 的判断中，其联合类型的两个分支，恰好对应于分别使用 `number` 和 `boolean` 去作为条件类型判断时的结果。
+
+把上面的线索理一下，其实我们就大致得到了条件类型分布式起作用的条件。首先，你的类型参数需要是一个联合类型 。其次，类型参数需要通过泛型参数的方式传入，而不能直接进行条件类型判断（如 `Res2` 中）。最后，条件类型中的泛型参数不能被包裹。
+
+而条件类型分布式特性会产生的效果也很明显了，即将这个联合类型拆开来，每个分支分别进行一次条件类型判断，再将最后的结果合并起来（如 `Naked` 中）。如果再严谨一些，其实我们就得到了官方的解释：
+
+**对于属于裸类型参数的检查类型，条件类型会在实例化时期自动分发到联合类型上。（Conditional types in which the checked type is a naked type parameter are called distributive conditional types. Distributive conditional types are automatically distributed over union types during instantiation.）**
+
+这里的自动分发，我们可以这么理解：
+~~~ts
+type Naked<T> = T extends boolean ? "Y" : "N";
+
+// (number extends boolean ? "Y" : "N") | (boolean extends boolean ? "Y" : "N")
+// "N" | "Y"
+type Res3 = Naked<number | boolean>;
+~~~
+写成伪代码其实就是这样的：
+~~~ts
+const Res3 = [];
+
+for(const input of [number, boolean]){
+  if(input extends boolean){
+    Res3.push("Y");
+  } else {
+    Res.push("N");
+  }
+}
+~~~
+而这里的裸类型参数，其实指的就是泛型参数是否完全裸露，我们上面使用数组包裹泛型参数只是其中一种方式，比如还可以这么做：
+~~~ts
+export type NoDistribute<T> = T & {};
+
+type Wrapped<T> = NoDistribute<T> extends boolean ? "Y" : "N";
+
+type Res1 = Wrapped<number | boolean>; // "N"
+type Res2 = Wrapped<true | false>; // "Y"
+type Res3 = Wrapped<true | false | 599>; // "N"
+~~~
+需要注意的是，我们并不是只会通过裸露泛型参数，来确保分布式特性能够发生。在某些情况下，我们也会需要包裹泛型参数来禁用掉分布式特性。最常见的场景也许还是联合类型的判断，即我们不希望进行联合类型成员的分布判断，而是希望直接判断这两个联合类型的兼容性判断，就像在最初的 `Res2` 中那样：
+~~~ts
+type CompareUnion<T, U> = [T] extends [U] ? true : false;
+
+type CompareRes1 = CompareUnion<1 | 2, 1 | 2 | 3>; // true
+type CompareRes2 = CompareUnion<1 | 2, 1>; // false
+~~~
+通过将参数与条件都包裹起来的方式，我们对联合类型的比较就变成了数组成员类型的比较，在此时就会严格遵守类型层级一文中联合类型的类型判断了（子集为其子类型）。
+
+另外一种情况则是，当我们想判断一个类型是否为 `never` 时，也可以通过类似的手段：
+~~~ts
+type IsNever<T> = [T] extends [never] ? true : false;
+
+type IsNeverRes1 = IsNever<never>; // true
+type IsNeverRes2 = IsNever<"linbudu">; // false
+~~~
+这里的原因其实并不是因为分布式条件类型。我们此前在类型层级中了解过，当条件类型的判断参数为 `any`，会直接返回条件类型两个结果的联合类型。而在这里其实类似，当通过泛型传入的参数为 `never`，则会直接返回 `never`。
+
+需要注意的是这里的 `never` 与 `any` 的情况并不完全相同，`any` 在直接**作为判断参数时、作为泛型参数时**都会产生这一效果：
+~~~ts
+// 直接使用，返回联合类型
+type Tmp1 = any extends string ? 1 : 2;  // 1 | 2
+
+type Tmp2<T> = T extends string ? 1 : 2;
+// 通过泛型参数传入，同样返回联合类型
+type Tmp2Res = Tmp2<any>; // 1 | 2
+
+// 如果判断条件是 any，那么仍然会进行判断
+type Special1 = any extends any ? 1 : 2; // 1
+type Special2<T> = T extends any ? 1 : 2;
+type Special2Res = Special2<any>; // 1
+~~~
+而 `never` 仅在作为泛型参数时才会产生：
+~~~ts
+// 直接使用，仍然会进行判断
+type Tmp3 = never extends string ? 1 : 2; // 1
+
+type Tmp4<T> = T extends string ? 1 : 2;
+// 通过泛型参数传入，会跳过判断
+type Tmp4Res = Tmp4<never>; // never
+
+// 如果判断条件是 never，还是仅在作为泛型参数时才跳过判断
+type Special3 = never extends never ? 1 : 2; // 1
+type Special4<T> = T extends never ? 1 : 2;
+type Special4Res = Special4<never>; // never
+~~~
+这里的 `any`、`never` 两种情况都不会实际地执行条件类型，而在这里我们通过包裹的方式让它不再是一个孤零零的 `never`，也就能够去执行判断了。
+
+之所以分布式条件类型要这么设计，我个人理解主要是为了处理联合类型这种情况。就像我们到现在为止的伪代码都一直使用数组来表达联合类型一样，在类型世界中联合类型就像是一个集合一样。通过使用分布式条件类型，我们能轻易地进行集合之间的运算，比如交集：
+~~~ts
+type Intersection<A, B> = A extends B ? A : never;
+
+type IntersectionRes = Intersection<1 | 2 | 3, 2 | 3 | 4>; // 2 | 3
+~~~
+进一步的，当联合类型的组成是一个对象的属性名（`keyof IObject`），此时对这样的两个类型集合进行处理，得到属性名的交集，那我们就可以在此基础上获得两个对象类型结构的交集。除此以外，还有许多相对复杂的场景可以降维到类型集合，即联合类型的层面，然后我们就可以愉快地使用分布式条件类型进行各种处理了。关于类型层面的集合运算、对象结构集合运算，我们都会在小册的后续章节有详细的讲解。
+
+### IsAny 与 IsUnknown
+上面我们通过比较 `hack` 的手段得到了 `IsNever`，那你一定会想是否能实现 `IsAny` 与 `IsUnknown` ？当然可以，只不过它们的实现稍微复杂一些，并且并不完全依赖分布式条件类型。
+
+首先是 `IsAny`，上面已经提到我们并不能通过 `any extends Type` 这样的形式来判断一个类型是否是 `any` 。而是要利用 `any` 的另一个特性：身化万千：
+~~~ts
+type IsAny<T> = 0 extends 1 & T ? true : false;
+~~~
+`0 extends 1` 必然是不成立的，而交叉类型 `1 & T` 也非常奇怪，它意味着同时符合字面量类型 `1` 和另一个类型 `T` 。在学习交叉类型时我们已经了解，对于 `1` 这样的字面量类型，只有传入其本身、对应的原始类型、包含其本身的联合类型，才能得到一个有意义的值，并且这个值一定只可能是它本身：
+~~~ts
+type Tmp1 = 1 & (0 | 1); // 1
+type Tmp2 = 1 & number; // 1
+type Tmp3 = 1 & 1; // 1
+~~~
+这是因为交叉类型**就像短板效应一样，其最终计算的类型是由最短的那根木板**，也就是最精确的那个类型决定的。这样看，无论如何 `0 extends 1` 都不会成立。
+
+但作为代表任意类型的 `any` ，它的存在就像是开天辟地的基本规则一样，如果交叉类型的其中一个成员是 `any`，那短板效应就失效了，此时最终类型必然是 `any` 。
+~~~ts
+type Tmp4 = 1 & any; // any
+~~~
+而对于 `unknown` 并不能享受到这个待遇，因为它并不是“身化万千”的：
+~~~ts
+type Tmp5 = 1 & unknown; // 1
+~~~
+因此，我们并不能用这个方式来写 `IsUnknown`。其实现过程要更复杂一些，我们需要过滤掉其他全部的类型来只剩下 `unknown` 。这里直接看实现：
+~~~ts
+type IsUnknown<T> = IsNever<T> extends false
+  ? T extends unknown
+    ? unknown extends T
+      ? IsAny<T> extends false
+        ? true
+        : false
+      : false
+    : false
+  : false;
+~~~
+首先过滤掉 `never` 类型，然后对于 `T extends unknown` 和 `unknown extends T`，只有 `any` 和 `unknown` 类型能够同时符合（还记得我们在类型层级一节进行的尝试吗？），如果再过滤掉 `any`，那肯定就只剩下 `unknown` 类型啦。
+
+这里的 `IsUnknown` 类型其实可以使用更简单的方式实现。利用 `unknown extends T` 时仅有 `T` 为 `any` 或 `unknown` 时成立这一点，我们可以直接将类型收窄到 `any` 与 `unknown`，然后在去掉 `any` 类型时，我们仍然可以利用上面的身化万千特性：
+~~~ts
+type IsUnknown<T> = unknown extends T
+  ? IsAny<T> extends true
+    ? false
+    : true
+  : false;
+~~~
+
+## 内置工具类型基础
+在很多时候，工具类型其实都被妖魔化了。它仿佛是武林中人人追捧的武功秘籍，修炼难度极其苛刻，掌握它就能立刻类型编程功力大涨，成为武林盟主傲世群雄。然而，这是非常错误的想法。
+
+首先，工具类型学起来不难，它的概念也不复杂。很多同学觉得难，是因为还没完全熟悉所有类型工具，对类型系统还懵懵懂懂的情况下，就直接一头扎进各种复杂的类型编程源码中去。其实只要我们熟悉了类型工具的使用，了解类型系统的概念，再结合小册中对类型编程 4 大范式进行的分类解析，再复杂的类型编程也会被你所掌握的。
+
+其次，**工具类型和类型编程并不完全等价**。虽然它是类型编程最常见的一种表现形式，但不能完全代表类型编程水平，如很多框架代码中，类型编程的复杂度也体现在**函数的重载与泛型约束**方面。但通过工具类型，我们能够更好地理解类型编程的本质。
+
+### 工具类型的分类
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
