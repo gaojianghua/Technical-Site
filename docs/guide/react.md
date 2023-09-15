@@ -6100,77 +6100,1294 @@ export default useForm;
 3. **children**： 零个或多个子节点，可以是任何 `React` 节点。
 :::
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+举个小例子：
+~~~tsx
+import React from "react";
+
+const Index: React.FC = () => {
+  const children = React.cloneElement(
+    <div>大家好，我是小杜杜，一起玩转Hooks吧！</div>,
+    {
+      book: "玩转 React Hooks",
+    }
+  );
+
+  console.log(children);
+  return <>{children}</>;
+};
+
+export default Index;
+~~~
+控制台中查看 `children` 的结果，可以看出 `React.cloneElement` 将 `book` 这个属性赋值给了 `div`，而 `children` 实际上等价于：
+~~~tsx
+const children = (
+  <div book="玩转 React Hooks">大家好，我是小杜杜，一起玩转Hooks吧！</div>
+);
+~~~
+所以，我们可以通过 `React.cloneElement` 给表单控件加入 `value`、`onChange` 事件，使其受控。
+
+#### 检查 children 元素
+在 `React.cloneElement` 要注意一个点，就是它的第一个参数 `element`，这个参数代表为：**有效的 React 元素**，换言之，`Form.Item` 所包裹的表单控件必须要符合这个条件。
+
+而对于 `Form.Item` 来说，表单控件就是 `children` 属性，但 `children` 属性可能具备多种情况，比如字符串、单节点、多节点等情况，不同的情况，`children` 的形式不同，如：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/9e338a0bc76a475187df786c3a44905b~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+很明显，只有单节点的情况才符合 `React.cloneElement` 的条件，至于其他情况，我们均不处理，只需正常展示即可。
+
+单节点的本质是 `React` 元素，所以我们可以借助 `React.isValidElement` 来帮助我们判别下是否属于有效的 `React` 元素，如果是，则对其受控，如果不是，则不处理。如：
+~~~ts
+const FormItem = (props: any) => {
+  const { name, children } = props;
+  const update = useUpdate();
+  
+  const contextValue = useContext(FormContext);
+  const { getFieldValue, dispatch, registerField, unRegisterField } = contextValue;
+  
+  let childrenPro;
+
+  // 利用 isValidElement 来判断传递的数据是否是 React.ReactElement. 注意他可以判断多节点的情况，和无值的情况
+  if (isValidElement(children) && name) {
+    
+    // 利用 cloneElement 给传递的组件加入 value 和 onChange 属性，剥离出对应的方法
+    childrenPro = cloneElement(children as React.ReactElement, {
+      value: getFieldValue(name),
+      onChange: (v: any) => {
+        let payload: any = {};
+        payload[name] = v.target.value;
+
+        // 更新 store 中的值
+        dispatch({
+          type: "updateValue",
+          name
+          ,
+          value: v.target?.value,
+        });
+
+        update(); // 触发更新
+      },
+    });
+  } else {
+    childrenPro = children;
+  }
+
+  return <Layout {...props}>{childrenPro}</Layout>;
+};
+~~~
+在 `cloneElement` 中，共涉及三个部分，分别是：
+1. **getFieldValue**： 获取对应表单的 `value`；
+2. **dispatch**： 触发更新，用于更新 `useForm` 中的 `store`；
+3. **update**： 强制刷新表单控件（有缺陷，后续会讲到）。
+
+#### 值的获取和更新
+当学习完 `cloneElement` 和 `isValidElement` 后，值的获取和更新就变得非常简单，只要简单处理下 `useForm` 的核心：`FormStore` 即可。如：
+~~~ts
+class FormStore {
+  store: DataProps = {}; // 管理表单的整体数据
+
+  // 用于暴露方法
+  public getDetail = (): FormInstance => ({
+    getFieldValue: this.getFieldValue,
+    dispatch: this.dispatch,
+  });
+
+  // 获取对应的值
+  getFieldValue = (name: NameProps) => {
+    return this.store[name];
+  };
+
+  // 触发更新
+  dispatch = (action: ReducerAction) => {
+    switch (action.type) {
+      case "updateValue": {
+        const { name, value } = action;
+        this.updateValue(name, value);
+        break;
+      }
+      default:
+    }
+  };
+
+  // 更新
+  updateValue = (name: NameProps, value: any) => {
+    this.store = {
+      ...this.store,
+      [name]: value
+    };
+  };
+}
+~~~
+只需要一个 `store` 变量去整体维护表单的值即可。
+
+#### 强制更新表单
+当我们使用 `dispatch` 后，可以通过 `useUpdate` 实现对应控件的更新，但这么做存在一个缺陷：更新表单的操作，并不在 `useForm` 中，如果之后的操作涉及到更新（如：重置），是不是还要单独处理一套新的逻辑？
+
+很明显，这样做多此一举，所以我们将更新的逻辑单独存储在 `FormStore` 中（`update_store`），有需要的话直接调用即可。
+
+所以，我们需要记录当前的表单控件，一个 `name` 对应一个表单控件，同时在 `Form.Item` 进行注册和卸载，将更新方法进行保存。
+
+然后，当值发生改变后，判断对应的表单控件进行控制，执行更新方法，使视图发生改变。如：  
+~~~ts
+// Form.Item
+const FormItem = (props: any) => {
+  const contextValue = useContext(FormContext);
+  const { getFieldValue, dispatch, registerField, unRegisterField } =
+    contextValue;
+
+  // 优化
+  const updateChange = useCreation(() => {
+    return {
+      updateValue: () => update(),
+    };
+  }, [contextValue]);
+
+  useEffect(() => {
+    // 注册
+    name && registerField(name, updateChange);
+    return () => {
+      //卸载
+      name && unRegisterField(name);
+    };
+  }, [updateChange]);
+  
+  ...
+}
+
+// FormStore
+class FormStore {
+  update_store: DataProps = {}; // 保存更新的对象
+  
+  // 用于暴露方法
+  public getDetail = (): FormInstance => ({
+    unRegisterField: this.unRegisterField,
+    registerField: this.registerField,
+    ...
+  });
+  
+    // 注册表单方法
+  registerField = (name: NameProps, updateChange: DataProps) => {
+    this.update_store[name] = updateChange;
+  };
+
+  // 卸载表单方法
+  unRegisterField = (name: NameProps) => {
+    delete this.update_store[name];
+  };
+  
+    // 更新
+  updateValue = (name: NameProps, value: any) => {
+    this.store = {
+      ...this.store,
+      [name]: value,
+    };
+
+    this.updateStoreField(name);
+  };
+
+  // 更新对应的表单
+  updateStoreField = (name: NameProps) => {
+    const update = this.update_store[name];
+    if (update) update?.updateValue();
+  };
+}
+~~~
+
+### 表单的基本操作
+表单的基本操作有：初始化、提交、重置三个功能，简单分析下对应的功能点，来帮助我们更好地掌握表单。
+- **initialValues**： 初始化，如果存在，则赋值给 `FormStore` 中的 `store`，并将值进行保留，用于重置；
+- **onFinish**： 提交，将 `store` 的数据传递给 `onFinish`；
+- **onReset**： 重置，进行表单重置，如果存在 `initialValues`，则设为初始化值。
+
+#### 初始化
+在初始化的过程中，我们将 `initialValues`（初始值）传入给 `useForm`，并将其赋到 `FormStore` 中的 `store` 和 `initialValues` 中。
+~~~ts
+// Form
+const [formRef] = useForm(initialValues);
+
+// useForm
+const useForm = (initialValues: DataProps) => {
+  ...
+  if (!formRef.current) {
+    formRef.current = new FormStore(initialValues).getDetail();
+  }
+  ...
+};
+
+// FormStore
+class FormStore {
+  ...
+  initialValues: DataProps = {}; // 保存初始值
+
+  constructor(initialValues: DataProps) {
+    this.store = initialValues;
+    this.initialValues = initialValues;
+  }
+  ...
+}
+~~~
+#### 提交、重置
+跟刷新的逻辑一样，我们希望 `useForm` 去统一管理表单的提交和重置，将 `onFinish` 和 `onReset` 通过 `setConfigWays` 保留到 `FormStore` 的 `configWays` 中，然后再提交和重置的时候进行调用即可。如：
+~~~tsx
+// Form
+const Index = (props: FormProps) => {
+  ...
+  formRef.setConfigWays({
+    onFinish,
+    onReset,
+  });
+
+  return (
+    <form
+      {...payload}
+      onSubmit={(e) => {
+        // 阻止默认事件
+        e.preventDefault();
+        e.stopPropagation();
+        formRef.submit();
+      }}
+      onReset={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        formRef.resetFields(); /* 重置表单 */
+      }}
+    >
+      <FormContext.Provider value={formRef}>{children}</FormContext.Provider>
+    </form>
+  );
+};
+
+// FormStore
+class FormStore {
+   ...
+   configWays: ConfigWayProps = {}; // 收录对应的方法集合
+   ...
+    
+  // 设置方法区间
+  setConfigWays = (configWays: ConfigWayProps) => {
+    this.configWays = configWays;
+  };
+
+  // 用于表单提交
+  submit = () => {
+    const { onFinish } = this.configWays;
+
+    onFinish && onFinish(this.store);
+  };
+
+  // 重置表单
+  resetFields = () => {
+    const { onReset } = this.configWays;
+    Object.keys(this.store).forEach((key) => {
+      // 重置表单的时候，如果有初始值，就用初始值，没有就删除
+      this.initialValues[key]
+        ? (this.store[key] = this.initialValues[key])
+        : delete this.store[key];
+      this.updateStoreField(key);
+    });
+    onReset && onReset();
+  };
+}
+~~~
+这样，一个基本的表单组件就完成了
+
+### 表单核心：FormStore
+在整个表单系统中，我们通过 `useForm` 中的 `FormStore` 去管理整个表单，所以 `FormStore` 是 `Form` 组件的核心。
+
+`FormStore` 不但承担表单的数据流向，还通过 `getDetail()` 提供各种相关的状态方法，通过这些 API 实现**表单的提交、重置、验证**等功能，但要注意，这些 `API` 并不是完全给开发者使用，也有给 `Form`、`FormItem` 使用的实例，整理如下：
+
+
+FormStore 提供的方法名 | 作用 | 说明
+-----------------|----|---
+registerField | 注册表单控件 | 提供两个参数，第一个参数 name，用于区分具体的表单控件，第二参数 updateChange，存放具体的内容，如：触发更新的函数、校验规则等。用来注册 store 等信息。
+unRegisterField | 卸载表单控件 | 提供一个参数 name，用于卸载表单控件，清除 store 等信息。
+dispatch | 用于调取 FormStore 中的内部方法 | 提供一个参数 action，类似于 redux 中的 dispatch，其中 type 为必填，通过 type 调用具体的内部方法。
+setConfigWays | 绑定外部方法 | 提供一个参数：callbacks，对象，存储外部的方法，如提交、重置等。
+submit | 表单提交 | 提供一个参数：cb（回调方法），首先执行表单校验，如果校验失败，则返回校验失败的表单控价和此时 store 的数据；如果校验成功，则直接返回 store 的数据。
+resetFields | 重置表单 | 提供一个参数：cb（回调方法），分为两个部分，第一个部分，有初始值的表单控件，进行还原，第二个部分，还原表单控件的校验项。
+getFieldValue | 获取对应表单控件的值 | 提供一个可选参数：name，如果有 name，则返回对应控件的值，如果无，则返回全部的 store 数据。
+getFieldValidate | 获取表单的验证 | 用于检测表单控件的值成功还是失败。
+
+::: tip
+其中，`registerField、unRegisterField、dispatch、setConfigWays` 提供给 `From、Form` 组件中使用，`submit、resetFields、getFieldValue、getFieldValidate` 可提供开发者使用。
+:::
+
+### 表单校验
+表单校验是表单组件中最常见、最核心的功能之一，对整个数据流向有着至关重要的作用。在此之前，我们先来看看 `Ant Design` 中的表单验证：
+~~~tsx
+// AntDForm
+const Index: React.FC = () => {
+  return (
+    <>
+     
+      <Form
+        ...
+        onFinish={(data: any) => {
+          console.log("表单数据:", data);
+        }}
+        onFinishFailed={(errorInfo: any) => {
+          console.log("Failed:", errorInfo);
+        }}
+      >
+        ...
+        <Form.Item
+          label="必填"
+          name="rules"
+          rules={[{ required: true, message: "请输入规则" }]}
+        >
+          <Input placeholder="请输入作者" />
+        </Form.Item>
+
+        <Form.Item
+          rules={[{ required: true, message: "请输入必填" }]}
+          label="选择框必填"
+          name="select"
+        >
+          <Select
+            style={{ width: 120 }}
+            allowClear
+            options={[
+              { value: "React", label: "React" },
+              { value: "Vue", label: "Vue" },
+              { value: "Hooks", label: "Hooks" },
+            ]}
+          />
+        </Form.Item>
+        ...
+    </>
+  );
+};
+~~~
+我们发现校验的场景共有三处，分别是：
+- **表单提交**。 点击提交按钮，对所有表单控件进行校验，校验失败后，框的状态变红，下方出现提示语，触发 `onFinishFailed`，而不会触发 `onFinish` 事件。
+- **表单控件修改**。 当 `onChange` 发生变化时，触发单个控件校验。
+- **重置表单**。 点击重置按钮，将所有表单控件的状态还原成初始化。
+
+很显然，每个表单控件拥有三个状态，通过这些状态来判断对应的模式，不同的状态对应不同的模式、产生不同的效果：
+1. **pen**： 等待状态，控件初始化状态，或重置表单时，就给控件为 `pen` 状态；
+2. **res**： 成功状态，表单校验成功后，给予此状态，当所有表单控件状态校验成功后，触发 `onFinish`；
+3. **rej**： 失败状态，表单校验失败后，给予此状态，对应的表单控件边框变红，下方出现错误提示语。
+
+再来看看校验的规则（`rules`）格式：
+~~~ts
+rules=[{ required: true, message: "请输入规则" }]
+~~~
+显然，`rules` 的结构是数组，`required` 是必填字段，`message` 是错误信息字段，除了必填字段之外，还具备正则校验、自定义校验等。
+
+那么，我们可以这样定义 `rules` 的字段：
+~~~ts
+rules => validateRuleProps = {
+  required?: boolean => 是否必填
+  message?: string => 错误提示的提示语
+  rule?: RegExp | ((value: any) => boolean) => 正则、自定以校验
+}
+~~~
+其中，必填字段与其他校验有所不同，因为 `required` 需要控制 `label` 前面的样式 `*`，并且与其他规则是**共存**的关系，所以必填应该与其他校验分开来存储。
+
+在 `FormStore` 中的校验结构：
+~~~ts
+validateRule = {
+    [name] => validateRule = {
+       required: boolean  => 是否必填
+       requiredMessage?: string => 必填错误的提示语
+       message: string => 具体的错误提示语
+       status: pen ｜ res ｜ rej => 状态控制
+       rules: rulesProps => 规则数据 => {
+           rule: RegExp | ((value: any) => boolean) => 正则、自定义校验
+           message：string => 对应的校验提示语
+       }
+    }
+}
+~~~
+- `validateRule`：校验表单的规则结构；
+- `name`：`Form.Item` 中的 `name`，每个 `Form.Item` 中的 `name` 应该是唯一值；
+- `required、message、status`：每个表单控件的状态，并且是控制当前 `Form.Item` 的单一字段；
+- `rules`：对应 `rules` 的数组（过滤 `required` 的规则）。
+
+整体来看校验的内部流程图：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/6e5e604a53de439e83bb47de9def9eef~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+### 注册、卸载校验
+在校验的过程中，每个 `Form.Item` 都应该具备 `rules` 字段，并且每个 `Form.Item` 中的 `rules` 不同，故 `rules` 应放入 `updateChange` 中，同时在 `FormStore` 中进行注册。
+
+**注册：**
+~~~ts
+// formItem
+const FormItem = (props: FormItemProps) => {
+  ...
+  const updateChange: updateProps = useCreation(() => {
+    return {
+      message: props?.message || `请填写${props?.label}字段`,
+      required: props?.required,
+      rules: props?.rules,
+      updateValue: () => update(),
+    };
+  }, [contextValue, name]);
+
+  useEffect(() => {
+    // 注册
+    name && registerField(name, updateChange);
+    return () => {
+      //卸载
+      name && unRegisterField(name);
+    };
+  }, [updateChange]);
+  
+  ...
+}
+~~~
+在必填校验中，具备两种状态，分别是 `required` 和 `rules` 中的 `required`， 所以在 `updateChange` 设置 `rules`、`required`、`message` 三个字段。
+
+**创建一个验证模块：**
+~~~ts
+// FormStore
+class FormStore {
+  ...
+  validateRule: validateRule = {}; // 校验表单的规则
+  
+  // 注册表单方法
+  registerField = (name: NameProps, updateChange: updateProps) => {
+    ...
+    this.validateRule[name] = this.createValidate(name, updateChange);
+  };
+
+  // 创建一个验证模块
+  createValidate(
+    name: NameProps,
+    updateChange: updateProps
+  ): validateRuleListProps | null {
+    const { rules = [], required = false, message = "" } = updateChange;
+    if (rules.length === 0 && !required) return null;
+
+    // 抽离出必填项
+    const requiredFlag = required || rules.find((v) => v?.required)?.required;
+
+    // 如果存在必填则更新对应表单
+    if (requiredFlag) this.updateStoreField(name);
+
+    return {
+      message,
+      requiredMessage: message,
+      required: requiredFlag || false,
+      status: "pen", // 设置为等待状态
+      rules: rules.filter((v) => v?.rule), // 过滤掉有required的项
+    };
+  }
+  
+  ...
+}
+~~~
+在验证模块中，`rules` 和 `required` 不存在时，则直接赋予 `null`。如果存在，抽离出必填项，然后将其赋予到 `validateRule` 中。
+::: tip
+注：`validateRule` 中的 `message` 并不是 `updateChange` 中的 `message`，而是校验失败后的 `message`，由于 `required` 是单独处理，需要单独记录对应的错误提示，所以会存在 `requiredMessage` 这个字段。
+:::
+
+**卸载：**
+
+卸载表单控件后，同时卸载对应的规则。
+~~~ts
+class FormStore {
+  ...
+  
+  // 卸载表单方法
+  unRegisterField = (name: NameProps) => {
+    ...
+    delete this.validateRule[name];
+  };
+  
+  ...
+}
+~~~
+
+### 提交校验
+当点击提交按钮时，对整个表单控件（`validateRule`）进行校验，如果所有的表单控件通过校验，则触发 `onFinish`，表单校验成功；反之，校验失败，状态为 `rej` 的表单控件**更新视图**。
+
+**验证表单：**
+~~~ts
+// FormStore
+class FormStore {
+  ...
+  // 用于表单提交
+  submit = () => {
+    const status = this.validateField();
+    const { onFinish } = this.configWays;
+    
+    status && onFinish && onFinish(this.store);
+  };
+  
+  // 用于集中表单验证
+  validateField = () => {
+    let flag = true;
+    Object.keys(this.validateRule).forEach((name) => {
+      const status = this.validateFieldValue(name);
+      if (status === "rej") flag = false;
+    });
+    return flag;
+  };
+  
+  // 用于单个验证表单
+  validateFieldValue = (name: NameProps) => {
+    const data = this.validateRule[name];
+    if (!data) return null;
+    const value = this.store[name];
+    const last_status = data.status;
+    const last_message = data.message;
+    let status: validateStatusProps = "res";
+    if (data.required && !value) {
+      status = "rej";
+      data.message = data?.requiredMessage || "";
+    }
+
+    data.rules.map((v) => {
+      if (status !== "rej" && value && v.rule) {
+        if (v.rule instanceof RegExp && !v.rule.test(value)) {
+          status = "rej";
+          data.message = v?.message || "";
+        }
+
+        if (typeof v.rule === "function" && !v.rule(value)) {
+          status = "rej";
+          data.message = v?.message || "";
+        }
+      }
+    });
+
+    // 如果状态或错误提示不一致，则进行更新
+    if (last_status !== status || last_message !== data.message)
+      this.updateStoreField(name);
+
+    data.status = status;
+    return status;
+  };
+}
+~~~
+- **this.validateField()**： 集中校验表单控件，如果返回的状态为 `true`，则校验成功，触发 `onFinish`。
+- **this.validateFieldValue()**： 校验单个表单控件，如果校验失败，`status` 的状态为 `rej`。其中规则校验分为必填、正则、自定义校验三种，`message` 则是对应规则的 `message`。
+- **this.updateStoreField()**： 更新对应的表单控件。
+
+::: tip
+注：在校验过程中，无论是 `status` 的改变，还是 `message` 的改变，都无法引起视图的更新，所以需要通过 `useUpdate` 来刷新视图。
+:::
+
+### 异步校验
+在 `validateFieldValue` 中，我们通过比较每个表单控件的 `status、message` 来判断是否触发更新校验，但对于表单而言，校验本身步骤并不影响主流程，所以校验的功能通常采取异步完成。此时，我们可以借助 `Promise` 来帮助我们。
+
+**Promise 异步校验：**
+~~~ts
+//FormStore
+class FormStore {
+  ...
+  validateQueue: any[] = []; // 校验队列
+  
+  ...
+  // 用于单个验证表单
+  validateFieldValue = (name: NameProps) => {
+    ...
+  
+    // 如果状态或错误提示不一致，则进行更新
+    if (last_status !== status || last_message !== data.message) {
+      const validateUpdate = this.updateStoreField.bind(this, name);
+      this.validateQueue.push(validateUpdate);
+    }
+
+    this.promiseValidate();
+    ...
+  };
+
+  // 异步校验队列
+  promiseValidate = () => {
+    if (this.validateQueue.length === 0) return null;
+    Promise.resolve().then(() => {
+      do {
+        let validateUpdate = this.validateQueue.shift();
+        validateUpdate && validateUpdate(); /* 触发更新 */
+      } while (this.validateQueue.length > 0);
+    });
+  };
+}
+~~~
+其中，`validateQueue` 是校验队列，如果 `validateQueue` 为空，则不进行校验，否则通过 `Promise` 来触发校验。
+
+### 更新视图
+视图的更新存在两个部分，分别是**红框、错误提示语**两个部分，其中红框可以利用 `Ant Desgin` 中的 `status` 属性。
+
+**获取表单的验证值：**
+~~~ts
+// FormStore
+class FormStore {
+  ..
+
+  // 用于暴露方法
+  public getDetail = (): FormInstance => ({
+    ...
+    getFieldValidate: this.getFieldValidate,
+  });
+  
+  // 获取表单的验证值
+  getFieldValidate = (name: NameProps) => {
+    return this.validateRule[name];
+  };
+  
+  ....
+}
+~~~
+**红框效果：**
+~~~tsx
+// formItem
+const FormItem = (props: FormItemProps) => {
+    const { getFieldValidate } = contextValue;
+    ...
+    if (isValidElement(children) && name) {
+      childrenPro = cloneElement(children as React.ReactElement, {
+        ...
+        status: getFieldValidate(name)?.status === "rej" ? "error" : undefined,
+        });
+    }
+    return (
+      <Layout {...props} {...getFieldValidate(name)}>
+        {childrenPro}
+      </Layout>
+    );
+}
+~~~
+**提示语：**
+~~~tsx
+// Layout
+const Index = ({ children, status, message }) => {
+    const classRule = useCss({
+      color: "red",
+      fontSize: 12,
+      lineHeight: "22px",
+      padding: "0 6px",
+    });
+    
+    return (
+  <>
+    <Row gutter={8}>
+      ...
+      <Col span={9}>
+        <div>{children}</div>
+        {status === "rej" && <div className={classRule}>{message}</div>}
+      </Col>
+    </Row>
+  </>
+}
+~~~
+::: tip
+其中，第一个和第二个是必填的两种模式，第三个的规则是正则，第四个的规则是自定义校验，第五个是：必填 + 正则 + 自定义。
+:::
+
+### 更新校验
+更新的逻辑是在表单控件的**值**改变时触发，所以我们直接在 `FormItem` 中 `onChange` 触发校验即可。
+~~~ts
+// FormItem
+dispatch({
+  type: "validateField",
+  name,
+});
+
+// FormStore
+class FormStore {
+  ...
+  dispatch = (action: ReducerAction) => {
+    switch (action.type) {
+      ...
+      // 触发检验
+      case "validateField": {
+        const { name } = action;
+        this.validateFieldValue(name); // 触发单个更新
+        break;
+      }
+      default:
+    }
+  };
+}
+~~~
+
+### 表单控件元素
+这里演示的表单控件是 `Input`， 但不同的表单控件 `onChange` 的返回可能不同，所以我们只需要将值处理后给 `value` 即可（这里多加入 `Select` ）。
+~~~ts
+// formItem
+onChange: (v: any) => {
+  // 判断属于那种控件
+  const value = v?.target?.localName === "input" ? v?.target?.value : v;
+  
+  ...
+}
+~~~
+
+### 失败校验（onFinishFailed）
+数据校验失败后，需要把对应的错误类型和当前的表单值传入到 `onFinishFailed` 中，也就是 `status === "rej"` 的情况，如：
+~~~ts
+// FormStore
+class FormStore {
+  ...
+  
+  // 用于表单提交
+  submit = () => {
+    const status = this.validateField();
+
+    const { onFinish, onFinishFailed } = this.configWays;
+
+    if (!status) {
+      const errorFields = this.errorValidateFields();
+      onFinishFailed &&
+        onFinishFailed({
+          errorFields,
+          values: this.store,
+        });
+    } else {
+      onFinish && onFinish(this.store);
+    }
+  };
+
+  // 错误收集
+  errorValidateFields = () => {
+    let errorList: any = [];
+    Object.keys(this.validateRule).forEach((name) => {
+      const data = this.validateRule[name];
+      if (data && data.status === "rej") {
+        errorList = [...errorList, { name, errors: data.message }];
+      }
+    });
+    return errorList;
+  };
+  ...
+}
+~~~
+
+### 取消校验（重置按钮）
+所有的表单控件都通过 `status === "rej"` 来控制，所以只需要将 `status` 的状态改为 `pen` 即可，同时状态为 `rej` 更改为 `pen`，需要刷新视图。
+~~~ts
+// FormStore
+class  FormStore {
+  ...
+  
+  // 重置表单
+  resetFields = () => {
+    ...
+
+    Object.keys(this.validateRule).forEach((key) => {
+      const data = this.validateRule[key];
+      if (data) {
+        if (data.status === "rej") this.updateStoreField(key);
+        data.status = "pen";
+      }
+    });
+    
+    ...
+  };
+}
+~~~
+
+### 暴露实例方法
+之所以使用 `useForm`，是为了更好管理 `Form` 表单的数据流，通过 `useForm` 去暴露对应的方法实例，`Form` 的 `props` 去管理表单数据，同时还能直接通过实例去管理整个数据流，从而加强整个组件的灵活性。
+
+#### 转发 ref
+要想拿到对应的实例，就需要 `Form` 组件被 `ref` 标记，通过 `ref` 拿到 `useForm(FormStore)` 的核心方法。但 `ref` 本身并不能作为 `props` 传入组件内部，所以需要 `forwardRef` 和 `useImperativeHandle` 来转发 `ref`，通过 `ref` 标记 `Form`，来获取 `formRef`（即 `FormStore` 的 `getDetail` 方法）。
+
+::: tip
+`forwardRef`：用于转发 `ref`。
+
+`useImperativeHandle`：可以通过 `forwardRef` 暴露给父组件的实例值，所谓的实例值是指值和函数。
+:::
+~~~ts
+//Form
+import { forwardRef, useImperativeHandle } from "react";
+  const Index = (props: FormProps, ref: any) => {
+  ...
+  const [formRef] = useForm(initialValues);
+
+  /* Form 能够被 ref 标记，并操作实例。 */
+  useImperativeHandle(ref, () => formRef, []);
+
+  ...
+};
+
+export default forwardRef(Index);
+~~~
+此时就通过 `ref` 来获取实例方法，如：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/25a8a3adc345474fb5a4a590d24633e7~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+但这里拿到了整个 `FormStore` 暴露的方法，对于外部开发者而言，并非所有的方法都需要，比如：`registerField`（注册表单方法）、`unRegisterField`（卸载表单方法）、`dispatch`（方法派发）、`setConfigWays`（设置方法区间），它们只适用于组件内部，并不适用于外部开发者，所以我们需要剔除这些方法。
+
+**剔除不需要暴露的方法：**
+~~~ts
+// 用于剔除方法，不提供给外部使用
+const {
+  registerField,
+  unRegisterField,
+  dispatch,
+  setConfigWays,
+  ...formRefInstance
+} = formRef;
+
+/* Form 能够被 ref 标记，并操作实例。 */
+useImperativeHandle(ref, () => formRefInstance, []);
+~~~
+
+### 实例方法
+如果存在实例方法，则直接去使用。如：
+~~~ts
+// Form
+const Index = (props: FormProps, ref: any) => {
+  const { form, ...} = props;
+  
+  const [formRef] = useForm(initialValues, form);
+  ...
+}
+
+// useForm
+const useForm = (initialValues: DataProps, formInstance?: FormInstance) => {
+  const formRef = useRef<FormInstance | null>();
+
+  if (!formRef.current) {
+    // 如果存在实例，则直接使用
+    if (formInstance) {
+      formRef.current = formInstance;
+    } else {
+      // 创建一个实例，帮我们获取对应的方法，而 getDetail 是暴露的方法集合
+      formRef.current = new FormStore(initialValues).getDetail();
+    }
+  }
+
+  return [formRef.current];
+};
+~~~
+
+### 方法优化
+因为我们可以直接获取 `ref` 的实例，所以我们可以直接通过实例去完成一些操作，比如：获取表单数据、提交、重置等功能，但也要再对应的方法处理兼容问题，使实例可以正常运行，如：
+~~~ts
+// FormStore
+class FormStore {
+  ...
+  
+  // 获取对应的值
+  getFieldValue = (name?: NameProps) => {
+    if (name) return this.store[name];
+    return this.store;
+  };
+
+  // 用于表单提交
+  submit = (cb?: any) => {
+    const status = this.validateField();
+
+    const { onFinish, onFinishFailed } = this.configWays;
+
+    if (!status) {
+      const errorFields = this.errorValidateFields();
+
+      cb &&
+        cb({
+          errorFields,
+          values: this.store,
+        });
+
+      onFinishFailed &&
+        onFinishFailed({
+          errorFields,
+          values: this.store,
+        });
+    } else {
+      onFinish && onFinish(this.store);
+      cb && cb(this.store);
+    }
+  };
+  
+  ...
+}
+~~~
+
+## CheckCard：多选卡片
+**CheckCard**： 多选卡片，用于集合多种相关说明信息，并且可以被选择，用在 `Form` 表单中，成为一个效果非常好的表单控件。它分为两部分，分别是：
+- **CheckCard**： 用于展示头像、标题、描述信息等，具备选中、禁用、加载等状态，可单独使用。
+- **CheckCard.Group**： 集中控制 `CheckCard`，使其受控，可配合 `Form` 组件联合使用。
+
+### CheckCard
+我们先不用考虑 `CheckCard.Group` 的实现，先去实现 `CheckCard`，再来实现 `CheckCard.Group`。
+
+#### 基本布局
+在 `CheckCard` 中具备四种布局元素，分别是 `avatar`（头像）、 `title`（标题）、`description`（描述信息）、`extra`（右上角额外信息）。这里用 `useCss` 来简单实现 `CheckCard` 的样式即可：
+~~~tsx
+const CheckCard = (props: CheckCardProps) => {
+
+  const dataMemo = useCreation(() => {
+    const avatarDom = avatar ? (
+      <div className={styleDateMemo["check-card-avatar"]}>
+        {typeof avatar === "string" ? (
+          <Avatar size={48} shape="square" src={avatar} />
+        ) : (
+          avatar
+        )}
+      </div>
+    ) : null;
+
+    const header = (title ?? extra) !== null && (
+      <div className={styleDateMemo["check-card-header"]}>
+        <div className={styleDateMemo["check-card-title"]}>{title}</div>
+        {extra && (
+          <div className={styleDateMemo["check-card-extra"]}>{extra}</div>
+        )}
+      </div>
+    );
+
+    const descriptionDom = description ? (
+      <div className={styleDateMemo["check-card-description"]}>
+        {description}
+      </div>
+    ) : null;
+
+    return (
+      <div className={styleDateMemo["check-card-content"]}>
+        {avatarDom}
+        {header || descriptionDom ? (
+          <div className={styleDateMemo["check-card-detail"]}>
+            {header}
+            {descriptionDom}
+          </div>
+        ) : null}
+      </div>
+    );
+  }, [title, extra, description]);
+  
+  return (
+    <div>
+      {dataMemo}
+    </div>
+  );
+}
+~~~
+#### 额外信息
+可以通过 `extra` 来制作卡片的额外操作，但要注意，我们在整个卡片都附有点击事件，所以我们的额外操作中一定要**阻止事件冒泡**，即 `e.stopPropagation()`;。
+
+#### 基本状态的改变
+在 `CheckCard` 中，共有三种状态，分别是未选中、选中、禁用，而这三种状态所对应的样式都有所改变，此时我们可以利用 `classNames` 来帮助我们处理卡片的样式，使效果更美观。
+~~~tsx
+const CheckCard = (props: CheckCardProps) => {
+  const {
+    avatar,
+    title,
+    extra,
+    description,
+    disabled = false,
+    loading = false,
+    style = {},
+    ...params
+  } = props;
+
+  const [checked, setChecked] = useSafeState<boolean>(
+    params.defaultChecked || false
+  );
+
+  const styleClassName: StylesBooleanProps = {};
+  styleClassName[useCss(styles["check-card"])] = true;
+  styleClassName[useCss(styles["check-card-checked"])] = !!checked;
+  styleClassName[useCss(styles["check-card-disabled"])] = !!disabled;
+  styleClassName[useCss(styles["check-card-disabled-after"])] = !!checked && !!disabled;
+
+  return (
+    <div
+      className={classNames(styleClassName)}
+      style={style}
+      onClick={(v) => {
+        if (!disabled && !loading) {
+          params.onClick && params.onClick(v);
+          params.onChange && params.onChange(!checked);
+          setChecked((v) => !v);
+        }
+      }}
+    >
+      {dataMemo}
+    </div>
+  );
+};
+~~~
+::: tip
+其中，鼠标移动到卡片上可以通过 `hover` 属性，右上角的标可以通过 `after` 简单制作，鼠标的样式可以通过 `cursor` 来控制。
+:::
+
+#### 加载状态
+通过配置 `loading` 属性可以配置组件的加载状态，可以通过 `Row`、`Col` 来做简单的布局，然后通过 `linear-gradient` 来控制颜色的渐变，再配合 `animation` 控制颜色的滚动。
+~~~tsx
+const Loading = () => {
+  return (
+    <div className={useCss(styles["check-card-loading-content"])}>
+      <Row gutter={8}>
+        <Col span={22}>
+          <div className={useCss(styles["check-card-loading"])} />
+        </Col>
+      </Row>
+      <Row gutter={8}>
+        <Col span={8}>
+          <div className={useCss(styles["check-card-loading"])} />
+        </Col>
+        <Col span={14}>
+          <div className={useCss(styles["check-card-loading"])} />
+        </Col>
+      </Row>
+      <Row gutter={8}>
+        <Col span={6}>
+          <div className={useCss(styles["check-card-loading"])} />
+        </Col>
+        <Col span={16}>
+          <div className={useCss(styles["check-card-loading"])} />
+        </Col>
+      </Row>
+      <Row gutter={8}>
+        <Col span={13}>
+          <div className={useCss(styles["check-card-loading"])} />
+        </Col>
+        <Col span={9}>
+          <div className={useCss(styles["check-card-loading"])} />
+        </Col>
+      </Row>
+      <Row gutter={8}>
+        <Col span={4}>
+          <div className={useCss(styles["check-card-loading"])} />
+        </Col>
+        <Col span={3}>
+          <div className={useCss(styles["check-card-loading"])} />
+        </Col>
+        <Col span={14}>
+          <div className={useCss(styles["check-card-loading"])} />
+        </Col>
+      </Row>
+    </div>
+  );
+};
+~~~
+
+### CheckCard.Group
+**CheckCard.Group**： 布局组件，用来集中控制 `CheckCard`，通过 `value` 和 `onChange` 使其受控，也可通过其他属性来整体控制 `CheckCard`，配合 `Form` 组件联合使用。
+
+#### 数据传递
+`CheckCard.Group` 和 `CheckCard` 组件存在深层的嵌套关系，所以需要通过 `context(createContext + useContext)`跨层级方式传递数据。
+~~~tsx
+// GroupContext
+import { createContext } from "react";
+import { SelectGroupConnextType } from "./interface.d";
+
+const GroupContext = createContext<SelectGroupConnextType | null>(null);
+
+export default GroupContext;
+
+// Group
+const Group: React.FC<GroupProps> = (props) => {
+  ...
+  <GroupContext.Provider
+    value={{ ... }}
+  >
+    <div className={useCss(styles["select-card-group"])} style={style}>
+      {params.children}
+    </div>
+  </GroupContext.Provider>
+}
+~~~
+
+#### 注册与卸载
+因为我们需要 `CheckCard.Group` 去管理 `CheckCard` 的数据，所以 `CheckCard.Group` 要监听 `CheckCard` 的数据变化，换言之，`CheckCard` 要进行注册和卸载，而判断的依据则是 `value`。
+
+同时，在 `CheckCard.Group` 中通过 `new Map()` 集中管理数据，并以 `useRef` 保存数据源，防止闭包。
+~~~ts
+// Group
+const Group: React.FC<GroupProps> = (props) => {
+  const ref = useRef<Map<ValueType, any>>(new Map());
+
+  // 注册
+  const registerValue = (value: string) => {
+    ref.current?.set(value, true);
+  };
+
+  // 卸载
+  const cancelValue = (value: string) => {
+    ref.current?.delete(value);
+  };
+  
+  ...
+}
+
+// index
+const CheckCard = (props: CheckCardProps) => {
+  useEffect(() => {
+    params.value && group?.registerValue?.(params.value);
+    return () => {
+      params.value && group?.cancelValue?.(params.value);
+    };
+  }, [params.value]);
+  
+  ...
+}
+~~~
+
+#### 使 CheckCard 受控
+如果存在多个 `CheckCard`，那么它们每一个都是独立的组件，但如果在 `CheckCard.Group` 下，`CheckCard` 则需要受 `CheckCard.Group` 的控制，由 `CheckCard.Group` 的 `value` 控制所有的 `CheckCard`。
+
+那么 `value` 将会存在三种形式：
+- **undefined**： `value` 不存在时；
+- **string**： 字符串，单选时；
+- **string[]**： 数组，多选时。
+
+触发 `CheckCard.Group` 的变化时机则是 `CheckCard` 的 `onChange` 方法。如：
+~~~tsx
+// Group
+const Group: React.FC<GroupProps> = (props) => {
+  const { multiple = false, onChange, ...params } = props;
+  const [stateValue, setStateValue] = useSafeState<GroupValueType>();
+  
+  ....
+  const selectOption = (option: SelectOptionProps) => {
+    if (multiple) {
+      let newValue: ValueType[] = [];
+      const stateValues = stateValue as ValueType[];
+      const flag = stateValues?.includes(option.value);
+      newValue = [...(stateValues || [])];
+      if (flag) {
+        newValue = newValue.filter((itemValue) => itemValue !== option.value);
+      } else {
+        newValue.push(option.value);
+      }
+
+      setStateValue?.(newValue);
+      onChange && onChange(newValue);
+    } else {
+      let newValue = stateValue;
+      if (newValue === option.value) {
+        newValue = undefined;
+      } else {
+        newValue = option.value;
+      }
+      setStateValue?.(newValue);
+      onChange && onChange(newValue);
+    }
+  };
+  
+  ...
+}
+
+// index
+const CheckCard = (props: CheckCardProps) => {
+  const selectData: any = {};
+    
+    ...
+    selectData.checked = checked;
+    if (group) { // 通过 Group 组件控制对应的选中状态
+    const isChecked = group.multiple
+      ? group.value?.includes(params.value)
+      : group.value === params.value;
+    selectData.checked = isChecked;
+  }
+
+  return (
+    <div
+      className={classNames(styleClassName)}
+      style={style}
+      onClick={(v) => {
+        if (!disabled && !loading) {
+          ...
+          group?.selectOption?.({ value: props.value });
+        }
+      }}
+    >
+      {dataMemo}
+    </div>
+  );
+}
+~~~
+
+#### 配合 Form 组件使用
+在上两节的学习中，我们知道 `Form.Item` 控制表单控件是通过 `React.cloneElement` 的帮助，给对应的表单控件加入 `value` 和 `onChange` 元素。也就是说，要想自定义控件跟 `Form` 绑定关系，只需要存在 `value` 和 `onChange` 这两个属性，使其受控配合即可。
+
+因为 `Form` 组件会统一管理 `value`，所以在 `CheckCard.Group` 中要对 `value` 进行监控，控制 `value` 属性。
+~~~ts
+// Check.Group
+const Group: React.FC<GroupProps> = (props) => {
+
+  const [stateValue, setStateValue] = useSafeState<GroupValueType>();
+  
+  useEffect(() => {
+    setStateValue(params.value || params.initValue);
+  }, [params.value]);
+  
+  ...
+}
+~~~
+**代码演示：**
+~~~tsx
+import React from "react";
+import CheckCard from "./CheckCard";
+import { Button, message } from "antd";
+import Form from "../Form/HooksForm";
+
+const Index: React.FC = () => {
+  return (
+    <>
+      <h1>在 Form 表单的应用</h1>
+      <Form
+        initialValues={{ card: "A" }}
+        onFinish={(data: any) => {
+          console.log("表单数据:", data);
+        }}
+        onReset={() => {
+          console.log("重制表单成功");
+        }}
+      >
+        <Form.Item label="选择卡片-单选" name="card" styles={{ with: "100%" }}>
+          <CheckCard.Group>
+            <CheckCard title="Card A" description="一起玩转Hooks吧" value="A" />
+            <CheckCard title="Card B" description="一起玩转Hooks吧" value="B" />
+            <CheckCard title="Card C" description="一起玩转Hooks吧" value="C" />
+          </CheckCard.Group>
+        </Form.Item>
+        <Form.Item label="选择卡片-多选" name="card-multiple">
+          <CheckCard.Group multiple>
+            <CheckCard title="Card A" description="一起玩转Hooks吧" value="A" />
+            <CheckCard title="Card B" description="一起玩转Hooks吧" value="B" />
+            <CheckCard title="Card C" description="一起玩转Hooks吧" value="C" />
+          </CheckCard.Group>
+        </Form.Item>
+        <Form.Item>
+          <Button type="primary" htmlType="submit">
+            提交
+          </Button>
+          <Button style={{ marginLeft: 4 }} htmlType="reset">
+            重置
+          </Button>
+        </Form.Item>
+      </Form>
+    </>
+  );
+};
+
+export default Index;
+~~~
+
+#### 集中控制 loading
+`CheckGroup.Card` 除了可以控制 `CheckGroup` 的 `value` 外，还可以集中控制加载状态、边框样式、卡片大小等，原理与 `value` 一样。这里巩固一下，加一个 `loading` 状态，整体去控制 `CheckGroup`。
+~~~tsx
+const CheckCard = (props: CheckCardProps) => {
+  const selectData: any = {};
+    
+  selectData.checked = checked;
+  selectData.loading = loading;
+  if (group) {
+    // 通过 Group 组件控制对应的选中状态
+    const isChecked = group.multiple
+      ? group.value?.includes(params.value)
+      : group.value === params.value;
+    selectData.checked = isChecked;
+    selectData.loading = loading || group.loading;
+  }
+  
+  // 之后使用 loading 的地方都换成 selectData.loading 即可
+  ...
+}
+
+// 使用
+<h1>集中控制 Loading：</h1>
+<CheckCard.Group loading>
+  <CheckCard title="Card A" description="一起玩转Hooks吧" value="A" />
+  <CheckCard title="Card B" description="一起玩转Hooks吧" value="B" />
+  <CheckCard title="Card C" description="一起玩转Hooks吧" value="C" />     
+</CheckCard.Group>
+~~~
