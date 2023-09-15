@@ -5600,6 +5600,576 @@ function updateDeferredValueImpl<T>(hook: Hook, prevValue: T, value: T): T {
 但我们使用一些三方库的时候，比如 `ahooks`，它的更新函数并没有直接暴露给我们，只返回对应的值给我们，这种情况下可使用 `useDeferredValue` 来做优化。
 :::
 
+## 实现简易版的 react-redux
+我们知道 `React` 之间的通信方式有 `props` 和 `callback`、`context`（跨层级）、`event bus` 事件总线、`ref` 传递、状态管理五种方式。其中，状态管理可以**无视组件之间的层级关系**，通过**集中式存储**管理应用的状态，使数据流更加清晰，以此来解决大型复杂应用中的组件通信问题。如：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/3182fe6389c74d87905f006e1fabea0f~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+我们可以通过 `useCreateStore`、`useConnect` 两个自定义 `Hooks`，再配合 `createContext` 就可以实现一个简易版的状态库。
+
+在状态管理的库中，`redux` 是我们在工作中最常用库，所以我们先来熟悉下 `redux`，然后再用自定义 `Hooks` 去模拟对应的功能，以此帮助我们更深层次地理解自定义 `Hooks` 的实践。
+
+### react-redux 基本使用
+提到 `redux`，就不得不提及到 `react-redux` 库，它的作用是将 `redux` 接入到 `React` 中，实现在 `React` 中使用 `redux` 进行状态管理。
+
+整个渲染的流程共有三个部分，分别是：
+- `Store`：所有的状态存储在一个单一的 `store` （`JavaScript` 对象）中，并且对应的状态不允许改变；
+- `Action`：用于更新状态，当我们要改变 `store` 的值，就需要通过 `dispatch` 函数来帮助我们完成更新操作，通常而言 `dispatch` 中包含一个 `type` 属性，`type` 的值决定我们要执行的操作；
+- `Reducer`：用于更新状态的纯函数，它接收先前的状态和一个 `action`，然后返回最新的状态。
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/5c10f0a829e14bf0a4a625cc55762ac7~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.awebp)
+
+### 具体使用
+首先，在 `react-redux` 中提供了一个名为 `Provider` 的组件，它接收一个 `store`，用于将 `store` 传递给应用程序的所有组件，如：
+~~~tsx
+<Provider store={store}>
+  <View /> // 视图组件
+</Provider>
+~~~
+其中 `store` 需要通过 `redux` 库提供的 `createStore` 方法来创建，`createStore` 接收一个参数：`reducers`，也就是对应的 `action`，如：
+~~~ts
+const store = createStore(reducers);
+
+// reducers 对应 action，多个 action 可用 combineReducers 处理
+// initialState 为默认值
+export default function action(state = initialState, action: any) {
+
+  // 通过 type 去判断
+  switch (action.type) {
+    case xxx:
+    ...
+    default:
+      return state;
+  }
+}
+~~~
+之后，我们需要通过 `react-redux` 库中的 `connect` 函数去将组件与 `redux store` 连接起来，去使用即可。
+
+在 `connect` 函数中接收两个参数，分别是：`mapStateToProps` 和 `mapDispatchToProps`。
+- **mapStateToProps**： 用于更新 `props`，返回 `store` 中的值，作为 `props`，传入对应的组件中。
+- **mapDispatchToProps**： 用于更新 `action`，会返回一个 `dispatch`，用来触发 `action`，如果没有第二个参数，则将 `dispatch` 作为 `props` 传入对应的组件中。
+~~~tsx
+// 文件位置：example/ReduxView/view
+
+// Father
+const Index = ({ count, msg, onAdd, onSub }: any) => {
+  return (
+     ...
+  );
+};
+
+// 第一个用于传递 props， 第二个参数用于传递 action, 如果 第二个参数不传，会把 dispatch 当作 props 传递过去
+export default connect(
+  (state: any) => ({ count: state.count, msg: state.msg }),
+  (dispatch: any) => {
+    return {
+      onAdd: () => dispatch({ type: "add" }),
+      onSub: () => dispatch({ type: "sub" }),
+    };
+  }
+)(Index);
+
+// Clear
+const Index = ({ count, dispatch }: any) => {
+  return (
+      ...
+      <Button
+        style={{ marginLeft: 8 }}
+        onClick={() => dispatch({ type: "clear" })}
+      >
+        清除
+      </Button>
+    ... 
+  );
+};
+
+export default connect((state) => state)(Index);
+~~~
+### 设计揣摩：实现跨层级通信
+在我们了解完 `react-redux` 后，简单从使用维度上做下总结：**随时存，随时取**。
+
+这六个字非常简单，其意义是：可以在任意组件中使用 `store` 中的值，也可以在任意的组件中存储对应的值，无视对应的层级关系，实现状态共享。
+
+想要实现 `react-redux` 的功能，首先就要解决**通信问题**，让状态得到共享，使每个组件都能获得 `store` 中的状态，并且可以去改变它。
+
+所以，我们可以利用 `context`（跨层级）来实现跨层级的通信方式，也就是通过 `useContext` 来获取共有状态，所以我们需要 `createContext` 的帮助，用它来替代 `Provider`。
+
+然后需要去实现以下两个自定义 `Hooks` 来实现 `react-redux`。
+- **useCreateStore**： 类比 `createStore`，用于生成一个 `Store`，并提供对应的实例方法，帮助 `useConnect` 获取状态属性；
+- **useConnect**： 类比 `connect`，让每个组件都能获取到 `store` 中的状态，并且提供 `dispatch` 方法，以此来订阅 `state`，如果 `state` 发生改变，被订阅的组件发生更新。
+
+参照 `react-redux` 的流程来一起看看实现的思路：
+1. 存储一个公共的 `store`，用于全局管理 `state`，当 `state` 发生变化，通知对应的组件更新；
+2. 收集使用 `useConnect` 的组件信息，用于后续的更新和销毁；
+3. 维护负责更新的 `dispatch`，当值发生更新的时候，更新对应的组件；
+4. 当组件销毁时，对应 `store` 内的数据也应当清除。
+
+明确思路后，我们接下来围绕以上四点去实现 `useCreateStore` 和 `useConnect` 即可。
+
+### 实现步骤
+#### useCreateStore 实现
+首先，我利用 `createContext` 来替代 `Provider`，如：
+~~~tsx
+// createRedux.ts
+import { createContext } from "react";
+const ReduxContext = createContext(null);
+export default ReduxContext;
+
+// index.ts
+const Index = () => {
+  const store = useCreateStore(reducers, initialState);
+
+  return (
+    <ReduxContext.Provider value={store}>
+      <View />
+    </ReduxContext.Provider>
+  );
+};
+~~~
+那么，`ReduxContext.Provider` 所接收的 `store` 需要 `useCreateStore` 进行处理即可。我们进行如下设计：
+~~~ts
+// useCreateStore.ts
+const useCreateStore = (reducer: any, initState: any) => {
+  let store = useRef<any>(null);
+
+  if (!store.current) {
+    store.current = new ReduxHooksStore(reducer, initState);
+  }
+
+  return store.current;
+};
+~~~
+`useCreateStore` 的入参数分为两个：
+- **reducer**： 对应 `createStore` 的 `reducers`，也就是 `action`；
+- **initState**： 初始值，这里将初始化的值拆分出来，方便后续的操作。
+
+跟以往的自定义 `Hooks` 一样，我们需要通过 `useRef` 取存储对应的值，用于保存对应的实例帮助我们处理这些事，也就是 `ReduxHooksStore`。
+
+至于 `ReduxHooksStore` 具体内部的实现，我们一步一步根据场景去实现。
+
+#### useConnect
+`useConnect` 是模拟 `connect` 方法，可以让任意组件做到随时存，随时取。所以，它涉及两个功能：
+- 初始化：可以拿到 `store` 中的任意数据，提供给视图；
+- 更新：提供 `dispatch` 方法，如果 `store` 中的数据发生改变，则通知对应的视图组件发生更新。
+
+所以 `useConnect` 返回的参数应当为 `[state, dispatch]`。
+
+### 初始化场景
+在整个案例中，共有 3 个初始化变量，分别是 `count`（数字）、`msg`（`Child` 中的消息）和 `flag`（控制 `Son` 组件展示的条件）。
+
+在初始化的场景中，我们什么都没处理，所以 `useConnect` 对应的第一个参数 `state` 就应该是 `useCreteStore` 中的 `initState`，所以在 `ReduxHooksStore` 中只需要提供一个初始化方法即可，如：
+~~~ts
+class ReduxHooksStore {
+  reducer: any;
+  state: any;
+
+  constructor(reducer: any, initState: any) {
+    this.reducer = reducer;
+    this.state = initState;
+  }
+
+  // 初始化方法
+  getInitState = () => {
+    return this.state;
+  };
+}
+~~~
+然后，通过 `useContext` 获取到实例方法，用 `useRef` 存储即可。
+~~~ts
+import ReduxContext from "./createRedux";
+
+const useConnect = () => {
+  // 获取对应的值
+  const contextValue: any = useContext(ReduxContext);
+  const { getInitState } = contextValue;
+
+  const stateValue = useRef(getInitState());
+  return [stateValue.current, dispatch];
+};
+~~~
+
+### 定制化入参
+通过上述的处理，我们拿到的 `state` 为全量的数据，要想拿到特定的数据，只需要给 `useConnect` 一个入参即可，让用户手动获取状态。
+~~~ts
+const useConnect = (mapStoreToState?: (data: any) => void) => {
+  ...
+  const stateValue = useRef(getInitState(mapStoreToState));
+  ...
+};
+
+// useCreateStore.ts
+class ReduxHooksStore{
+  ...
+  getInitState = (mapStoreToState?: (data: any) => void) => {
+    return mapStoreToState ? mapStoreToState(this.state) : this.state;
+  };
+}
+~~~
+此时，`useConnect` 就支持以下两种方式：
+~~~ts
+// 全量
+const [state, dispatch] = useConnect();
+
+//  定制化
+const [state, dispatch] = useConnect((data) => ({ count: data.count }));
+~~~
+
+### 更新场景
+在更新场景中，我们希望通过 `dispatch` 触发改变 `store` 中的值，以及刷新使用 `useConnect` 的组件。
+
+所以在更新场景中存在两个步骤：
+- **统计组件**：统计使用 `useConnect` 的组件个数，当 `store` 发生变化时，更新对应的组件，组件销毁时，移除该组件；
+- **更新组件**：驱动组件更新的一定是 `Hooks` 所创建的变量，所以与 `useReactive` 中的更新一样，直接使用 `useUpdate` 即可。
+
+#### 统计组件
+统计组件的个数，我们通过一个对象去存储，然后保持每个存储的组件唯一即可，所以我们在 `ReduxHooksStore` 设置 `components_connect`，然后比较旧值（`oldState`）与新值（`newState`）是否 相等（用 `id` 区分组件）， 来帮助我们实现功能。
+~~~ts
+class ReduxHooksStore {
+  id: number;
+  components_connect: any;
+
+  // 注册
+  subscribe = (connectCurrent: any) => {
+    const connectName = `domesy_redux_` + ++this.id;
+    this.components_connect[connectName] = connectCurrent;
+    return connectName;
+  };
+
+  // 卸载
+  unSubscribe = (connectName: any) => {
+    delete this.components_connect[connectName];
+  };
+}
+~~~
+在 `subscribe` 中接收一个参数 `connectCurrent`，`connectCurrent` 是保存信息，同时我们返回对应的组件名称，方便后续的卸载即可。
+
+当使用 `useConnect` 的时候触发注册，所以触发的条件为保存的值 `connectValue`，而 `connectValue` 的变化取决于 `contextValue(useContext(ReduxContext))`，这里我们直接使用 `useCreation` 即可。
+~~~ts
+const useConnect = () => {
+  ...
+  const connectValue = useCreation(() => {
+    const state = {
+      oldState: stateValue.current,
+      mapStoreToState,
+      /* 更新函数 */
+      update: (newState: any) => {
+        state.oldState = newState;
+        stateValue.current = newState;
+      },
+    };
+    return state;
+  }, [contextValue]); // 将 contextValue 作为依赖项。
+
+  useEffect(() => {
+    const name = subscribe(connectValue);
+    return function () {
+      // 卸载
+      unSubscribe(name);
+    };
+  }, [connectValue]);
+
+  ...
+};
+~~~
+关于保存的数据，我们需要一个旧值（`oldState`），以及更新函数（`update`），而 `mapStoreToState` 则是针对定制化入参的兼容处理。
+
+#### 更新组件
+当我们统计完组件的个数时，我们只需要触发 `dispatch` 时，去遍历 `components_connect`，然后比较旧值（`oldState`）与新值（`newState`）是否发生改变即可，如果发生改变，则触发对应的 `update` 方法，刷新视图即可。
+~~~ts
+dispatch = (action: any) => {
+  this.state = this.reducer(this.state, action);
+
+  /* 批量更新 */
+  Object.keys(this.components_connect).forEach((name) => {
+    const { update, oldState, mapStoreToState } =
+      this.components_connect[name];
+    const newState = mapStoreToState
+      ? mapStoreToState(this.state)
+      : this.state;
+
+    // 如果不一致，则触发更新函数
+    if (!shallowEqual(oldState, newState)) update(newState);
+  });
+};
+~~~
+最后，我们在 `update` 的方法使用 `useUpdate` 即可。
+~~~ts
+const useConnect = () => {
+  ...
+  const {  dispatch } = contextValue;
+  
+  const update = useUpdate();
+
+  const connectValue = useCreation(() => {
+    const state = {
+      ...
+      update: (newState: any) => {
+        ...
+        // 更新
+        update();
+      },
+    };
+    return state;
+  }, [contextValue]); // 将 contextValue 作为依赖项。
+
+  ...
+  return [stateValue.current, dispatch];
+};
+~~~
+
+### 扩展：批量更新
+在更新的步骤中，我们通常会使用 `unstable_batchedUpdates` 去优化更新的流程，它的作用是优化异步场景。
+
+`unstable_batchedUpdates` 是 `react-dom` 提供的方法，它一般用于状态库，并非是日常的开发中使用。
+
+但在这里我们并不需要用 `unstable_batchedUpdates` 单独处理更新流程，原因是 `React v18` 中将会自动进行批处理，而 `v18` 版本以下，则不会进行批处理，需要依靠 `unstable_batchedUpdates` 去实现。
+
+## 表单组件设计
+`Ant Design` 的 `Form` 表单组件是我们最常用的组件之一，它可以帮助我们数据录入、校验等功能。
+
+大多数开发者认为 `Form` 表单使用起来非常方便，那是因为组件的内部承担了许多功能，比如**状态管理**、**状态分配**、**表单验证**等诸多环节。接下来我们一起看看具体如何实现一个表单功能。
+
+在正式开始前，请大家带着以下 2 个小问题阅读：
+- `Form` 组件是如何管理整体的数据流，为什么能从 `Form` 中获取表单控件的值？
+- `Form.Item` 的 `name` 属性如何替代表单控件（如：`Input`、`Select`）的 `value`、`onChange` 属性，使其受控？
+
+先附上一张知识图谱，正式进入 `Form` 组件的学习：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/0ecb1d55dd3642148cbd8a2bba73ede2~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+### 表单的整体设计
+在设计之前，我们以 `Ant Design` 中的 `Form` 为例，来看看一个基本的表单长什么样，又具备什么样的功能（文件位置：`example/AntDForm`）：
+~~~tsx
+<Form
+  initialValues={{ book: "玩转 React Hooks" }}
+  onFinish={(data: any) => {
+    console.log("表单数据:", data);
+  }}
+  onReset={() => {
+    console.log("重制表单成功");
+  }}
+>
+  <Form.Item label="小册名称" name="book">
+    <Input placeholder="请输入小册名称" />
+  </Form.Item>
+
+  <Form.Item label="作者" name="name">
+    <Input placeholder="请输入作者" />
+  </Form.Item>
+
+  <Form.Item wrapperCol={{ offset: 8, span: 16 }}>
+    <Button type="primary" htmlType="submit">
+      提交
+    </Button>
+    <Button style={{ marginLeft: 4 }} htmlType="reset">
+      重制
+    </Button>
+  </Form.Item>
+</Form>
+~~~
+在这个基础表单案例中，可以大体将表单分为 `Form => Form.Item => 表单控件` 三层结构，分别承担不同的作用，如：
+1. **Form 组件**：满足原生 `form` 表单功能，具备提交、重置、初始化、管理表单整体的数据结构等。
+2. **Form.Item 组件**：具备 `label` 功能（表单左侧的展示）、`name` 功能（对应整体数据的传递）、校验等功能属性。
+3. **表单控件**：可以是各种数据录入组件（如：`Input`、`Select`），在不影响原本功能的前提下，需要将数据内容通过 `Form.Item` 绑定，由 `Form.Item` 控制 `value`、`onChange` 等属性，而**不是自身绑定触发事件**。
+
+将示例转化成关系图，如下所示：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/d3139923c1174060adf8d9e52952e63b~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+接下来，我们就一步一步实现出自己的 `Form` 组件。
+
+### 整体布局
+经过上面的示例，我们需要创建 `Form` 和 `Form.Item` 组件作为容器，表单控件需要通过包裹的形式（`children` 属性）进行展示。
+~~~tsx
+// Form
+<form> // 满足原生的 form 表单
+  {children} // 包裹 Form.Item
+</form>
+
+// Form.Item
+<Layout>   // 布局组件
+  {children}  // 包裹表单控件
+</Layout>
+~~~
+其中，`Layout` 组件属于布局组件，可控制表单的样式。为了让后续的效果更加好看，我们在这里简单处理下，可通过 `Col` 和 `Row` 进行宽度的设置，如：
+~~~tsx
+// Layout
+import { Col, Row } from "antd";
+
+const Index = ({ children, label }: any) => {
+  return (
+    <>
+      <Row gutter={8}>
+        <Col
+          span={4}
+          style={{ textAlign: "right", lineHeight: "32px", fontSize: 14 }}
+        >
+          {label ? label + "：" : ""}
+        </Col>
+        <Col span={9}> {children}</Col>
+      </Row>
+      <div style={{ height: 12 }}></div>
+    </>
+  );
+};
+
+export default Index;
+~~~
+
+### 提示语
+提示语也是表单常见的功能之一，也相对简单，只需要通过 `tooltip` 字段控制配合即可，如：
+~~~tsx
+// Layout
+import { Col, Row } from "antd";
+
+const Index = ({ children, label }: any) => {
+  return (
+    <>
+      <Row gutter={8}>
+         <Col
+          span={4}
+          style={{ textAlign: "right", lineHeight: "32px", fontSize: 14 }}
+        >
+          {label || ""}
+          {tooltip && (
+            <Tooltip title={tooltip}>
+              <QuestionCircleOutlined style={{ margin: "0 3px" }} />
+            </Tooltip>
+          )}
+          {label && "："}
+        </Col>
+        <Col span={9}> {children}</Col>
+      </Row>
+      <div style={{ height: 12 }}></div>
+    </>
+  );
+};
+
+export default Index;
+~~~
+
+### 数据管理与通信
+在整个的表单的设计中，最核心点莫过于**数据的状态管理**。数据源如同整个表单的大脑，因此掌握好数据源是我们首要解决的问题。
+
+其中，`Form` 组件需要承担表单的数据流向，当表单控件的值发生变化时，`Form` 管理的数据流也应该发生对应的改变。
+
+除此之外，`Form` 组件还需要承担**状态下发**的作用，不仅可以管理这些数据，也要让这些数据通过 `Form.Item` 的 `name` 属性控制对应的表单控件，使其成为**受控**，这样做的目的是：可以自由传递 `value`，也能得到最新的 `value`，向上传递。
+
+因此，我们通过 `useForm` （自定义 `Hooks`）来集中管理表单的数据，通过对应的实例，暴露对应的方法，在 `Form`、`FormItem` 组件中传递数据，更好地帮助管理表单。 如：
+~~~ts
+import { useRef } from "react";
+import { FormInstance, DataProps } from "./interface.d";
+import FormStore from "./FormStore";
+
+const useForm = () => {
+  const formRef = useRef<FormInstance | null>();
+
+  if (!formRef.current) {
+    // 创建一个实例，帮我们获取对应的方法
+    formRef.current = new FormStore().getDetail();
+  }
+
+  return [formRef.current];
+};
+
+export default useForm;
+~~~
+其中 `FormStore` 是 `useForm` 的核心，而 `getDetail` 用于暴露 `FormStore` 的方法，防止将多余的方法暴露出来。
+::: tip
+此外，`Form` 和 `Form.Item` 组件可能存在深层的嵌套关系，所以我们可以通过 `context(createContext + useContext)`跨层级方式传递数据。
+:::
+
+#### 数据如何通信？
+通过上面的分析，我们需要将整个表单的数据源通过 `useForm` 来保存，但数据是通过表单控件而来，换言之我们需要将表单控件**受控**，使 `Form` 组件进行状态下发，精确控制对应的表单控件。
+
+那么，如何在不改变结构的情况下，还能使组件受控，就变成了一个有趣的点，我们先来看看通常情况下如何让组件受控：
+~~~tsx
+<Input value={value} onChange={(e) => setValue(e.target.value)} />
+~~~
+在通常情况下，`Input` 受控，需要 `value` 和 `onChange` 属性的帮助，但在表单的场景中，并不需要通过 `value` 和 `onChange` 进行控制，主要原因有以下两点：
+- 操作麻烦，不能确定具体表单控件的个数，如果每个控件都需要配置，比较麻烦。
+- 破坏结构，相当于增加的两个属性是必须存在的，这样做会破坏表单控件的原有结构。
+
+所以，我们并不希望通过 `value`、`onChange` 直接控制，而是通过 `Form.Item` 中的 `name` 属性来代替 `value` 和 `onChange`。为达到这一目的，就需要 `React.cloneElement` 的帮助，将这两个属性强行剥离出来，使组件受控。
+::: tip
+问：`React.cloneElement` 是什么？
+
+答：`cloneElement` 可以克隆并返回一个新的 `React` 元素。其结构为：`React.createElement(element, [props], [...children])`
+1. **element**： 一个**有效的 React 元素**，大部分情况下是 `JSX` 节点；
+2. **props**： 对象或者为 `null`，如果存在，则会赋值给 `element`，如果不存在，则保留原来的 `props`；
+3. **children**： 零个或多个子节点，可以是任何 `React` 节点。
+:::
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
