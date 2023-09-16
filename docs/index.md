@@ -49,6 +49,24 @@ features:
   - icon: 🛠️
     title: 全面覆盖
     details: 文档涵盖前后端多种领域知识点, 跨界知识点
+  - icon: 
+      src: https://gaojianghua.oss-cn-hangzhou.aliyuncs.com/qq.png
+      width: 34
+      height: 48
+    title: QQ技术交流群
+    details: 技术交流群, 欢迎加入：308366985
+  - icon:
+      src: https://gaojianghua.oss-cn-hangzhou.aliyuncs.com/wx.png
+      width: 48
+      height: 48
+    title: 微信公众号
+    details: 关注微信公众号：程序员印记, 及时获取最新资源
+  - icon:
+      src: https://gaojianghua.oss-cn-hangzhou.aliyuncs.com/wx.png
+      width: 48
+      height: 48
+    title: 微信视频号
+    details: 关注微信视频号：程序员印记, 学习更多开发技巧
 ---
 <style>
 :root {
@@ -60,6 +78,10 @@ features:
 
   --vp-c-text-code: #18aa00;
 
+}
+
+.VPHome{
+  padding-bottom: 0 !important;
 }
 
 @media (min-width: 640px) {
