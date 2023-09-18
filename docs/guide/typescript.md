@@ -2,7 +2,7 @@
  * @Author: 高江华 g598670138@163.com
  * @Date: 2023-04-11 16:57:52
  * @LastEditors: 高江华
- * @LastEditTime: 2023-09-16 10:47:40
+ * @LastEditTime: 2023-09-18 13:40:27
  * @Description: file content
 -->
 # TypeScript
@@ -3535,6 +3535,165 @@ type Extract<T, U> = T extends U ? T : never;
 
 type Exclude<T, U> = T extends U ? never : T;
 ~~~
+这里的具体实现其实就是条件类型的分布式特性，即当 T、U 都是联合类型（视为一个集合）时，T 的成员会依次被拿出来进行 `extends U ? T1 : T2` 的计算，然后将最终的结果再合并成联合类型。
+
+比如对于交集 `Extract` ，其运行逻辑是这样的：
+~~~ts
+type AExtractB = Extract<1 | 2 | 3, 1 | 2 | 4>; // 1 | 2
+
+type _AExtractB =
+  | (1 extends 1 | 2 | 4 ? 1 : never) // 1
+  | (2 extends 1 | 2 | 4 ? 2 : never) // 2
+  | (3 extends 1 | 2 | 4 ? 3 : never); // never
+~~~
+而差集 `Exclude` 也是类似，但需要注意的是，差集存在相对的概念，即 A 相对于 B 的差集与 B 相对于 A 的差集并不一定相同，而交集则一定相同。
+
+为了便于理解，我们也将差集展开：
+~~~ts
+type SetA = 1 | 2 | 3 | 5;
+
+type SetB = 0 | 1 | 2 | 4;
+
+type AExcludeB = Exclude<SetA, SetB>; // 3 | 5
+type BExcludeA = Exclude<SetB, SetA>; // 0 | 4
+
+type _AExcludeB =
+  | (1 extends 0 | 1 | 2 | 4 ? never : 1) // never
+  | (2 extends 0 | 1 | 2 | 4 ? never : 2) // never
+  | (3 extends 0 | 1 | 2 | 4 ? never : 3) // 3
+  | (5 extends 0 | 1 | 2 | 4 ? never : 5); // 5
+
+type _BExcludeA =
+  | (0 extends 1 | 2 | 3 | 5 ? never : 0) // 0
+  | (1 extends 1 | 2 | 3 | 5 ? never : 1) // never
+  | (2 extends 1 | 2 | 3 | 5 ? never : 2) // never
+  | (4 extends 1 | 2 | 3 | 5 ? never : 4); // 4
+~~~
+除了差集和交集，我们也可以很容易实现并集与补集，为了更好地建立印象，这里我们使用集合相关的命名：
+~~~ts
+// 并集
+export type Concurrence<A, B> = A | B;
+
+// 交集
+export type Intersection<A, B> = A extends B ? A : never;
+
+// 差集
+export type Difference<A, B> = A extends B ? never : A;
+
+// 补集
+export type Complement<A, B extends A> = Difference<A, B>;
+~~~
+补集基于差集实现，我们只需要约束**集合 B 为集合 A 的子集**即可。
+
+内置工具类型中还有一个场景比较明确的集合工具类型：
+~~~ts
+type NonNullable<T> = T extends null | undefined ? never : T;
+
+type _NonNullable<T> = Difference<T, null | undefined>
+~~~
+很明显，它的本质就是集合 T 相对于 null | undefined 的差集，因此我们可以用之前的差集来进行实现。
+
+在基于分布式条件类型的工具类型中，其实也存在着正反工具类型，但**并不都是简单地替换条件类型结果的两端**，如交集与补集就只是简单调换了结果，但二者作用却**完全不同**。
+
+联合类型中会自动合并相同的元素，因此我们可以默认这里指的类型集合全部都是类似 `Set` 那样的结构，不存在重复元素。
+
+#### 思考
+- 目前为止我们的集合类型都停留在一维的层面，即联合类型之间的集合运算。如果现在我们要处理**对象类型结构的集合运算**呢？
+- 在处理对象类型结构运算时，可能存在不同的需求，比如合并时，我们可能希望**保留原属性或替换原属性**，可能希望**替换原属性的同时并不追加新的属性**进来（即仅使用新的对象类型中的属性值覆盖原本对象类型中的同名属性值），此时要如何灵活地处理这些情况？
+
+### 模式匹配工具类型
+这一部分的工具类型主要使用条件类型与 **infer 关键字**。
+
+在条件类型一节中我们已经差不多了解了 `infer` 关键字的使用，而更严格地说 `infer` 其实代表了一种 **模式匹配（pattern matching）** 的思路，如正则表达式、`Glob` 中等都体现了这一概念。
+
+首先是对函数类型签名的模式匹配：
+~~~ts
+type FunctionType = (...args: any) => any;
+
+type Parameters<T extends FunctionType> = T extends (...args: infer P) => any ? P : never;
+
+type ReturnType<T extends FunctionType> = T extends (...args: any) => infer R ? R : any;
+~~~
+根据 `infer` 的位置不同，我们就能够获取到不同位置的类型，在函数这里则是参数类型与返回值类型。
+
+我们还可以更进一步，比如只匹配第一个参数类型：
+~~~ts
+type FirstParameter<T extends FunctionType> = T extends (
+  arg: infer P,
+  ...args: any
+) => any
+  ? P
+  : never;
+
+type FuncFoo = (arg: number) => void;
+type FuncBar = (...args: string[]) => void;
+
+type FooFirstParameter = FirstParameter<FuncFoo>; // number
+
+type BarFirstParameter = FirstParameter<FuncBar>; // string
+~~~
+除了对函数类型进行模式匹配，内置工具类型中还有一组对 `Class` 进行模式匹配的工具类型：
+~~~ts
+type ClassType = abstract new (...args: any) => any;
+
+type ConstructorParameters<T extends ClassType> = T extends abstract new (
+  ...args: infer P
+) => any
+  ? P
+  : never;
+
+type InstanceType<T extends ClassType> = T extends abstract new (
+  ...args: any
+) => infer R
+  ? R
+  : any;
+~~~
+`Class` 的通用类型签名可能看起来比较奇怪，但实际上它就是声明了可实例化（`new`）与可抽象（`abstract`）罢了。我们也可以使用接口来进行声明：
+~~~ts
+export interface ClassType<TInstanceType = any> {
+  new (...args: any[]): TInstanceType;
+}
+~~~
+对 `Class` 的模式匹配思路类似于函数，或者说这是一个通用的思路，即基于放置位置的匹配。放在参数部分，那就是构造函数的参数类型，放在返回值部分，那当然就是 `Class` 的实例类型了。
+
+#### 思考
+- `infer` 和条件类型的搭配看起来会有奇效，比如在哪些场景？比如随着条件类型的嵌套每个分支会提取不同位置的 infer ？
+- `infer` 在某些特殊位置下应该如何处理？比如上面我们写了第一个参数类型，不妨试着来写写**最后一个参数类型**？
+
+### infer 约束
+在某些时候，我们可能对 `infer` 提取的类型值有些要求，比如我只想要数组第一个为字符串的成员，如果第一个成员不是字符串，那我就不要了。
+
+先写一个提取数组第一个成员的工具类型：
+~~~ts
+type FirstArrayItemType<T extends any[]> = T extends [infer P, ...any[]]
+  ? P
+  : never;
+~~~
+加上对提取字符串的条件类型：
+~~~ts
+type FirstArrayItemType<T extends any[]> = T extends [infer P, ...any[]]
+  ? P extends string
+    ? P
+    : never
+  : never;
+~~~
+试用一下：
+~~~ts
+type Tmp1 = FirstArrayItemType<[599, 'linbudu']>; // never
+type Tmp2 = FirstArrayItemType<['linbudu', 599]>; // 'linbudu'
+type Tmp3 = FirstArrayItemType<['linbudu']>; // 'linbudu'
+~~~
+看起来好像能满足需求，但程序员总是精益求精的。泛型可以声明约束，只允许传入特定的类型，那 `infer` 中能否也添加约束，只提取特定的类型？
+
+`TypeScript 4.7` 就支持了 `infer` 约束功能来实现**对特定类型地提取**，比如上面的例子可以改写为这样：
+~~~ts
+type FirstArrayItemType<T extends any[]> = T extends [infer P extends string, ...any[]]
+  ? P
+  : never;
+~~~
+实际上，`infer` + 约束的场景是非常常见的，尤其是在某些连续嵌套的情况下，一层层的 `infer` 提取再筛选会严重地影响代码的可读性，而 `infer` 约束这一功能无疑带来了更简洁直观的类型编程代码。
+
+## 上下文相关类型
 
 
 
