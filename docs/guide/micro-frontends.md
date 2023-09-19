@@ -7363,25 +7363,440 @@ app.listen(port.micro2, host);
 console.log(`server start at http://${host}:${port.micro2}/`);
 ~~~
 
+## 工程设计：设计要素
+接下来需要根据原理进行通用的 `JavaScript` 框架设计。在此之前，首先需要考虑通用库的工程化设计。因此在接下来的几节课程中会讲解通用库的工程化设计以及相关的原理知识，为框架设计做工程化准备。
 
+### 设计要素
+在**框架原理：设计要素**中讲解了微前端框架的作用，主要是为了辅助微前端中的主应用可以快速集成相应的微应用，该框架本质上是一个通用的 `JavaScript` 库。在 `Web` 前端的开发中，通用的 `JavaScript` 库一般都会发布成 `NPM` 库包，从而可以在各个不同的主应用中引入使用。为了提升库的设计质量，一般需要考虑以下一些设计要素：
+- **构建工具**： 需要通过构建工具对 NPM 包进行库构建，构建出 `CommonJS` 或者 `ES Module` 库包
+- **按需加载**： 发布的库可以支持按需加载或者支持 `Tree Shaking`，减少业务应用的引入体积
+- **版本发布**： 如何基于构建的目标文件进行库的版本发布和使用
+- **代码检查**： 在开发时确保代码有统一的检查工具，确保上传到 `Git` 仓库的代码没有低级错误
+- **代码格式**： 在开发时确保代码有统一的格式工具，提升团队 `Code Review` 的效率
+- **提交规范**： 在代码提交时可以进行拦截设计，包括 `ESLint` 校验、单元测试等
+- **更新日志**： 可以根据规范的提交说明自动生成版本日志
+- **单元测试**： 在提交代码时单元测试可以确保代码的正确性和稳定性
+- **文档指南**： 提供配套的 `API` 说明文档，提升开发者的开发效率
+- **集成部署**： 在指定的分支提交代码后，可以自动集成和自动部署
 
+一般在库的设计过程中，需要考虑如何使库的设计更加规范、高效和稳定，而在库的使用过程中，则需要考虑业务的引入体验，确保使用的高效和稳定。
+:::  tip
+也可以在业务应用的开发中使用部分工程化设计，从而提升应用的开发质量。
+:::
 
+### 构建工具
+在**方案了解：NPM 方案**中已经重点讲解了为什么需要使用构建工具（简化主应用的构建配置、提升主应用的构建速度、适配浏览器环境），一般会将主应用引入的 `NPM` 库包进行 `ES5` 兼容性和标准化输出构建处理，采用构建工具进行库构建的优势在于：
+- **框架库开发态提效**： 框架库的开发态可以使用最新的 `ES` 标准以及 `TypeScript` 语法设计
+- **构建标准多样性**： 如果主应用的打包工具支持 `ES Module` 的引入方式并支持 `TreeShaking` 特性，那么可以通过构建工具将框架库构建出 `ES Module` 标准，当然也可以构建出 `CommonJS`、`UMD` 等多种标准，从而可以适配不同的主应用环境
+- **智能提示**： 框架库采用 `TypeScript` 进行设计后，可以通过构建工具自动生成 `TypeScript` 声明文件，当主应用通过 `VS Code` 引入框架库时，可以自动提示框架库的 `API` ，包括函数功能说明、出参入参格式、对象的属性等，并可以支持 `ESLint` 的校验工作
 
+在**方案了解：NPM 方案**中已经重点讲解了构建工具的作用，本课程在工程化设计中将继续讲解构建相关的实践知识，从而方便大家了解 `Web` 应用和框架（通用）库的构建差异。
 
+### 按需加载
+在应用中经常会考虑组件库的按需加载，例如在主应用中只需要使用 `Antd` 的 `Button` 组件，在设计时不应该将 `Button` 组件以外的其他组件代码打包到主应用，从而增加不必要的应用体积。为了使得主应用可以在引入微前端框架时能够按需加载，往往都需要将框架的库功能按维度进行拆分，例如：
+- **NPM 包**： 将微前端框架的各个设计要素通过 `Monorepo` 的设计方式拆分成不同的 `NPM` 包实现按需引入
+- **目标文件**： 将微前端框架的各个设计要素拆分成不同的文件夹，通过引入文件夹实现按需引入
 
+由于 `Monorepo` 的设计模式相对成熟，本课程接下来会重点讲解按文件引入的设计方案，并实现相应的构建脚本设计。
+::: tip
+如果需要设计类似于 `Lodash` 的工具库，那么按需引入的设计非常有用。因为在业务中使用工具方法时，往往希望按需使用。
+:::
 
+### 版本发布
+在多人协作的情况下，如何确保发布的产物和版本符合开发者约定的规范。本课程会重点讲解基于按需加载构建产物的自动化发布脚本设计，该脚本：
+- 支持发布前的构建产物预处理
+- 支持发布前的检测处理（可以是开发者约定的发布规范）
+- 支持一键发布处理
 
+### 代码检测 & 代码格式
+在框架库的设计过程中，如何确保设计的代码符合社区的标准规范。本课程接下来会重点讲解 `ESLint` 和 `Prettier` 相关的知识点，包括：
+- 如何支持项目的 `TypeScript` 进行代码校验
+- `ESLint` 知识点：层叠配置、自定义解释器、插件以及共享配置等
+- `Prettier` 和 `ESLint` 的关系
+- 如何配置 `ESLint` 和 `Prettier` 的 `VS Code` 保存自动格式化功能
 
+### 提交规范
+在多人协作的开发过程中，并不是所有的开发者都会自动开启 `ESLint` 和 `Prettier` 功能进行实时检查和格式修复，这会导致提交的代码不符合检查标准和格式规范。为了防止不符合校验规范的代码被提交到远程仓库，可以在提交代码时使用工具进行检测，本课程接下来会重点讲解提交检测相关的知识原理和工具，从而帮助大家在多人协作的设计过程中确保提交规范的代码：
+~~~shell
+# 执行
+git add .  
+# 执行
+git commit -m "feat: add lint git hook"
+✔ Preparing lint-staged...
+❯ Running tasks for staged files...
+  # 可以发现读取了 .lintstagedrc.js 文件
+  ❯ .lintstagedrc.js — 6 files
+    ❯ src/**/*.ts — 1 file
+      # 校验失败
+      ✖ eslint [FAILED]
+↓ Skipped because of errors from tasks. [SKIPPED]
+✔ Reverting to original state because of errors...
+✔ Cleaning up temporary files...
 
+✖ eslint:
 
+/Users/zhuxiankang/Desktop/Github/micro-framework/src/index.ts
+  15:3   error  Unsafe return of an `any` typed value                                                   @typescript-eslint/no-unsafe-return
+  15:10  error  Operands of '+' operation with any is possible only with string, number, bigint or any  @typescript-eslint/restrict-plus-operands
 
+✖ 2 problems (2 errors, 0 warnings)
 
+# husky 中的退出执行（git commit 失败）
+husky - pre-commit hook exited with code 1 (error)
+~~~
 
+### 变更日志
+版本的更新日志可以帮助大家更好的了解微前端框架库设计的版本功能信息，当微前端框架有变更时，大家可能希望通过更新日志了解变更的内容是什么、为什么要进行变更、以及如何进行变更，本课程接下来将重点讲解如何生成规范的 `Commit` 提交说明，以及如何利用工具自动生成更新日志。
 
+### 单元测试
+单元测试可以模仿开发者对于 `API` 的调用过程，并且可以通过边界情况来测试 `API` 是否存在异常情况，确保 `API` 的设计可得到预期的结果，从而提升代码质量。当我们对 `API` 进行重构或者优化时，可以通过单元测试的测试案例来确保代码的改动不会影响最终的运行结果，从而提升代码设计的稳定性。
 
+## 工程设计：构建工具
+框架（通用）库的设计是为了在不同的应用中进行逻辑复用，从而提升开发效率。在前端开发中，应用主要分为 `Web` 应用和 `Node` 应用，因此框架库主要在这两种应用环境中使用。需要注意，有些库只能在 `Node` 环境中使用，有些库只能在 `Web` 环境中使用，而有些库考虑了兼容性设计，在两者中都可以使用。本小节课程会重点讲解 `Web` 应用和框架库的构建差异，并且会以 `Webpack` 和 `Gulp` 构建工具为例进行讲解。
 
+### 应用构建
+在 Web 应用的打包构建中，一般需要考虑以下构建处理，从而生成前端可以部署的静态资源：
+- 构建生成 `HTML` 文件并关联相应的 `JS` 和 `CSS`；
+- 对 `CSS`、`JS` 、图片、`SVG` 等进行打包处理，从而减少浏览器的请求数量；
+- 构建的 `JS` 和 `CSS` 能够兼容大多数浏览器；
+- 打包的 `JS` 脚本数量少，减少 `HTTP` 请求的个数；
+- 打包的 `JS` 脚本体积小（抽离公共的 `JS` 脚本、压缩处理），减少 `HTTP` 请求的时间；
+- 如果是 `React` 或者 `Vue` 框架开发，还需要考虑 `JSX`、`Vue Template` 等支持；
+- 如果是 `TypeScript` 开发，还需要考虑支持 `TypeScript` 转译。
 
+::: tip
+使用 `React` 或者 `Vue` 框架开发 `Web` 应用时都会配套相应的开发套件，例如 `Create React App` 以及 `Vue CLI`。本课程只是简单讲解和通用库构建息息相关的简单 `JS` 构建配置，帮助没有构建经验的同学可以简单了解应用的构建过程。如果想了解 TypeScript、CSS 预编译 & 抽离、图片内联 & 抽离、JSX 支持、SVG 支持、ESLint 支持、模块热替换等配置，可以额外深入了解上述列举的框架开发套件。
+:::
 
+接下来重点讲一下 `JS` 的打包处理，目前主流框架的 `Web` 应用都采用模块化的方式进行开发，为了生成浏览器兼容的 `ES5` 脚本，可以配合打包工具将开发态 `ES6+` 语法的脚本打包成带公共 `chunks` 的兼容性 `ES5` 脚本，如下所示：
 
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/0fc5aff765904cf19ca3925fb3008122~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
 
+以 `Webpack` 为例，来看一个简单的模块化打包示例：
+~~~shell
+├── src                # 源文件夹
+│   ├── minus.js       # ES Modules                
+│   ├── add.js         # ES Modules                                
+│   └── index.js       # 入口文件
+~~~
+在 `index.js` 中通过 `import` 来引入 `add.js` 和 `minus.js` 模块：
+~~~ts
+// src/add.js
+export function add(a, b) {
+  return a + b;
+}
+
+// src/subtract.js
+export function subtract(a, b) {
+  return a - b;
+}
+
+// src/index.js
+import { add } from "./add";
+import { subtract } from "./subtract";
+
+let c = add(1, 2);
+console.log(c);
+let d = add(3, 4);
+console.log(d);
+
+let e = subtract(d, 4);
+console.log(e);
+let f = subtract(c, 2);
+console.log(f);
+~~~
+在 `package.json` 中添加构建命令（在项目中需要安装 `webpack` 和 `webpack-cli`）：
+~~~ts
+// package.json
+"scripts": {
+  "build": "webpack"
+},
+~~~
+执行 `npm run build` 之后默认会在 `dist` 目录下生成 `main.bundle.js`，如下所示：
+~~~ts
+// dist/main.bundle.js
+(()=>{"use strict";function o(o,l){return o+l}function l(o,l){return o-l}let e=o(1,2);console.log(e);let n=o(3,4);console.log(n);let t=l(n,4);console.log(t);let c=l(e,2);console.log(c)})();
+~~~
+可以发现 `Webpack` 将所有的 `ES Modules` 打包成了一个文件并做了压缩处理，但没有将 `ES6+` 语法转换成 `ES5` 语法，例如构建代码中的 let 和箭头函数。如果想要将源代码转换成 `ES5` 语法，需要借助 [Babel](https://babeljs.io/)（转译工具，语法转换和 `Polyfill` 处理），在项目中新增 `webpack.config.js` 配置文件并添加 `babel-loader`：
+~~~ts
+// webpack.config.js
+const HtmlWebpackPlugin = require("html-webpack-plugin");
+
+module.exports = {
+  mode: "production",
+  entry: "./src/index.js",
+  output: {
+    path: __dirname + "/dist",
+    filename: "[name].bundle.js",
+    environment: {
+      // 将最外层立即执行的箭头函数改为 ES5 语法
+      arrowFunction: false,
+    },
+  },
+  module: {
+    rules: [
+      {
+        test: /.m?js$/,
+        // Babel 推荐屏蔽 node_modules 目录，这也是为什么大部分通用库需要构建的主要原因
+        // 如果引入的 NPM 库包是 ES6 语法，那么最终的构建产物将包含 ES6 代码
+        exclude: /(node_modules)/,
+        use: {
+          // 将 ES6+ 语法转换成 ES5
+          loader: "babel-loader",
+          options: {
+            presets: ["@babel/preset-env"],
+          },
+        },
+      },
+    ],
+  },
+  // 构建生成 HTML 文件，并将构建后的 JS 文件添加的 HTML 中
+  plugins: [new HtmlWebpackPlugin()],
+};
+~~~
+::: tip
+插件是 `Webpack` 可以额外处理 `JS` 的一个重要功能，举个例子，可以通过正则表达式来匹配 `JS` 和 `CSS` 中的公网地址，并进行下载打包处理，从而解决私有化网络的问题。
+:::
+执行 `npm run build` 之后会生成可以兼容大部分浏览器的 `ES5` 代码：
+~~~ts
+!function(){"use strict";function o(o,n){return o+n}function n(o,n){return o-n}var r=o(1,2);console.log(r);var c=o(3,4);console.log(c);var l=n(c,4);console.log(l);var e=n(r,2);console.log(e)}();
+~~~
+如果在代码中使用了相对通用的三方库，则可以将三方库通过 `Webpack` 自带的功能进行代码分离，例如这里更改源代码，引入 `Lodash` 处理：
+~~~ts
+// src/add.js
+import _ from "lodash";
+
+export function add(a, b) {
+  return _.add(a, b);
+}
+
+// src/subtract.js
+import _ from "lodash";
+
+export function subtract(a, b) {
+  return a - b;
+}
+~~~
+更改 `webpack.config.js` 的配置：
+~~~ts
+const HtmlWebpackPlugin = require("html-webpack-plugin");
+
+module.exports = {
+  mode: "production",
+  entry: "./src/index.js",
+  output: {
+    path: __dirname + "/dist",
+    filename: "[name].bundle.js",
+    environment: {
+      arrowFunction: false,
+    },
+  },
+  // 提取公共的依赖模块并生成新的 chunk 文件
+  optimization: {
+    splitChunks: {
+      chunks: "all",
+    },
+  },
+  module: {
+    rules: [
+      {
+        test: /.m?js$/,
+        exclude: /(node_modules)/,
+        use: {
+          loader: "babel-loader",
+          options: {
+            presets: ["@babel/preset-env"],
+          },
+        },
+      },
+    ],
+  },
+  plugins: [new HtmlWebpackPlugin()],
+};
+~~~
+执行 `npm run build` 之后会将 `Lodash` 库的代码进行分离：
+~~~shell
+# 共享模块，内部包含 Lodash 库代码
+asset 486.bundle.js 69 KiB [emitted] [minimized] (id hint: vendors) 1 related asset
+asset main.bundle.js 1.74 KiB [emitted] [minimized] (name: main)
+asset index.html 272 bytes [emitted]
+~~~
+::: tip
+多入口的情况下分离代码，可以防止各自引入重复的代码从而增加构建体积。除此之外，分离代码还可以防止单个 JS 脚本过大从而增加 HTTP 的请求时间。
+:::
+
+### 库构建
+框架（通用）库的构建并不直接面向浏览器，而是面向 `Web` 应用（或者 `Node` 应用），`Web` 应用会通过模块化的方式加载通用库并进行最终的应用打包。在 `Web` 应用中，框架库是通过 NPM 包的方式引入，而 `babel-loader` 转译时通常会配置忽略 `node_modules` 目录下的库包，因此需要先将库包转译成浏览器能够兼容的 `ES5` 语法进行发布，因为 `Web` 应用在打包时不会对三方 `NPM` 包进行转译处理。除此之外，为了配合 `Web` 应用的打包处理，还需要将库包发布成能够被打包工具识别的模块化标准：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/6605f97f8adb4dc386665a7e3ecf6af4~tplv-k3u1fbpfcp-jj-mark_1512_0_0_0_q75.webp)
+
+库构建面向应用开发，一般需要考虑如下构建处理，从而生成可以被应用安装的 `NPM` 包：
+- 目标代码能够兼容浏览器或者 `Node.js` 环境（`ES5` 标准）；
+- 输出模块规范，例如 `CommonJS`、`UMD` 或者 `ES Module`（支持 `Tree Shaking`）；
+- 输出 `TypeScript` 声明文件，可以在应用开发中得到库 `API` 的智能提示；
+- 不进行三方库的打包处理，防止应用使用同样的三方库时打包两份代码；
+- 能够使应用按需引入库代码。
+
+### 按需引入
+接下来重点讲解一下库的按需引入功能，从而帮助大家更好了解接下来的构建工具选型。在之前的 `Web` 应用构建中，可以重新修改 `Lodash` 库的引入方式，从而实现按需引入：
+~~~ts
+// src/add.js
+// Lodash 库按需引入的方式非常简单，例如 import funName from `lodash/${funName}`
+import _add from "lodash/add";
+
+export function add(a, b) {
+  return _add(a, b);
+}
+
+// src/subtract.js
+import _subtract from "lodash/subtract";
+
+export function subtract(a, b) {
+  return _subtract(a, b);
+}
+~~~
+执行 `npm run build` 之后：
+~~~shell
+# 按需引入的体积 2.74 KiB，按需引入后体积大大减小
+asset main.bundle.js 2.74 KiB [emitted] [minimized] (name: main)
+
+# 不按需引入（不对代码进行分离）的体积 69.8 KiB
+asset main.bundle.js 69.8 KiB [emitted] [minimized] (name: main) 1 related asset
+~~~
+::: tip
+如果不想改变 `import _ from "lodash"` 的引入方式，也可以将按需引入的解析工作交给 `Webpack` 的插件 `lodash-webpack-plugin` 和 `Babel` 的插件 `babel-plugin-lodash` 来处理，当然最终还是转变成 `import funName from "lodash/${funName}"` 的方式。
+:::
+
+如果构建工具本身支持 `Tree Shaking`，那么也可以使用 `Lodash` 的 `ES Module` 标准库（默认安装的 `Lodash` 库输出的是 `CommonJS` 规范），例如：
+~~~ts
+import { add } from "lodash-es";
+
+export function _add(a, b) {
+  return add(a, b);
+}
+
+// src/subtract.js
+import { subtract } from "lodash-es";
+
+export function subtract(a, b) {
+  return subtract(a, b);
+}
+~~~
+此时 `Webpack` 在构建时可以利用 `Tree Shaking` 的特性自动去除未使用的代码，执行 `npm run build` 之后：
+~~~shell
+# Tree Shaking 后代码的体积大大减少
+asset main.bundle.js 1.54 KiB [emitted] [minimized] (name: main)
+~~~
+总结来说，如果要设计一个 `Lodash` 库并支持按需引入，那么可以对库的开发做如下构建处理：
+- 生成 `CommonJS` 规范，构建总入口文件，并为每一个函数构建独立文件；
+- 生成 `ES Module` 规范，构建总入口文件，并为每一个函数构建独立文件；
+- 为每一个设计的函数进行单独构建和单独发布 `NPM` 包。
+
+有了上述构建库的设计后，按需引入的方式可以包含如下几种：
+~~~ts
+// 按函数文件名引入
+// 此时构建的 NPM 包中需要有一个 add.js 文件，并且该文件在一级目录下
+import _add from "lodash/add";
+
+// CommonJS 总引入，需要配合 lodash-webpack-plugin 和 babel-plugin-lodash 一起使用
+// 此种方式可以简单理解为通过插件间接将代码转换成 import _add from "lodash/add" 的方式
+import _ from "lodash";
+_.add(1,2);
+
+// ES Modules 总引入，利用构建工具的 Tree Shaking 能力实现按需构建
+// 此时构建的 NPM 包中需要一个总的 lodash.js 文件，该文件导出了所有的工具方法
+import _ from "lodash-es";
+_.add(1,2);
+
+// 单独的 NPM 按需引入，lodash.add 是一个独立的 NPM 包
+import add from "lodash.add"
+add(1,2);
+~~~
+
+### 构建工具选型
+在了解了 `Lodash` 的按需引入功能之后，以微前端框架库的设计为例，假设需要设计一个以下目录结构的库包：
+~~~shell
+├── src                          # 源文件     
+│   ├── index.js                 # 总入口文件
+│   ├── core                     # 应用管理
+│   │   └── core.js              # 应用管理
+│   ├── sandbox                  # 隔离方案
+│   │   ├── sandbox1.js          # 隔离功能一
+│   │   ├── sandbox2.js          # 隔离功能二
+│   │   └── sandbox3.js          # 隔离功能三
+│   ├── opt                      # 性能优化
+│   │   ├── opt1.js              # 优化功能一
+│   │   └── opt2.js              # 优化功能二
+│   └── comm                     # 通信
+│       ├── comm1.js             # 通信功能一
+│       └── comm2.js             # 通信功能二
+├── lib                          # 目标文件
+│   ├── commonjs                 # CommonJS 标准输出（可以单独发布成库包 micro-framework）
+│   │   ├── index.js             # 总入口
+│   │   ├── core.js              # 应用管理
+│   │   ├── sanbox1.js           # 隔离功能一
+│   │   ├── sanbox2.js           # 隔离功能二
+│   │   ├── sanbox3.js           # 隔离功能三
+│   │   ├── opt1.js              # 优化功能一
+│   │   ├── opt2.js              # 优化功能二
+│   │   ├── comm1.js             # 通信功能一
+│   │   └── comm2.js             # 通信功能二
+│   ├── es                       # ES Modules 标准（可以单独发布成库包 micro-framework-es）
+│   │   ├── index.js             # 总入口
+│   │   ├── core.js              # 应用管理
+│   │   ├── sandbox1.js          # 隔离功能一 
+│   │   ├── sandbox2.js          # 隔离功能二
+│   │   ├── sandbox3.js          # 隔离功能二
+│   │   ├── opt1.js              # 优化功能一
+│   │   ├── opt2.js              # 优化功能二
+│   │   ├── comm1.js             # 通信功能一
+│   │   └── comm2.js             # 通信功能二
+~~~
+::: tip
+可以视情况将构建后的文件目录进行平铺，使应用的开发者不需要感知 `sandbox`、`opt` 和 `comm` 等源文件目录路径，提升开发者体验。构建完成后，将上述构建目录的 `lib/commonjs` 发布成独立的 `NPM` 包，包名为 `micro-framework`。
+:::
+构建并发布后，框架库可以按目标文件进行引入，使用方式如下所示：
+~~~ts
+// 支持按需引入
+import micro from 'micro-framework/core';
+import nav from 'micro-framework/nav';
+import sandbox1 from 'micro-framework/sandbox1';
+import opt1 from 'micro-framework/opt1';
+import comm1 from 'micro-framework/comm1';
+
+micro.start({
+   // 需要注册的微应用
+   apps: [],
+   // 启用导航、隔离、性能优化和通信
+   plugins: [nav, sandbox1, opt1, comm1],
+});
+~~~
+在应用中通过 `import sandbox1 from 'micro-framework/sandbox1'` 的方式可以做到按需引入 `commonjs/sandbox1.js` 文件，未被引入的文件不会被打包到应用中。
+
+除此之外，不要将三方库打包到框架库的目标文件中，例如 `Web` 应用和框架库的设计都依赖了 `Lodash` 三方库，如果在框架库的 `index.js` 中打包了 `Lodash`，`Web` 应用也打包了 `Lodash`，应用引入框架库后进行打包会导致目标文件中存在两份 `Lodash` 代码。
+
+为了实现上述框架库的构建处理，需要考虑选型合适的构建工具。构建工具的类型有很多，其中转译和打包是两种常用的类型。`babel`、`tsc` 和 `swc` 是常用的转译工具，只负责源文件到目标文件的转译工作，而 `Webpack、Rollup、Vite、Swcpack、Turbopack` 等属于打包工具，打包工具可以将多个模块化的文件组合压缩成单个 `JS` 文件，从而可以减少浏览器的请求数量和体积。当然打包工具的作用还包括代码切割、`TreeShaking`、`CSS` 预编译处理等。如果使用打包工具进行库构建处理，一般需要考虑以下处理：
+- 屏蔽 `TreeShaking` 处理；
+- 排除三方库的打包处理；
+- 多入口处理（生成按需加载的文件）；
+- 生成 `TypeScript` 声明文件。
+::: tip
+打包工具也会具备库的构建能力，例如 `Webpack` 的创建 [library](https://webpack.docschina.org/guides/author-libraries/)，但是不推荐使用多入口的处理方式，并且需要额外排除三方库，当然也可以查看社区是否有排除三方库的工具，例如 `Element` 的 [config.js](https://github.com/ElemeFE/element/blob/dev/build/config.js) 中使用的 `webpack-node-externals`。
+:::
+如果是组件库的构建，则考虑的情况会相对复杂，例如包含 `CSS`、图片以及 `SVG` 的处理，此时使用打包工具可能是个不错的选择，例如 `Element` 的构建就是使用了 `Webpack` 进行库构建，但是它为了生成按需加载的文件以及排除三方库处理，做了很多复杂的 `Webpack` 配置。
+
+如果只是简单做一个类似于 `Lodash` 的工具库，那么可以考虑使用转译工具处理，此时在开发态希望使用最新的 `ES6+` 语法，而生产态只需要转译处理即可，使用转译工具的优势在于：
+- 天然不会处理 `TreeShaking`；
+- 天然不打包三方库，不需要做额外的排除处理；
+- 天然做到多入多出，因为只是做转译处理，不做打包处理；
+- 类似于 `tsc` 天然可以生成 `TypeScript` 声明文件。
+
+除此之外，如果在开发态可以平铺目录，那么最好是在开发态进行目录的平铺处理，只采用一级目录的设计方式，从而在按需加载时不需要考虑多级目录的引入情况。如果在库设计的开发态希望可以按功能进行多级目录的区分，那么也可以简单通过 `Node` 的方式在构建时将目录进行平铺处理，从而确保按需引入的体验。因此，工具库或者框架库的构建可以选择转译工具进行构建处理，在选型时可以考虑以下转译工具：
+- `babel`：功能丰富生态强大，但是对 `TypeScript` 支持偏弱，例如类型检查和声明文件生成；
+- `tsc`：`TypeScript` 原生构建工具，类型检查速度慢并且对新语法的支持不如 `Babel` 多；
+- `swc`：构建速度快，目前正在设计 `TypeScript` 类型检查，预计速度会比 `tsc` 快。
+
+如果熟悉 `babel` 和 `swc`，可以使用 `babel` 和 `swc` 进行代码的转译处理，配合 `tsc` 进行声明文件的生成和类型检查处理，如果只是设计简单的功能库，并且不需要大量的 `polyfill` 支持，那么可以直接选择 `tsc` 进行转译处理。
+
+当然 `tsc` 的功能和生态过于简单，本课程接下来会使用 `gulp-typescript` （利用 `TypeScript` 的 `API` 进行编译，具备类型检查和声明的生成能力）进行流式构建处理，从而方便后续可以借助 `Gulp` 的生态额外定制构建需求，例如文件压缩、合并、添加日志等。
 
