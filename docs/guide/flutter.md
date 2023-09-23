@@ -2,7 +2,7 @@
  * @Author: 高江华 g598670138@163.com
  * @Date: 2023-04-11 16:57:52
  * @LastEditors: 高江华
- * @LastEditTime: 2023-09-23 15:39:22
+ * @LastEditTime: 2023-09-23 17:44:07
  * @Description: file content
 -->
 # Flutter
@@ -830,6 +830,421 @@ void main() {
   var invalidPerson = Person(); // 编译错误！必须提供 name 和 age 参数
 }
 ~~~
+
+## 入口
+每一个`flutter`项目的`lib`目录里面都有一个`main.dart`，这个文件就是`flutter`的入口文件。
+~~~dart
+void main(){
+runApp(MyApp());
+}
+//也可以简写
+void main()=>runApp(MyApp());
+~~~
+其中的`main`方法是`dart`的入口方法。`runApp`方法是`flutter`的入口方法。`MyApp`是自定义的一个组件。
+
+## 自定义组件
+在`Flutter`中自定义组件其实就是一个类，这个类需要继承`StatelessWidget` 或 `StatefulWidget`。
+- **StatelessWidget** 是无状态组件，状态不可变的`widget`。
+  ~~~dart
+  import 'package:flutter/material.dart';
+
+  class MyApp extends StatelessWidget{
+    const MyApp({Key? key}) : super(key: key);
+    @override
+    Widget build(BuildContext context) {
+      // TODO: implement build
+      return const Center(
+      child: Text(
+          "我是一个文本内容",
+          textDirection: TextDirection.ltr,
+        ),
+      );
+    } 
+  }
+  ~~~
+- **StatefulWidget** 是有状态组件，持有的状态可能在`widget`生命周期改变。
+  ~~~dart
+  import 'package:flutter/material.dart';
+
+  class CounterWidget extends StatefulWidget {
+    @override
+    _CounterWidgetState createState() => _CounterWidgetState();
+  }
+
+  class _CounterWidgetState extends State<CounterWidget> {
+    int _counter = 0;
+
+    void _incrementCounter() {
+      setState(() {
+        _counter++;
+      });
+    }
+
+    @override
+    Widget build(BuildContext context) {
+      return Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: <Widget>[
+          Text('You have pushed the button this many times:'),
+          Text(
+            '$_counter',
+            style: Theme.of(context).textTheme.headline4,
+          ),
+          SizedBox(height: 16),
+          ElevatedButton(
+            onPressed: _incrementCounter,
+            child: Text('Increment'),
+          ),
+        ],
+      );
+    }
+  }
+  ~~~
+## 组件
+### MaterialApp
+`MaterialApp`是一个方便的`Widget`，它封装了应用程序实现`Material Design`所需要的一些`Widget`。一
+般作为顶层`widget`使用。
+
+**常用的属性：**
+- home（主页）
+- title（标题）
+- color（颜色）
+- theme（主题）
+- routes（路由）
+
+### Scaffold
+`Scaffold`是`Material Design`布局结构的基本实现。此类提供了用于显示`drawer`、`snackbar`和底部`sheet`
+的`API`。
+
+**主要的属性：**
+- appBar：显示在界面顶部的一个 AppBar。
+- body：当前界面所显示的主要内容 Widget。
+- drawer：抽屉菜单控件。
+
+### Container
+| 名称 | 功能 |
+|----|----|
+| alignment | topCenter：顶部居中对齐topLeft：顶部左对齐topRight：顶部右对齐center：水平垂直居中对齐centerLeft：垂直居中水平居左对齐centerRight：垂直居中水平居右对齐bottomCenter底部居中对齐bottomLeft：底部居左对齐 bottomRight：底部居右对齐 |
+| decoration | decoration: BoxDecoration( color: Colors.blue, border: Border.all( color: Colors.red, width: 2.0),borderRadius:BorderRadius.circular((8)),// 圆角 ，boxShadow: [ BoxShadow( color: Colors.blue, offset: Offset(2.0, 2.0), blurRadius: 10.0, ) ], ) //LinearGradient 背景线性渐变 RadialGradient径向渐变 gradient: LinearGradient( colors: [Colors.red, Colors.orange], ), |
+| margin | margin属性是表示Container与外部其他组件的距离。 EdgeInsets.all(20.0), |
+| padding | padding就是Container的内边距，指Container边缘与Child之间的距离 padding:EdgeInsets.all(10.0) |
+| transform | 让Container容易进行一些旋转之类的transform: Matrix4.rotationZ(0.2) |
+| height | 容器高度 |
+| width | 容器宽度 |
+| child | 容器子元素 |
+
+~~~dart
+import 'package:flutter/material.dart';
+void main() {
+  runApp(MaterialApp(
+    home: Scaffold(
+      appBar: AppBar(title: const Text("你好Flutter")),
+      body: const MyApp(),
+    ),
+  ));
+}
+// 代码块 statelessW
+class MyApp extends StatelessWidget {
+  const MyApp({Key? key}) : super(key: key);
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Container(
+        alignment: Alignment.center,
+        height: 200,
+        width: 200,
+        decoration: BoxDecoration(
+          color: Colors.yellow,
+          gradient: const LinearGradient(
+            //LinearGradient 背景线性渐变 RadialGradient径向渐变
+            colors: [Colors.red, Colors.orange],
+          ),
+          boxShadow:const [
+            //卡片阴影
+            BoxShadow(
+              color: Colors.blue,
+              offset: Offset(2.0, 2.0),
+              blurRadius: 10.0,
+            )
+          ],
+          border: Border.all(
+            color: Colors.black,
+            width: 1
+          )
+        ),
+        transform:Matrix4.rotationZ(.2),
+        child: const Text(
+          "你好Flutter",
+          style: TextStyle(fontSize: 20),
+        ),
+      ),
+    );
+  }
+}
+~~~
+### Text
+|名称 | 功能|
+|----|----|
+|textAlign | 文本对齐方式（center居中，left左对齐，right右对齐，justfy两端对齐）|
+|textDirection |文本方向（ltr从左至右，rtl从右至左）|
+|overflow |文字超出屏幕之后的处理方式（clip裁剪，fade渐隐，ellipsis省略号）|
+|textScaleFactor| 字体显示倍率|
+|maxLines| 文字显示最大行数|
+|style |字体的样式设置|
+
+`TextStyle` 的参数 ：
+|名称 | 功能|
+|----|----|
+|decoration |文字装饰线（none没有线，lineThrough删除线，overline上划线，underline下划线）|
+|decorationColor| 文字装饰线颜色|
+|decorationStyle| 文字装饰线风格（[dashed,dotted]虚线，double两根线，solid一根实线，wavy波浪线）|
+|wordSpacing| 单词间隙（如果是负值，会让单词变得更紧凑）|
+|letterSpacing| 字母间隙（如果是负值，会让字母变得更紧凑）|
+|fontStyle| 文字样式（italic斜体，normal正常体）|
+|fontSize| 文字大小|
+|color| 文字颜色|
+|fontWeight| 字体粗细（bold粗体，normal正常体）|
+
+~~~dart
+import 'package:flutter/material.dart';
+void main() {
+  runApp(MaterialApp(
+    home: Scaffold(
+      appBar: AppBar(title: const Text("你好Flutter")),
+      body: const MyApp(),
+    ),
+  ));
+}
+// 代码块 statelessW
+class MyApp extends StatelessWidget {
+  const MyApp({Key? key}) : super(key: key);
+  @override
+  Widget build(BuildContext context) {
+  return Center(
+    child: Container(
+      alignment: Alignment.center,
+      height: 200,
+      width: 200,
+      decoration: BoxDecoration(
+        color: Colors.yellow,
+        gradient: const LinearGradient(
+          //LinearGradient 背景线性渐变 RadialGradient径向渐变
+          colors: [Colors.red, Colors.orange],
+        ),
+        boxShadow: const [
+          //卡片阴影
+          BoxShadow(
+            color: Colors.blue,
+            offset: Offset(2.0, 2.0),
+            blurRadius: 10.0,
+          )
+        ],
+        border: Border.all(color: Colors.black, width: 1)),
+        transform: Matrix4.rotationZ(.2),
+        child: const Text(
+          '我是傻批',
+          textAlign: TextAlign.left,
+          overflow: TextOverflow.ellipsis,
+          // overflow:TextOverflow.fade ,
+          maxLines: 2,
+          textScaleFactor: 1.8,
+          style: TextStyle(
+            fontSize: 16.0,
+            color: Colors.black,
+            // color:Color.fromARGB(a, r, g, b)
+            fontWeight: FontWeight.w800,
+            fontStyle: FontStyle.italic,
+            decoration: TextDecoration.lineThrough,
+            decorationColor: Colors.white,
+            decorationStyle: TextDecorationStyle.dashed,
+            letterSpacing: 5.0
+          )
+        ),
+      ),
+    );
+  }
+}
+~~~
+
+### Image
+`Flutter` 中，我们可以通过 `Image` 组件来加载并显示图片 `Image` 的数据源可以是`asset`、文件、内存以
+及网络 。
+- `Image.asset`: 本地图片
+- `Image.network`: 远程图片
+
+~~~dart
+// 加载远程图片
+Image.network(
+  "https://www.itying.com/themes/itying/images/ionic4.png",
+  fit: BoxFit.cover,
+)
+~~~
+~~~dart
+// 实现圆形图片
+Container(
+  width: 150,
+  height: 150,
+  decoration: BoxDecoration(
+  color: Colors.yellow,
+  borderRadius: BorderRadius.circular(75),
+  image: const DecorationImage(
+    image: NetworkImage(
+      "https://www.itying.com/themes/itying/images/ionic4.png",
+    ),
+    fit: BoxFit.cover)
+  ),
+)
+~~~
+~~~dart
+// 实现圆形图片
+ClipOval(
+  child: Image.network(
+    "https://www.itying.com/themes/itying/images/ionic4.png",
+    width: 150.0,
+    height: 150.0,
+    fit: BoxFit.cover,
+  ),
+),
+~~~
+~~~dart
+// 基本上，CircleAvatar 不提供设置边框的属性。但是，可以将其包裹在具有更大半径和不同背景颜色的不同 CircleAvatar 中，以创建类似于边框的内容。
+const CircleAvatar(
+  radius: 110,
+  backgroundColor: Color(0xffFDCF09),
+  child: CircleAvatar(
+    radius: 100,
+    backgroundImage:
+      NetworkImage("https://www.itying.com/images/flutter/3.png"
+    ),
+  )
+)
+~~~
+使用本地图片：
+- 项目根目录新建`images`文件夹，`images`中新建2.x 3.x对应的文件
+- 然后，打开 `pubspec.yaml` 声明一下添加的图片文件， 注意: 空格
+  ~~~yaml
+  assets:
+    - images/a.png
+    - images/2.x/a.png
+    - images/3.x/a.png
+  ~~~
+- 使用
+  ~~~dart
+  class MyApp extends StatelessWidget {
+    const MyApp({Key? key}) : super(key: key);
+    @override
+    Widget build(BuildContext context) {
+      return Center(
+        child: ClipOval(
+          child: Image.asset(
+            "images/a.jpeg",
+            width: 150.0,
+            height: 150.0,
+            fit: BoxFit.cover
+          ),
+        ),
+      );
+    }
+  }
+  ~~~
+
+### Icons
+`Material Design`所有图标可以在其官网查看：https://material.io/tools/icons/
+~~~dart
+class MyApp extends StatelessWidget {
+  const MyApp({Key? key}) : super(key: key);
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        children: const [
+          Icon(Icons.search,color: Colors.red,size: 40),
+          SizedBox(height: 10),
+          Icon(Icons.home),
+          SizedBox(height: 10),
+          Icon(Icons.category),
+          SizedBox(height: 10),
+          Icon(Icons.shop),
+          SizedBox(height: 10),
+        ],
+      )
+    );
+  }
+}
+~~~
+使用字体图标库，在Flutter中，我们使用ttf格式即可。
+- 假设我们的字体图标文件保存在项目根目录下，路径为`fonts/iconfont.ttf`。
+- 然后在 `pubspec.yaml` 中添加配置：
+  ~~~yaml
+  fonts:
+    - family: myIcon #指定一个字体名
+      fonts:
+      - asset: fonts/iconfont.ttf
+  # 或者配置多个字体文件
+  fonts:
+    - family: myIcon #指定一个字体名
+      fonts:
+      - asset: fonts/iconfont.ttf
+    - family: alipayIcon #指定一个字体名
+      fonts:
+      - asset: fonts/iconfont2.ttf
+  ~~~
+- 定义一个 `MyIcons` 类，功能和 `Icons` 类一样：将字体文件中的所有图标都定义
+成静态变量：
+  ~~~dart
+  class MyIcons{
+    // book 图标
+    static const IconData book = IconData(
+      0xe614,
+      fontFamily: 'myIcon',
+      matchTextDirection: true
+    );
+    // 微信图标
+    static const IconData wechat = IconData(
+      0xec7d,
+      fontFamily: 'myIcon',
+      matchTextDirection: true
+    );
+  }
+  ~~~
+- 使用
+  ~~~dart
+  Row(
+    mainAxisAlignment: MainAxisAlignment.center,
+    children: <Widget>[
+      Icon(MyIcons.book,color: Colors.purple),
+      Icon(MyIcons.wechat,color: Colors.green),
+    ],
+  )
+  ~~~
+
+### ListView
+列表布局是我们项目开发中最常用的一种布局方式。`Flutter`中我们可以通过`ListView`来定义列表项，支
+持垂直和水平方向展示。通过一个属性就可以控制列表的显示方向。列表有以下分类：
+- 垂直列表
+- 垂直图文列表
+- 水平列表
+- 动态列表
+
+**列表组件常用参数：**
+
+| 名称 | 类型 | 说明 |
+|----|----|----|
+|scrollDirection| Axis| Axis.horizontal水平列表Axis.vertical垂直列表 |
+|padding| EdgeInsetsGeometry| 内边距 |
+|resolve| bool| 组件反向排序 |
+|children| List| 列表元素 |
+
+
+
+
+
+
+
+
+
+
+
 
 
 
