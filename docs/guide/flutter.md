@@ -2,7 +2,7 @@
  * @Author: 高江华 g598670138@163.com
  * @Date: 2023-04-11 16:57:52
  * @LastEditors: 高江华
- * @LastEditTime: 2023-09-26 11:10:05
+ * @LastEditTime: 2023-09-26 17:34:29
  * @Description: file content
 -->
 # Flutter
@@ -3163,7 +3163,7 @@ class LayoutDemo extends StatelessWidget {
         runSpacing: 10, //垂直间距 *
         // direction:Axis.vertical,  *  
         children: [
-          Button("第 1 集", onPressed: () {}),
+          Button("第1集", onPressed: () {}),
           Button("第2集", onPressed: () {}),
           Button("第3集", onPressed: () {}),
           Button("第4集", onPressed: () {}),
@@ -3289,6 +3289,796 @@ class Button extends StatelessWidget {
       onPressed: onPressed,
       child: Text(text),
     );
+  }
+}
+~~~
+### Dialog
+[fluttertoast](https://pub.dev/packages/fluttertoast)的使用
+
+`pubspec.yaml` 的 `dependencies` 中添加
+~~~yaml
+# add this line to your dependencies
+fluttertoast: ^8.0.9
+~~~
+使用示例
+~~~dart
+import 'package:flutter/material.dart';
+import 'package:fluttertoast/fluttertoast.dart';
+
+class DialogPage extends StatefulWidget {
+  const DialogPage({super.key});
+
+  @override
+  State<DialogPage> createState() => _DialogPageState();
+}
+
+class _DialogPageState extends State<DialogPage> {
+  // 警告对话框
+  void _alertDialog() async {
+    var result = await showDialog(
+        barrierDismissible: false, //表示点击灰色背景的时候是否消失弹出框
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: const Text("提示信息!"),
+            content: const Text("您确定要删除吗"),
+            actions: [
+              TextButton(
+                  onPressed: () {
+                    print("ok");
+                    Navigator.of(context).pop("ok"); //点击按钮让AlertDialog消失
+                  },
+                  child: const Text("确定")),
+              TextButton(
+                  onPressed: () {
+                    print("cancel");
+                    Navigator.of(context).pop("取消");
+                  },
+                  child: const Text("取消"))
+            ],
+          );
+        });
+
+    print("-----------");
+    print(result);
+  }
+  // 简单对话框
+  void _simpleDialog() async {
+    var result = await showDialog(
+        barrierDismissible: false, //表示点击灰色背景的时候是否消失弹出框
+        context: context,
+        builder: (context) {
+          return SimpleDialog(
+            title: const Text("请选择语言"),
+            children: [
+              SimpleDialogOption(
+                onPressed: () {
+                  print("汉语");
+                  Navigator.pop(context, "汉语");
+                },
+                child: const Text("汉语"),
+              ),
+              const Divider(),
+              SimpleDialogOption(
+                onPressed: () {
+                  print("英语");
+                  Navigator.pop(context, "英语");
+                },
+                child: const Text("英语"),
+              ),
+              const Divider(),
+              SimpleDialogOption(
+                onPressed: () {
+                  print("日语");
+                  Navigator.pop(context, "日语");
+                },
+                child: const Text("日语"),
+              ),
+              const Divider(),
+            ],
+          );
+        });
+
+    print("-----------");
+    print(result);
+  }
+  // 底部弹出层
+  void _modelBottomSheet() async {
+    var result = await showModalBottomSheet(
+        context: context,
+        builder: (context) {
+          return SizedBox(
+            height: 240,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                ListTile(
+                  title: const Text("分享"),
+                  onTap: () {
+                    print("分享");
+                    Navigator.of(context).pop("分享");
+                  },
+                ),
+                const Divider(),
+                ListTile(
+                  title: const Text("收藏"),
+                  onTap: () {
+                    print("收藏");
+                    Navigator.of(context).pop("收藏");
+                  },
+                ),
+                const Divider(),
+                ListTile(
+                  title: const Text("取消"),
+                  onTap: () {
+                    print("取消");
+                    Navigator.of(context).pop("取消");
+                  },
+                ),
+                const Divider(),
+              ],
+            ),
+          );
+        });
+    print(result);
+  }
+  // 提示信息弹窗
+  void _toast() {
+    Fluttertoast.showToast(
+        msg: "提示信息",
+        toastLength: Toast.LENGTH_LONG, //值针对 android 平台
+        gravity: ToastGravity.CENTER, //方位
+        timeInSecForIosWeb: 1, //提示时间 针对ios 和 web
+        backgroundColor: Colors.black, //背景颜色
+        textColor: Colors.white, //文本颜色
+        fontSize: 16.0 //文本字体大小
+        );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+        appBar: AppBar(
+          title: const Text("Dialog"),
+        ),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: <Widget>[
+              ElevatedButton(
+                onPressed: _alertDialog,
+                child: const Text('alert弹出框-AlertDialog '),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: _simpleDialog,
+                child: const Text('select弹出框-SimpleDialog'),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: _modelBottomSheet,
+                child: const Text('ActionSheet底部弹出框'),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: _toast,
+                child: const Text('Toast'),
+              ),
+            ],
+          ),
+        ));
+  }
+}
+~~~
+### 自定义 Dialog
+自定义 `Dialog` 对象，需要继承 `Dialog` 类，尽管 `Dialog` 提供了 `child` 参数可以用来写视图界面，但是往往会
+达不到我们想要的效果，因为默认的 `Dialog` 背景框是满屏的。如果我们想完全定义界面，就需要重写 `build` 函数。
+~~~dart
+// /widget/myDialog.dart
+import 'package:flutter/material.dart';
+
+class MyDialog extends Dialog {
+  final String title;
+  final String content;
+  final Function()? onTap;
+  const MyDialog(
+      {Key? key,
+      required this.title,
+      required this.content,
+      required this.onTap})
+      : super(key: key);
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      type: MaterialType.transparency, //设置背景透明
+      child: Center(
+        //主要要包裹一个组件，不然会全屏
+        child: Container(
+          height: 240,
+          width: 240,
+          color: Colors.white,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(5),
+                child: Stack(
+                  children: [
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        title,
+                        style: const TextStyle(fontSize: 18),
+                      ),
+                    ),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: InkWell(
+                        onTap: onTap,
+                        child: const Icon(Icons.close),
+                      ),
+                    )
+                  ],
+                ),
+              ),
+              const Divider(),
+              Container(
+                padding: const EdgeInsets.all(10),
+                width: double.infinity,
+                child: Text(content, style: const TextStyle(fontSize: 14)),
+              )
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+~~~
+~~~dart
+import 'package:flutter/material.dart';
+import '../widget/myDialog.dart';
+
+class DialogPage extends StatefulWidget {
+  const DialogPage({super.key});
+
+  @override
+  State<DialogPage> createState() => _DialogPageState();
+}
+
+class _DialogPageState extends State<DialogPage> {
+  @override
+  void initState() {
+    super.initState();
+  }
+
+  void _myDialog() async {
+    var result = await showDialog(
+        barrierDismissible: false, //表示点击灰色背景的时候是否消失弹出框
+        context: context,
+        builder: (context) {
+          return MyDialog(
+            title: "提示!",
+            content: "我是一个内容",
+            onTap: (){
+              print("close");
+              Navigator.of(context).pop("我是自定义dialog关闭的事件");              
+            },
+          );
+        });
+    print(result);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Dialog"),
+      ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            ElevatedButton(
+              onPressed: _myDialog,
+              child: const Text('自定义dialog'),
+            ),
+          ],
+        ),
+      )
+    );
+  }
+}
+~~~
+### PageView
+`Flutter` 中的轮动图以及抖音上下滑页切换视频功能等等，这些都可以通过 `PageView` 轻松实现。
+
+`PageView` 常见属性：
+|属性 |描述|
+|---|--|
+|scrollDirection| Axis.horizonta水平方向、 Axis.vertical垂直方向|
+|children| 配置子元素|
+|allowImplicitScrolling |缓存当前页面的前后两页|
+|onPageChanged |page改变的时候触发|
+
+~~~dart
+import 'package:flutter/material.dart';
+
+class PageViewPage extends StatefulWidget {
+  const PageViewPage({super.key});
+
+  @override
+  State<PageViewPage> createState() => _PageViewPageState();
+}
+
+class _PageViewPageState extends State<PageViewPage> {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Title'),
+      ),
+      body: PageView(
+        scrollDirection: Axis.vertical, //配置PageView滑动的方向,默认是水平方向
+        children: [
+          Center(
+              child: Text(
+            "第1屏",
+            style: Theme.of(context).textTheme.headline1,
+          )),
+          Center(
+              child: Text(
+            "第2屏",
+            style: Theme.of(context).textTheme.headline1,
+          )),
+          Center(
+              child: Text(
+            "第3屏",
+            style: Theme.of(context).textTheme.headline1,
+          )),
+          Center(
+              child: Text(
+            "第4屏",
+            style: Theme.of(context).textTheme.headline1,
+          )),
+          Center(
+              child: Text(
+            "第5屏",
+            style: Theme.of(context).textTheme.headline1,
+          )),
+          Center(
+              child: Text(
+            "第6屏",
+            style: Theme.of(context).textTheme.headline1,
+          )),
+          Center(
+              child: Text(
+            "第7屏",
+            style: Theme.of(context).textTheme.headline1,
+          )),
+        ],
+      ),
+    );
+  }
+}
+~~~
+`PageView.builder` 的使用
+~~~dart
+import 'package:flutter/material.dart';
+
+class PageViewBuilderPage extends StatefulWidget {
+  const PageViewBuilderPage({super.key});
+
+  @override
+  State<PageViewBuilderPage> createState() => _PageViewBuilderPageState();
+}
+
+class _PageViewBuilderPageState extends State<PageViewBuilderPage> {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('PageViewBuilder'),
+      ),
+      body: PageView.builder(
+        scrollDirection:Axis.vertical,  //垂直
+        itemCount: 10,
+        itemBuilder: (context, index) {
+          return Center(
+              child: Text(
+            "第${index + 1}屏",
+            style: Theme.of(context).textTheme.headline1,
+          ));
+        }
+      ),
+    );
+  }
+}
+~~~
+`PageView` 上拉无限加载的实现思路
+~~~dart
+import 'package:flutter/material.dart';
+
+class PageViewFullPage extends StatefulWidget {
+  const PageViewFullPage({super.key});
+
+  @override
+  State<PageViewFullPage> createState() => _PageViewFullPageState();
+}
+
+class _PageViewFullPageState extends State<PageViewFullPage> {
+  List<Widget> list = [];
+
+  @override
+  void initState() {
+    super.initState();
+    for (var i = 0; i < 10; i++) {
+      list.add(Center(
+          child: Text("第${i + 1}屏", style: const TextStyle(fontSize: 60))));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Full Page'),
+      ),
+      body: PageView(
+        scrollDirection: Axis.vertical,
+        onPageChanged: (index) {
+          print(index);
+          if (index + 2 == list.length) {
+            setState(() {
+              for (var i = 0; i < 10; i++) {
+                list.add(Center(
+                    child: Text("第${i + 1}屏",
+                        style: const TextStyle(fontSize: 60))));
+              }
+            });
+          }
+        },
+        children: list,
+      ),
+    );
+  }
+}
+~~~
+`PageView` 实现一个无限轮播的轮播图
+~~~dart
+// /widget/image.dart
+import 'package:flutter/material.dart';
+
+class ImagePage extends StatelessWidget {
+  final double width;
+  final double height;
+  final String src;
+  const ImagePage(
+    {
+      super.key,
+      this.width = double.infinity,
+      this.height = 200,
+      required this.src
+    }
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: width,
+      height: height,
+      child: Image.network(
+        src,
+        fit: BoxFit.cover,
+      ),
+    );
+  }
+}
+~~~
+~~~dart
+import 'package:flutter/material.dart';
+import '../widget/image.dart';
+
+class PageViewSwiper extends StatefulWidget {
+  const PageViewSwiper({super.key});
+
+  @override
+  State<PageViewSwiper> createState() => _PageViewSwiperState();
+}
+
+class _PageViewSwiperState extends State<PageViewSwiper> {
+  List<Widget> list = [];
+  int _currentIndex = 0;
+  @override
+  void initState() {
+    super.initState();
+    list = const [
+      ImagePage(
+        src: "https://www.itying.com/images/flutter/1.png",
+      ),
+      ImagePage(
+        src: "https://www.itying.com/images/flutter/2.png",
+      ),
+      ImagePage(
+        src: "https://www.itying.com/images/flutter/3.png",
+      ),
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('PageViewSwiper'),
+      ),
+      body: Stack(
+        children: [
+          SizedBox(
+            height: 200,
+            child: PageView.builder(
+              onPageChanged: (index) {
+                /*
+                  1、刚开始     _currentIndex=0
+                  2、index=1    _currentIndex=1
+                  3、index=2    _currentIndex=2
+                  4、index=3    _currentIndex=0
+                  5、index=4     _currentIndex=1
+                  6、index=5     _currentIndex=2
+                  7、index=6     _currentIndex=0
+                */
+                setState(() {
+                  _currentIndex = index % list.length;
+                });
+              },
+              itemCount: 1000,
+              itemBuilder: (context, index) {
+                return list[index % list.length];
+                // index的值是0-1000
+                // 0  1  2    0  1  2   0  1 2
+              }
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0, //设置 left:0 right:0就会站满整行
+            bottom: 2,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(list.length, (index) {
+                return Container(
+                  margin: const EdgeInsets.all(5),
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: _currentIndex == index ? Colors.blue : Colors.grey,
+                    shape: BoxShape.circle, //圆
+                    // borderRadius: BorderRadius.circular(5) //圆
+                  ),
+                );
+              }).toList(),
+            )
+          )
+        ],
+      ),
+    );
+  }
+}
+~~~
+### 定时器
+~~~dart
+const timeout = Duration(seconds: 3);
+var t = Timer.periodic(timeout, (timer) {
+  print('afterTimer='+DateTime.now().toString());
+  // timer.cancel(); // 取消定时器
+});
+t.cancel(); // 取消定时器
+~~~
+组件销毁的时候取消定时器
+~~~dart
+void dispose() {
+  super.dispose();
+  t.cancel();
+}
+~~~
+使用定时器封装轮播图组件
+~~~dart
+import 'dart:async';
+import 'package:flutter/material.dart';
+
+class Swiper extends StatefulWidget {
+  final double width;
+  final double height;
+  final List<String> list;
+  const Swiper(
+    {super.key,
+    this.height = 200,
+    this.width = double.infinity,
+    required this.list}
+  );
+
+  @override
+  State<Swiper> createState() => _SwiperState();
+}
+
+class _SwiperState extends State<Swiper> {
+  int _currentIndex = 0;
+  List<Widget> pageList = [];
+  late PageController _pageController;
+  late Timer timer;
+  @override
+  void initState() {
+    super.initState();
+    //数据
+    for (var i = 0; i < widget.list.length; i++) {
+      pageList.add(ImagePage(
+        width: widget.width, height: widget.height, src: widget.list[i]));
+    }
+    //PageController
+    _pageController = PageController(initialPage: 0);
+
+    timer = Timer.periodic(const Duration(seconds: 5), (t) {
+      _pageController.animateToPage((_currentIndex + 1) % pageList.length,
+        duration: const Duration(milliseconds: 200), curve: Curves.linear);
+    });
+  }
+
+  @override
+  void dispose() {
+    super.dispose();
+    timer.cancel();
+    _pageController.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        SizedBox(
+          height: 200,
+          child: PageView.builder(
+            controller: _pageController,
+            onPageChanged: (index) {
+              setState(() {
+                _currentIndex = index % pageList.length;
+              });
+            },
+            itemCount: 1000,
+            itemBuilder: (context, index) {
+              return pageList[index % pageList.length];
+              // index的值是0-1000
+              // 0  1  2    0  1  2   0  1 2
+            }
+          ),
+        ),
+        Positioned(
+          left: 0,
+          right: 0, //设置 left:0 right:0就会站满整行
+          bottom: 2,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(pageList.length, (index) {
+              return Container(
+                margin: const EdgeInsets.all(5),
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: _currentIndex == index ? Colors.blue : Colors.grey,
+                  shape: BoxShape.circle //圆
+                  // borderRadius: BorderRadius.circular(5) //圆
+                ),
+              );
+            }).toList(),
+          )
+        )
+      ],
+    );
+  }
+}
+
+class ImagePage extends StatelessWidget {
+  final double width;
+  final double height;
+  final String src;
+  const ImagePage(
+      {super.key,
+      this.width = double.infinity,
+      this.height = 200,
+      required this.src});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: width,
+      height: height,
+      child: Image.network(
+        src,
+        fit: BoxFit.cover,
+      ),
+    );
+  }
+}
+~~~
+###  AutomaticKeepAliveClientMixin 缓存 PageView 页面
+通过上面的例子我们会发现 每次滑动的时候都会触发子组件中的 `build` 方法 `print(widget.url);`
+可见 `PageView` 默认并没有缓存功能，一旦页面滑出屏幕它就会被销毁 ,实际项目开发中对页面进行缓
+存是很常见的一个需求，下面我们就看看如何使用 `AutomaticKeepAliveClientMixin` 缓存页面。
+::: tip
+注意：使用时一定要注意是否必要，因为对所有列表项都缓存的会导致更多的内存消耗。
+:::
+~~~dart
+// 缓存封装 /tools/keepAliveWrapper.dart
+import 'package:flutter/material.dart';
+
+class KeepAliveWrapper extends StatefulWidget {
+  const KeepAliveWrapper(
+    {Key? key, @required this.child, this.keepAlive = true})
+    : super(key: key);
+
+  final Widget? child;
+  final bool keepAlive;
+
+  @override
+  State<KeepAliveWrapper> createState() => _KeepAliveWrapperState();
+}
+
+class _KeepAliveWrapperState extends State<KeepAliveWrapper> with AutomaticKeepAliveClientMixin {
+  @override
+  Widget build(BuildContext context) {
+    return widget.child!;
+  }
+
+  @override
+  bool get wantKeepAlive => widget.keepAlive;  
+}
+~~~
+~~~dart
+import 'package:flutter/material.dart';
+import '../tools/keepAliveWrapper.dart';
+
+class PageViewKeepAlive extends StatefulWidget {
+  const PageViewKeepAlive({super.key});
+
+  @override
+  State<PageViewKeepAlive> createState() => _PageViewKeepAliveState();
+}
+
+class _PageViewKeepAliveState extends State<PageViewKeepAlive> {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Title'),
+      ),
+      body: PageView.builder(
+        scrollDirection: Axis.vertical,
+        itemCount: 10,
+        itemBuilder: (context, index) {
+          return KeepAliveWrapper(   //注意：如果页面比较多,缓存会耗费内存, 注意 注意
+            child: MyContainer(num: index,),
+          );
+        }
+      ),
+    );
+  }
+}
+
+//自定义组件
+class MyContainer extends StatefulWidget {
+  final int num;
+  const MyContainer({super.key, required this.num});
+
+  @override
+  State<MyContainer> createState() => _MyContainerState();
+}
+
+class _MyContainerState extends State<MyContainer>  {
+  @override
+  Widget build(BuildContext context) {
+    print(widget.num);  //默认数据是没有缓存,每次滑动都会执行build
+    return Center(
+        child: Text(
+      "第${widget.num}屏",
+      style: Theme.of(context).textTheme.headline1,
+    ));
   }
 }
 ~~~
@@ -3597,18 +4387,267 @@ Navigator.of(context).pushAndRemoveUntil(
   (route) => false
 );
 ~~~
+### Android 和 Ios 使用同样风格的路由跳转
+`Material` 组件库中提供了一个 `MaterialPageRoute` 组件，它可以使用和平台风格一致的路由切换动画，
+如在 `IOS` 上会左右滑动切换，而在 `Android` 上会上下滑动切换, `CupertinoPageRoute` 是 `Cupertino` 组件
+库提供的 `IOS` 风格的路由切换组件如果在 `Android` 上也想使用左右切换风格，可以使用 `CupertinoPageRoute`。
+~~~dart
+import 'package:flutter/cupertino.dart';
+/*
+配置ios风格的路由
+1、删掉material.dart引入cupertino.dart
+  import 'package:flutter/cupertino.dart';
 
+2、把 MaterialPageRoute替换成 CupertinoPageRoute
+*/
 
+import '../pages/tabs.dart';
+import '../pages/shop.dart';
+import '../pages/user/login.dart';
+import '../pages/user/registerFirst.dart';
+import '../pages/user/registerSecond.dart';
+import '../pages/user/registerThird.dart';
 
+//1、配置路由
+Map routes = {
+  "/": (contxt) => const Tabs(),
+  "/login": (contxt) => const LoginPage(),
+  "/registerFirst": (contxt) => const RegisterFirstPage(),
+  "/registerSecond": (contxt) => const RegisterSecondPage(),
+  "/registerThird": (contxt) => const RegisterThirdPage(),
+  "/shop": (contxt, {arguments}) => ShopPage(arguments: arguments),
+};
 
+//2、配置onGenerateRoute  固定写法  这个方法也相当于一个中间件，这里可以做权限判断
+var onGenerateRoute = (RouteSettings settings) {
+  final String? name = settings.name; //  /news 或者 /search
+  final Function? pageContentBuilder =
+      routes[name]; //  Function = (contxt) { return const NewsPage()}
 
+  if (pageContentBuilder != null) {
+    if (settings.arguments != null) {
+      final Route route = CupertinoPageRoute(
+          builder: (context) =>
+              pageContentBuilder(context, arguments: settings.arguments));
+      return route;
+    } else {
+      final Route route =
+          CupertinoPageRoute(builder: (context) => pageContentBuilder(context));
 
+      return route;
+    }
+  }
+  return null;
+};
+~~~
+### 全局主题配置
+~~~dart
+return MaterialApp(
+  debugShowCheckedModeBanner: false,
+  title: 'Flutter Demo',
+  theme: ThemeData(
+      primarySwatch: Colors.blue,
+      appBarTheme: const AppBarTheme(
+        centerTitle: true,
+      )),
+  initialRoute: "/",
+  onGenerateRoute: onGenerateRoute,
+);
+~~~
+## Key 详解
+我们平时一定接触过很多的 `Widget`，比如 `Container`、`Row`、`Column` 等，它们在我们绘制界面的过程
+中发挥着重要的作用。但是不知道你有没有注意到，在几乎每个 `Widget` 的构造函数中，都有一个共同
+的参数，它们通常在参数列表的第一个，那就是 **Key**。
 
+在 `Flutter` 中，**`Key` 是不能重复使用的**，所以 `Key` 一般用来做唯一标识。组件在更新的时候，其状态的保
+存主要是通过判断**组件的类型**或者 **`key` 值**是否一致。因此，当各组件的类型不同的时候，类型已经足够
+用来区分不同的组件了，此时我们可以不必使用 `key`。但是如果同时存在多个同一类型的控件的时候，
+此时类型已经无法作为区分的条件了，我们就需要使用到 `key`。
 
+**Key** 子类包含 `LocalKey` 和 `GlobalKey` 。
+- **局部键（LocalKey）**：`ValueKey`、`ObjectKey`、`UniqueKey`
+  - ValueKey:（值key）把一个值作为key。
+  - UniqueKey:（唯一key）程序生成唯一的Key，当我们不知道如何指定ValueKey的时候就可以使用UniqueKey。
+  - ObjectKey:（对象key）把一个对象实例作为key。
+- **全局键（GlobalKey）**： `GlobalKey`、`GlobalObjectKey`
+  - GlobalKey:（全局key）。
+  - GlobalObjectKey:（全局Objec key，和ObjectKey有点类似）。
 
+`LocalKey` 的使用：
+~~~dart
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
 
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
 
+class _HomePageState extends State<HomePage> {
+  List<Widget> list = [
+    //注意：常量没法改变
+    //1、可以保存状态 2、可以排序
+    const Box(
+      key: ValueKey('1'), //值key
+      color: Colors.red,
+    ),
+    Box(
+      key: UniqueKey(), //唯一值 每次运行的时候会随机生成
+      color: Colors.yellow,
+    ),
+    const Box(key: ObjectKey(Box(color: Colors.blue)), color: Colors.blue) //对象key
+  ];
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      floatingActionButton: FloatingActionButton(
+        child: const Icon(Icons.refresh),
+        onPressed: () {
+          setState(() {
+            list.shuffle(); //shuffle:打乱list元素的顺序
+          });
+        },
+      ),
+      appBar: AppBar(
+        title: const Text('Title'),
+      ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: list,
+        ),
+      ),
+    );
+  }
+}
 
+class Box extends StatefulWidget {
+  final Color color;
+  const Box({Key? key, required this.color}) : super(key: key);
+
+  @override
+  State<Box> createState() => _BoxState();
+}
+
+class _BoxState extends State<Box> {
+  int _count = 0;
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 100,
+      width: 100,
+      child: ElevatedButton(
+        style: ButtonStyle(
+            backgroundColor: MaterialStateProperty.all(widget.color)),
+        onPressed: () {
+          setState(() {
+            _count++;
+          });
+        },
+        child: Text(
+          "$_count",
+          style: Theme.of(context).textTheme.headline2,
+        ),
+      ),
+    );
+  }
+}
+~~~
+`GlobalKey` 的使用：如果把 `LocalKey` 比作局部变量，`GlobalKey` 就类似于全局变量
+~~~dart
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  List<Widget> list = [];
+  final GlobalKey _globalKey1 = GlobalKey();
+  final GlobalKey _globalKey2 = GlobalKey();
+  final GlobalKey _globalKey3 = GlobalKey();
+
+  @override
+  void initState() {
+    super.initState();
+    list = [
+      //注意：常量没法改变
+      //1、可以保存状态 2、可以排序
+      Box(
+        key: _globalKey1,
+        color: Colors.red,
+      ),
+      Box(
+        key: _globalKey2, //唯一值 每次允许的时候会随机生成
+        color: Colors.yellow,
+      ),
+      Box(key: _globalKey3, color: Colors.blue)
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    print(MediaQuery.of(context).orientation);
+
+    return Scaffold(
+      floatingActionButton: FloatingActionButton(
+        child: const Icon(Icons.refresh),
+        onPressed: () {
+          setState(() {
+            list.shuffle(); //shuffle:打乱list元素的顺序
+          });
+        },
+      ),
+      appBar: AppBar(
+        title: const Text('Title'),
+      ),
+      body: Center(
+        child: MediaQuery.of(context).orientation == Orientation.portrait
+            ? Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: list,
+              )
+            : Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: list,
+              ),
+      ),
+    );
+  }
+}
+
+class Box extends StatefulWidget {
+  final Color color;
+  const Box({Key? key, required this.color}) : super(key: key);
+
+  @override
+  State<Box> createState() => _BoxState();
+}
+
+class _BoxState extends State<Box> {
+  int _count = 0;
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 100,
+      width: 100,
+      child: ElevatedButton(
+        style: ButtonStyle(
+            backgroundColor: MaterialStateProperty.all(widget.color)),
+        onPressed: () {
+          setState(() {
+            _count++;
+          });
+        },
+        child: Text(
+          "$_count",
+          style: Theme.of(context).textTheme.headline2,
+        ),
+      ),
+    );
+  }
+}
+~~~
 
 
 
