@@ -102,3 +102,143 @@ Bucket           #    %       Histogram
 
 ### 四、总结
 `vegeta`是一个命令行的工具。一个压测工具最基本的功能就是输入`url`及参数、启动指定量的协程来进行压力测试，同时把响应结果保存下来，并以报表的形式进行统计输出。同时，该开源包也是大家学习使用`golang`进行命令行开发较好的参考。建议有兴趣的朋友可以阅读下源码。
+
+## 视觉库: [OpenCV](https://opencv.org)
+
+### 一、特点
+`OpenCV` 提供了丰富的图像处理和计算机视觉算法，包括但不限于以下功能：
+- 图像读取和显示：可以读取和显示多种图像格式，如JPEG、PNG等。
+- 图像处理：包括图像滤波、边缘检测、图像变换等操作。
+- 特征检测和描述：提供了各种特征点检测算法，如SIFT、SURF、ORB等，并支持生成特征描述符。
+- 目标检测和跟踪：包括人脸检测、物体检测、运动目标跟踪等。
+- 机器学习：集成了机器学习算法，包括分类、聚类、回归等。
+- 视频处理：支持视频文件读取、视频流处理、视频帧抽取等。
+- 相机标定和立体视觉：提供了相机标定和立体视觉算法，用于计算深度和三维重建等应用。
+
+使用 `OpenCV`，您可以利用其丰富的功能和算法进行图像处理、计算机视觉和计算机图形学等方面的开发。它在计算机视觉领域得到广泛应用，包括目标检测、人脸识别、图像处理、机器人视觉等领域。
+
+### 二、安装
+在 `Mac` 上安装 `OpenCV` 可以使用 `Homebrew` 进行快速安装，同时还需要手动下载 `OpenCV` 的 `XML` 分类器文件。我们可以通过设置环境变量 `PKG_CONFIG_PATH` 来配置 `OpenCV` 的环境。
+
+安装`OpenCV`:
+~~~shell
+brew install opencv
+~~~
+配置`PKG_CONFIG_PATH`环境变量:
+~~~shell
+export PKG_CONFIG_PATH="/usr/local/opt/opencv@4/lib/pkgconfig:$PKG_CONFIG_PATH"
+~~~
+验证安装:
+~~~shell
+pkg-config --cflags --libs opencv4
+~~~
+
+### 使用Go进行人脸识别
+1. 安装 `Go` 的 `OpenCV` 绑定库：
+    ~~~shell
+    go get -u gocv.io/x/gocv
+    ~~~
+2. [下载 haarcascade_frontalface_default.xml 文件](https://github.com/opencv/opencv/blob/4.x/data/haarcascades/haarcascade_frontalface_default.xml)
+
+3. 项目目录
+    ~~~shell
+    .
+    ├── go.mod
+    ├── go.sum
+    ├── haarcascade_frontalface_default.xml
+    └── main.go
+    ~~~
+4. 完整代码如下
+    ~~~go
+    package main
+
+    import (
+        "fmt"
+        "gocv.io/x/gocv"
+        "image/color"
+    )
+
+    func main() {
+        // 步骤1：打开摄像头设备
+        webcam, err := gocv.VideoCaptureDevice(0)
+        if err != nil {
+            fmt.Println("打开摄像头设备失败:", err)
+            return
+        }
+        defer webcam.Close()
+
+        // 步骤2：加载人脸识别分类器
+        classifier := gocv.NewCascadeClassifier()
+        defer classifier.Close()
+
+        if !classifier.Load("haarcascade_frontalface_default.xml") {
+            fmt.Println("加载分类器文件失败")
+            return
+        }
+
+        // 步骤3：创建一个窗口用于显示图像
+        window := gocv.NewWindow("Face Detection")
+        defer window.Close()
+
+        img := gocv.NewMat()
+        defer img.Close()
+
+        for {
+            // 步骤4：从摄像头读取图像帧
+            if ok := webcam.Read(&img); !ok || img.Empty() {
+                fmt.Println("无法从摄像头读取图像帧")
+                break
+            }
+
+            // 步骤5：将图像转换为灰度图像，因为人脸识别通常在灰度图像上进行
+            gray := gocv.NewMat()
+            defer gray.Close()
+
+            gocv.CvtColor(img, &gray, gocv.ColorBGRToGray)
+
+            // 步骤6：检测人脸
+            rects := classifier.DetectMultiScale(gray)
+            fmt.Printf("检测到 %d 个人脸\n", len(rects))
+
+            // 步骤7：在图像上绘制人脸边界框
+            for _, r := range rects {
+                gocv.Rectangle(&img, r, color.RGBA{0, 255, 0, 0}, 2)
+            }
+
+            // 步骤8：显示图像
+            window.IMShow(img)
+
+            // 步骤9：等待用户按下ESC键退出
+            if window.WaitKey(1) == 27 {
+                break
+            }
+        }
+    }
+    ~~~
+5. 步骤说明
+   1. 我们使用 `gocv.VideoCaptureDevice` 函数打开摄像头设备，`0` 表示使用默认的摄像头。
+   2. 我们使用 `gocv.NewCascadeClassifier` 函数创建一个人脸识别分类器，并使用 `classifier.Load` 方法加载  `haarcascade_frontalface_default.xml` 分类器文件。
+   3. 我们使用 `gocv.NewWindow` 函数创建一个名为 `"Face Detection"` 的窗口，用于显示图像。
+   4. 我们使用 `webcam.Read` 方法从摄像头读取图像帧，并检查是否成功读取图像。
+   5. 我们使用 `gocv.CvtColor` 函数将图像转换为灰度图像，因为人脸识别通常在灰度图像上进行。
+   6. 我们使用 `classifier.DetectMultiScale` 方法检测人脸，并得到人脸在图像中的矩形区域。
+   7. 我们使用 `gocv.Rectangle` 函数在图像上绘制人脸边界框，以便标记出人脸位置。
+   8. 我们使用 `window.IMShow` 方法将标记后的图像显示在窗口中。
+   9. 我们使用 `window.WaitKey` 方法等待用户按下 `ESC` 键，如果按下 `ESC` 键则退出程序。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -2,7 +2,7 @@
  * @Author: 高江华 g598670138@163.com
  * @Date: 2023-04-11 16:57:52
  * @LastEditors: 高江华
- * @LastEditTime: 2023-09-25 17:28:16
+ * @LastEditTime: 2023-09-26 11:10:05
  * @Description: file content
 -->
 # Flutter
@@ -1225,7 +1225,355 @@ Scaffold(
 );
 ~~~
 
+#### DrawerHeader
+`DrawerHeader` 组件用于定义侧边栏顶部区域，通常用来显示用户头像或者名称。
+|属性 |描述|
+|---|--|
+|decoration |设置顶部背景颜色|
+|child| 配置子元素|
+|padding| 内边距|
+|margin| 外边距|
 
+~~~dart
+drawer: Drawer(
+  child: Column(
+    children: [
+      Row(
+        children: [
+          Expanded(
+              flex: 1,
+              child: DrawerHeader(
+                decoration: const BoxDecoration(
+                    // color: Colors.yellow,
+                    image: DecorationImage(
+                        image: NetworkImage(
+                            "https://www.itying.com/images/flutter/2.png"),
+                        fit: BoxFit.cover)),
+                child: Column(
+                  children: const [
+                    ListTile(
+                      leading: CircleAvatar(
+                        backgroundImage:NetworkImage("https://www.itying.com/images/flutter/3.png")                             
+                      ),
+                      title: Text("张三",style: TextStyle(
+                        color: Colors.red
+                      )),
+                    ),
+                    ListTile(
+                      title: Text("邮箱：xxxx@qq.com"),
+                    )
+                  ],
+                ),
+              ))
+        ],
+      ),
+      const ListTile(
+        leading: CircleAvatar(
+          child: Icon(Icons.people),
+        ),
+        title: Text("个人中心"),
+      ),
+      const Divider(),
+      const ListTile(
+        leading: CircleAvatar(
+          child: Icon(Icons.settings),
+        ),
+        title: Text("系统设置"),
+      ),
+      Divider(),
+    ],
+  ),
+),
+~~~
+
+#### UserAccountsDrawerHeader
+`userAccountsDrawerHeader`: 用户头像和用户名。
+|属性 |描述|
+|---|--|
+|decoration| 设置顶部背景颜色|
+|accountName| 账户名称|
+|accountEmail| 账户邮箱|
+|currentAccountPicture |用户头像|
+|otherAccountsPictures |用来设置当前账户其他账户头像|
+|margin|外边距|
+
+~~~dart
+drawer: Drawer(
+  child: Column(
+    children: [
+      Row(
+        children: [
+          Expanded(
+              flex: 1,
+              child: UserAccountsDrawerHeader(
+                accountName: const Text("Oh Shit"),
+                accountEmail: const Text("shit@qq.com"),
+                otherAccountsPictures: [
+                  Image.network(
+                      "https://www.itying.com/images/flutter/1.png"),
+                  Image.network(
+                      "https://www.itying.com/images/flutter/2.png"),
+                  Image.network(
+                      "https://www.itying.com/images/flutter/3.png"),
+                ],
+                currentAccountPicture: const CircleAvatar(
+                    backgroundImage: NetworkImage(
+                        "https://www.itying.com/images/flutter/3.png")),
+                decoration: const BoxDecoration(
+                    image: DecorationImage(
+                        fit: BoxFit.cover,
+                        image: NetworkImage(
+                            "https://www.itying.com/images/flutter/2.png"))),
+              ))
+        ],
+      ),
+      const ListTile(
+        leading: CircleAvatar(
+          child: Icon(Icons.people),
+        ),
+        title: Text("个人中心"),
+      ),
+      const Divider(),
+      const ListTile(
+        leading: CircleAvatar(
+          child: Icon(Icons.settings),
+        ),
+        title: Text("系统设置"),
+      ),
+      const Divider(),
+    ],
+  ),
+),
+~~~
+#### AppBar、TabBar、TabBarView
+`AppBar` 自定义顶部按钮图标、颜色
+|属性 |描述|
+|---|--|
+|leading |在标题前面显示的一个控件，在首页通常显示应用的 logo；在其他界面通常显示为返回按钮|
+|title |标题，通常显示为当前界面的标题文字，可以放组件|
+|actions| 通常使用 IconButton 来表示，可以放按钮组|
+|bottom| 通常放tabBar，标题下面显示一个 Tab 导航栏|
+|backgroundColor| 导航背景颜色|
+|iconTheme| 图标样式|
+|centerTitle |标题是否居中显示|
+
+`TabBar` 自定义选项卡栏
+|属性 |描述|
+|---|--|
+|tabs |显示的标签内容，一般使用Tab对象,也可以是其他的Widget。|
+|controller |TabController对象|
+|isScrollable |是否可滚动|
+|indicatorColor |指示器颜色|
+|indicatorWeight |指示器高度|
+|indicatorPadding| 底部指示器的Padding|
+|indicator| 指示器decoration，例如边框等|
+|indicatorSize |指示器大小计算方式，TabBarIndicatorSize.label跟文字等宽,TabBarIndicatorSize.tab跟每个tab等宽|
+|labelColor |选中label颜色|
+|labelStyle |选中label的Style|
+|labelPadding| 每个label的padding值|
+|unselectedLabelColor| 未选中label颜色|
+|unselectedLabelStyle| 未选中label的Style|
+
+~~~dart
+import 'package:flutter/material.dart';
+
+class MyPage extends StatefulWidget {
+  const MyPage({Key? key}) : super(key: key);
+
+  @override
+  State<MyPage> createState() => _MyPageState();
+}
+
+class _MyPageState extends State<MyPage> with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+
+  //生命周期函数:当组件初始化的时候就会触发
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 9, vsync: this);
+  }
+
+  List<String> list = [];
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+        appBar: AppBar(
+            leading: IconButton(
+              //左侧的按钮图标
+              icon: const Icon(Icons.menu),
+              onPressed: () {
+                print("左侧的按钮图标");
+              },
+            ),
+            backgroundColor: Colors.red, //导航背景颜色
+            title: const Text("Flutter App"),
+            actions: [
+              //右侧的按钮图标
+              IconButton(
+                icon: const Icon(Icons.search),
+                onPressed: () {
+                  print("搜索图标");
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.more_horiz),
+                onPressed: () {
+                  print("更多");
+                },
+              )
+            ],
+            bottom: TabBar(
+                isScrollable: true,
+                indicatorColor: Colors.white,
+                indicatorWeight: 2,
+                indicatorPadding: const EdgeInsets.all(5),
+                // indicatorSize:TabBarIndicatorSize.label,
+                labelColor: Colors.yellow,
+                unselectedLabelColor: Colors.white,
+                labelStyle: const TextStyle(fontSize: 14),
+                unselectedLabelStyle: const TextStyle(fontSize: 12),
+                indicator: BoxDecoration(
+                    color: Colors.blue,
+                    borderRadius: BorderRadius.circular(10)),
+                controller: _tabController, //注意：配置controller需要去掉TabBar上面的const
+                tabs: const [
+                  Tab(
+                    child: Text("关注"),
+                  ),
+                  Tab(
+                    child: Text("热门"),
+                  ),
+                  Tab(
+                    child: Text("视频"),
+                  ),
+                  Tab(
+                    child: Text("关注"),
+                  ),
+                  Tab(
+                    child: Text("热门"),
+                  ),
+                  Tab(
+                    child: Text("视频"),
+                  ),
+                  Tab(
+                    child: Text("关注"),
+                  ),
+                  Tab(
+                    child: Text("热门"),
+                  ),
+                  Tab(
+                    child: Text("视频"),
+                  ),
+                ])),
+        body: TabBarView(controller: _tabController, children: [
+          const Text("我是关注"),
+          const Text("我是关注"),
+          const Text("我是关注"),
+          const Text("我是关注"),
+          const Text("我是关注"),
+          const Text("我是关注"),
+          const Text("我是关注"),
+          ListView(
+            children: const [
+              ListTile(
+                title: Text("我是热门列表"),
+              ),
+              ListTile(
+                title: Text("我是热门列表"),
+              ),
+              ListTile(
+                title: Text("我是热门列表"),
+              ),
+              ListTile(
+                title: Text("我是热门列表"),
+              ),
+              ListTile(
+                title: Text("我是热门列表"),
+              ),
+              ListTile(
+                title: Text("我是热门列表"),
+              ),
+              ListTile(
+                title: Text("我是热门列表"),
+              ),
+            ],
+          ),
+          ListView(
+            children: const [
+              ListTile(
+                title: Text("我是视频列表"),
+              )
+            ],
+          )
+        ]));
+  }
+}
+~~~
+#### PreferredSize
+`PreferredSize` 可以改变 `appBar` 的高度。
+~~~dart
+Scaffold(
+  appBar: PreferredSize(
+    preferredSize: Size.fromHeight(50),
+    child: AppBar(
+      ....
+    )
+  ),
+  body: Test(),
+)
+~~~
+#### AutomaticKeepAliveClientMixin
+`AutomaticKeepAliveClientMixin` 可以快速的实现页面缓存功能，但是通过混入的方式实现不是很优
+雅，所以我们有必要对 `AutomaticKeepAliveClientMixin` 混入进行封装。
+~~~dart
+import 'package:flutter/material.dart';
+
+class KeepAliveWrapper extends StatefulWidget {
+  const KeepAliveWrapper(
+      {Key? key, @required this.child, this.keepAlive = true})
+      : super(key: key);
+
+  final Widget? child;
+  final bool keepAlive;
+
+  @override
+  State<KeepAliveWrapper> createState() => _KeepAliveWrapperState();
+}
+
+class _KeepAliveWrapperState extends State<KeepAliveWrapper>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  Widget build(BuildContext context) {
+    return widget.child!;
+  }
+
+  @override
+  bool get wantKeepAlive => widget.keepAlive;
+
+  @override
+  void didUpdateWidget(covariant KeepAliveWrapper oldWidget) {
+    if (oldWidget.keepAlive != widget.keepAlive) {
+      // keepAlive 状态需要更新，实现在 AutomaticKeepAliveClientMixin 中
+      updateKeepAlive();
+    }
+    super.didUpdateWidget(oldWidget);
+  }
+}
+~~~
+#### 监听 TabController 改变事件
+~~~dart
+void initState() {
+  super.initState();
+  _tabController = TabController(length: 8, vsync: this);
+  //监听_tabController的改变事件
+  _tabController.addListener(() {
+    if (_tabController.animation!.value==_tabController.index){
+      print(_tabController.index); //获取点击或滑动页面的索引值
+    }
+  });
+}
+~~~
 ### Container
 | 名称 | 功能 |
 |----|----|
@@ -1477,7 +1825,7 @@ class MyApp extends StatelessWidget {
   }
 }
 ~~~
-使用字体图标库，在Flutter中，我们使用ttf格式即可。
+使用字体图标库，在`Flutter`中，我们使用`ttf`格式即可。
 - 假设我们的字体图标文件保存在项目根目录下，路径为`fonts/iconfont.ttf`。
 - 然后在 `pubspec.yaml` 中添加配置：
   ~~~yaml
@@ -1684,7 +2032,7 @@ class MyHomePage extends StatelessWidget {
 |crossAxisCount| int 用在GridView.count| 一行的Widget数量|
 |maxCrossAxisExtent| double 用在GridView.extent| 横轴子元素的最大长度|
 |childAspectRatio | double | 子Widget宽高比例 |
-|children | List<Weiget> | [ ] |
+|children | `List<Weiget>` | [] |
 |gridDelegate | SliverGridDelegateWithFixedCrossAxisCount SliverGridDelegateWithMaxCrossAxisExtent | 控制布局主要用在GridView.builder里面 |
 
 `GridView.count`构造函数内部使用了`SliverGridDelegateWithFixedCrossAxisCount`，我们通过它可以
@@ -1802,10 +2150,10 @@ class HomePage extends StatelessWidget {
   Widget build(BuildContext context) {
     return GridView.extent(  
       padding:const EdgeInsets.all(10),
-      crossAxisSpacing:10,      //水平子Widget之间间 距
-      mainAxisSpacing: 10,     //垂直子Widget之间间 距
-      maxCrossAxisExtent:250,  //我们通过它可以快速的创建横轴子元素为固定最大长度的的GridView
-      childAspectRatio:0.7,  //宽高比
+      crossAxisSpacing:10,//水平子Widget之间间 距
+      mainAxisSpacing: 10,//垂直子Widget之间间 距
+      maxCrossAxisExtent:250,//我们通过它可以快速的创建横轴子元素为固定最大长度的的GridView
+      childAspectRatio:0.7,//宽高比
       children: _initGridViewData(),
     );
   }
@@ -1842,8 +2190,8 @@ class HomePage extends StatelessWidget {
   Widget build(BuildContext context) {
     return GridView.count(  
       padding:const EdgeInsets.all(10),
-      crossAxisSpacing:10,      //水平子Widget之间间 距
-      mainAxisSpacing: 10,     //垂直子Widget之间间 距
+      crossAxisSpacing:10,      //水平子Widget之间间距
+      mainAxisSpacing: 10,     //垂直子Widget之间间距
       crossAxisCount:2,   //一行显示多少个元素
       childAspectRatio:1,  //宽高比
       children: _initGridViewData(),
@@ -2944,6 +3292,317 @@ class Button extends StatelessWidget {
   }
 }
 ~~~
+## 路由
+`Flutter` 中的路由通俗的讲就是页面跳转。在 `Flutter` 中通过 `Navigator` 组件管理路由导航。
+并提供了管理堆栈的方法。如：`Navigator.push` 和 `Navigator.pop`。
+
+`Flutter`中给我们提供了两种配置路由跳转的方式：
+- 基本路由 
+- 命名路由
+
+~~~dart
+import '../SearchPage.dart';
+
+Center(
+  child: ElevatedButton(
+    onPressed: (){
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (context){
+        return const SearchPage();
+      })
+    );
+  }, child: const Text("跳转到搜索页面")),
+)
+~~~
+### 普通路由跳转传值
+跳转传值和调用组件传值的实现方法是一样的。
+
+定义一个SearchPage接收传值
+~~~dart
+import 'package:flutter/material.dart';
+
+class SearchPage extends StatefulWidget {
+  final String title;
+  const SearchPage({super.key,this.title="Search Page"});
+  
+  @override
+  State<SearchPage> createState() => _SearchPageState();
+}
+
+class _SearchPageState extends State<SearchPage> {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.title),
+        centerTitle: true,
+      ),
+      body: const Center(
+        child: Text("组件居中"),
+      ),
+    );
+  }
+}
+~~~
+跳转页面实现传值
+~~~dart
+Center(
+  child: ElevatedButton(
+    onPressed: (){
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (context){
+          return const SearchPage(title: "搜索页面",);
+        })
+      );
+    }, 
+    child: const Text("跳转到搜索页面")
+  ),
+)
+~~~
+### 配置命名路由
+~~~dart
+import 'package:flutter/material.dart';
+import './pages/tabs.dart';
+import './pages/search.dart';
+import './pages/news.dart';
+import './pages/form.dart';
+
+void main() {
+  runApp(const MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({Key? key}) : super(key: key);
+
+  // This widget is the root of your application.
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Flutter Demo',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+      ),
+      // home:const Tabs() ,
+      initialRoute: "/",
+      routes: {
+        "/": (contxt) => const Tabs(),
+        "/news": (contxt) => const NewsPage(),
+        "/search": (contxt) => const SearchPage(),
+        "form": (contxt) {
+          return const FormPage();
+        },
+      },
+    );
+  }
+}
+~~~
+路由跳转
+~~~dart
+ElevatedButton(
+  onPressed: () {
+    Navigator.pushNamed(context, '/form');
+  },
+  child: const Text("跳转到form页面")
+)
+~~~
+### 命名路由传参
+~~~dart
+import 'package:flutter/material.dart';
+import './pages/tabs.dart';
+import './pages/search.dart';
+import './pages/news.dart';
+import './pages/form.dart';
+import './pages/shop.dart';
+
+void main() {
+  runApp(MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  //1、配置路由
+  Map routes = {
+    "/": (contxt) => const Tabs(),
+    "/news": (contxt) => const NewsPage(),
+    "/search": (contxt) => const SearchPage(),
+    "/form": (contxt, {arguments}) => FormPage(arguments: arguments),
+    "/shop": (contxt, {arguments}) => ShopPage(arguments: arguments),
+  };
+
+  MyApp({Key? key}) : super(key: key);
+
+  // This widget is the root of your application.
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Flutter Demo',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+      ),
+      // home:const Tabs() ,
+      initialRoute: "/",
+      //2、配置onGenerateRoute  固定写法
+      onGenerateRoute: (RouteSettings settings) {
+        // print(settings);
+        // print(settings.name);
+        // print(settings.arguments);
+
+        final String? name = settings.name; //  /news 或者 /search
+        final Function? pageContentBuilder =
+            routes[name]; //  Function = (contxt) { return const NewsPage()}
+
+        if (pageContentBuilder != null) {
+          if (settings.arguments != null) {
+            final Route route = MaterialPageRoute(
+                builder: (context) =>
+                    pageContentBuilder(context, arguments: settings.arguments));
+            return route;
+          } else {
+            final Route route = MaterialPageRoute(
+                builder: (context) => pageContentBuilder(context));
+
+            return route;
+          }
+        }
+        return null;
+      },
+    );
+  }
+}
+~~~
+接收传参
+~~~dart
+import 'package:flutter/material.dart';
+
+class ShopPage extends StatefulWidget {
+  //接收命名路由跳转传值
+  final Map arguments;
+  const ShopPage({super.key, required this.arguments});
+
+  @override
+  State<ShopPage> createState() => _ShopPageState();
+}
+
+class _ShopPageState extends State<ShopPage> {
+  @override
+  void initState() {
+    super.initState();
+
+    print(widget.arguments);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("shop"),
+      ),
+      body: const Center(
+        child: Text("shop页面"),
+      ),
+    );
+  }
+}
+~~~
+跳转传参
+~~~dart
+ElevatedButton(
+  onPressed: () {
+    Navigator.pushNamed(context, '/shop',arguments: {
+      "title": "shop页面",
+    });
+  },
+  child: const Text("shop")
+)
+~~~
+路由配置抽离到独立文件中
+~~~dart
+// ./routers/routers.dart
+import 'package:flutter/material.dart';
+import '../pages/tabs.dart';
+import '../pages/search.dart';
+import '../pages/news.dart';
+import '../pages/form.dart';
+import '../pages/shop.dart';
+
+//1、配置路由
+Map routes = {
+  "/": (contxt) => const Tabs(),
+  "/news": (contxt) => const NewsPage(),
+  "/search": (contxt) => const SearchPage(),
+  "/form": (contxt, {arguments}) => FormPage(arguments: arguments),
+  "/shop": (contxt, {arguments}) => ShopPage(arguments: arguments),
+};
+
+//2、配置onGenerateRoute  固定写法  这个方法也相当于一个中间件，这里可以做权限判断
+var onGenerateRoute = (RouteSettings settings) { 
+  final String? name = settings.name; // /news 或者 /search
+  final Function? pageContentBuilder = routes[name];//  Function = (contxt) { return const NewsPage()}
+
+  if (pageContentBuilder != null) {
+    if (settings.arguments != null) {
+      final Route route = MaterialPageRoute(
+          builder: (context) =>
+              pageContentBuilder(context, arguments: settings.arguments));
+      return route;
+    } else {
+      final Route route =
+          MaterialPageRoute(builder: (context) => pageContentBuilder(context));
+
+      return route;
+    }
+  }
+  return null;
+};
+~~~
+~~~dart
+import 'package:flutter/material.dart';
+import './routers/routers.dart';
+
+void main() {
+  runApp(const MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({Key? key}) : super(key: key);
+  
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Flutter Demo',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+      ),
+      initialRoute: "/",
+      onGenerateRoute: onGenerateRoute,
+    );
+  }
+}
+~~~
+### 替换路由
+比如我们从用户中心页面跳转到了 `registerFirst` 页面，然后从 `registerFirst` 页面通过 `pushReplacementNamed` 跳转到了 `registerSecond` 页面。这个时候当我们点击 `registerSecond` 的返回按钮的时候它会直接返回到用户中心。
+~~~dart
+Navigator.of(context).pushReplacementNamed('/registerSecond');
+~~~
+### 返回根路由
+比如我们从用户中心跳转到 `registerFirst` 页面，然后从 `registerFirst` 页面跳转到 `registerSecond` 页面，然
+后从 `registerSecond` 跳转到了 `registerThird` 页面。这个时候我们想的是 `registerThird` 注册成功后返回到
+用户中心。这个时候就用到了返回到根路由的方法。
+~~~dart
+Navigator.of(context).pushAndRemoveUntil(
+  MaterialPageRoute(
+    builder: (BuildContext context) {
+      return const Tabs();
+    }
+  ), 
+  (route) => false
+);
+~~~
+
+
+
+
+
+
 
 
 
