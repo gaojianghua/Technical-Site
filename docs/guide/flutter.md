@@ -2,7 +2,7 @@
  * @Author: 高江华 g598670138@163.com
  * @Date: 2023-04-11 16:57:52
  * @LastEditors: 高江华
- * @LastEditTime: 2023-09-26 17:34:29
+ * @LastEditTime: 2023-09-27 15:25:52
  * @Description: file content
 -->
 # Flutter
@@ -21,6 +21,20 @@ Flutter 是 Google 开源的应用开发框架，仅通过一套代码库，就�
   - Widget的类型难以选择，糟糕的UI控件API
   - 生态较差
   - 第三方SDK繁杂，适配性差
+
+### Widget Tree、Element Tree 和 RenderObject Tree
+`Flutter` 应用是由是 `Widget Tree`、`Element Tree` 和 `RenderObject Tree` 组成。
+
+`Widget` 可以理解成一个类，`Element` 可以理解成 `Widget` 的实例，`Widget` 与 `Element` 的关系可以是一对
+多，一份配置可以创造多个 `Element` 实例。
+
+|属性 |描述|
+|---|--|
+|Widget| Widget 就是一个类， 是 Element 的配置信息。与 Element 的关系可以是一对多，一份配置可以创造多个 Element 实例|
+|Element| Widget 的实例化，内部持有 Widget 和 RenderObject。|
+|RenderObject| 负责渲染绘制|
+
+默认情况下，当 `Flutter` 同一个 `Widget` 的大小，顺序变化的时候，`FLutter` 不会改变 `Widget` 的 `state`。
 
 ## Dart
 Dart 是一种用于构建跨平台移动、Web和桌面应用程序的编程语言，由Google开发并开源。Dart 具有以下特点：
@@ -905,13 +919,55 @@ void main()=>runApp(MyApp());
 `MaterialApp`是一个方便的`Widget`，它封装了应用程序实现`Material Design`所需要的一些`Widget`。一
 般作为顶层`widget`使用。
 
-**常用的属性：**
-- home（主页）
-- title（标题）
-- color（颜色）
-- theme（主题）
-- routes（路由）
+常用的属性：
+|属性名| 说明|
+|---|---|
+|home |指定应用程序的首页，通常是一个 Scaffold 小部件，其中包含应用程序的主要内容。|
+|routes |定义应用程序的路由表，可以使用命名路由来导航到不同的页面。|
+|initialRoute |指定应用程序的初始路由。|
+|theme |定义应用程序的主题样式，包括颜色、字体等。|
+|title |指定应用程序的标题，通常显示在任务管理器或设备窗口中。|
+|onGenerateRoute |在路由被请求时生成路由的回调函数，可以用来动态生成路由并进行更高级的导航控制。|
+|navigatorKey |提供应用程序的全局导航键，用于在应用程序中进行导航操作。|
 
+~~~dart
+void main() {
+  runApp(MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Flutter Demo',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+        appBarTheme: const AppBarTheme(
+          centerTitle: true,
+        )
+      ),
+      initialRoute: "/",
+      onGenerateRoute: onGenerateRoute,
+      home: MyHomePage(),
+    );
+  }
+}
+
+class MyHomePage extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Home'),
+      ),
+      body: Center(
+        child: Text('Welcome to my app!'),
+      ),
+    );
+  }
+}
+~~~
 ### Scaffold
 `Scaffold`是`Material Design`布局结构的基本实现。此类提供了用于显示`drawer`、`snackbar`和底部`sheet`
 的`API`。
@@ -4082,6 +4138,649 @@ class _MyContainerState extends State<MyContainer>  {
   }
 }
 ~~~
+### AnimatedList
+`AnimatedList` 和 `ListView` 的功能大体相似，不同的是，`AnimatedList` 可以在列表中插入或删除节点
+时执行一个动画，在需要添加或删除列表项的场景中会提高用户体验。
+
+`AnimatedList` 是一个 `StatefulWidget`，它对应的 `State` 类型为 `AnimatedListState`，添加和删除元素的
+方法位于 `AnimatedListState` 中：
+~~~dart
+void insertItem(int index, { Duration duration = _kDuration });
+void removeItem(int index, AnimatedListRemovedItemBuilder builder, { Duration
+duration = _kDuration });
+~~~
+AnimatedList常见属性：
+|属性 |描述|
+|---|--|
+|key |globalKey final globalKey = GlobalKey();|
+|initialItemCount |子元素数量|
+|itemBuilder| 方法 ( BuildContext context, int index, Animation animation) {}|
+
+**关于 GlobalKey** ：每个 `Widget` 都对应一个 `Element`，我们可以直接对 `Widget` 进行操作，但是无法直
+接操作 `Widget` 对应的 `Element`。而 `GlobalKey` 就是那把直接访问 Element 的钥匙。通过 `GlobalKey`
+可以获取到 `Widget` 对应的 `Element`。
+
+#### AnimatedList 增加列表 FadeTransition、ScaleTransition
+~~~dart
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  final _globalKey = GlobalKey<AnimatedListState>();
+  bool flag = true;
+  List<String> list = ["第一条", "第二条"];
+
+  Widget _buildItem(index) {
+    return ListTile(
+      key: ValueKey(index),
+      title: Text(list[index]),
+      trailing: IconButton(
+        icon: const Icon(Icons.delete),
+        onPressed: () {
+          //执行删除
+          _deleteItem(index);
+        },
+      ),
+    );
+  }
+
+  _deleteItem(index) {
+    if (flag == true) {
+      flag = false;
+      //执行删除
+      _globalKey.currentState!.removeItem(index, (context, animation) {
+        //animation的值是从1到0
+        var removeItem = _buildItem(index);
+        list.removeAt(index); //数组中删除数据
+        return ScaleTransition(
+          // opacity: animation,
+          scale: animation,
+          child: removeItem, //删除的时候执行动画的元素
+        );
+      });
+      //解决快速删除的bug
+      Timer.periodic(const Duration(milliseconds: 500), (timer) {
+        flag = true;
+        timer.cancel();
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Title'),
+      ),
+      floatingActionButton: FloatingActionButton(
+        child: Icon(Icons.add),
+        onPressed: () {
+          list.add("我是新增的数据");
+          _globalKey.currentState!.insertItem(list.length - 1);
+        },
+      ),
+      body: AnimatedList(
+        key: _globalKey,
+        initialItemCount: list.length,
+        itemBuilder: ((context, index, animation) {
+          //animation的值是从0到1
+          return FadeTransition(
+            opacity: animation,
+            child: _buildItem(index),
+          );
+        })
+      ),
+    );
+  }
+}
+~~~
+### AnimatedContainer
+~~~dart
+class MyHomePage extends StatefulWidget {
+  const MyHomePage({super.key});
+
+  @override
+  State<MyHomePage> createState() => _MyHomePageState();
+}
+
+class _MyHomePageState extends State<MyHomePage> {
+  bool flag = true;
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Scaffold(
+          floatingActionButton: FloatingActionButton(
+            child: const Icon(Icons.add),
+            onPressed: () {
+              setState(() {
+                flag = !flag;
+              });
+            },
+          ),
+          appBar: AppBar(
+            title: const Text('Title'),
+          ),
+          body: Stack(
+            children: [
+              ListView(
+                children: const [
+                  ListTile(
+                    title: Text("我是一个列表"),
+                  )
+                ],
+              ),
+            ],
+          ),
+        ),
+        Positioned(
+          left: 0,
+          top: 0,
+          bottom: 0,
+          child: AnimatedContainer(
+            duration: const Duration(seconds: 1, milliseconds: 100),
+            width: 200,
+            height: double.infinity,
+            transform: flag
+                ? Matrix4.translationValues(-200, 0, 0)
+                : Matrix4.translationValues(0, 0, 0),
+            color: Colors.yellow,
+          )
+        )
+      ],
+    );
+  }
+}
+~~~
+### AnimatedPadding
+~~~dart
+class MyHomePage extends StatefulWidget {
+  const MyHomePage({super.key});
+
+  @override
+  State<MyHomePage> createState() => _MyHomePageState();
+}
+
+class _MyHomePageState extends State<MyHomePage> {
+  bool flag = true;
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      floatingActionButton: FloatingActionButton(
+        child: const Icon(Icons.add),
+        onPressed: () {
+          setState(() {
+            flag = !flag;
+          });
+        },
+      ),
+      appBar: AppBar(
+        title: const Text('Title'),
+      ),
+      body: AnimatedPadding(
+        curve: Curves.bounceInOut,
+        padding: EdgeInsets.fromLTRB(10, flag ? 10 : 500, 0, 0),
+        duration: const Duration(seconds: 2),
+        child: Container(
+          width: 100,
+          height: 100,
+          color: Colors.red,
+        ),
+      ),
+    );
+  }
+}
+~~~
+### AnimatedOpacity
+~~~dart
+class MyHomePage extends StatefulWidget {
+  const MyHomePage({super.key});
+
+  @override
+  State<MyHomePage> createState() => _MyHomePageState();
+}
+
+class _MyHomePageState extends State<MyHomePage> {
+  bool flag = true;
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      floatingActionButton: FloatingActionButton(
+        child: const Icon(Icons.add),
+        onPressed: () {
+          setState(() {
+            flag = !flag;
+          });
+        },
+      ),
+      appBar: AppBar(
+        title: const Text('Title'),
+      ),
+      body: Center(
+        child: AnimatedOpacity(
+          opacity: flag ? 0.2 : 1,
+          duration: const Duration(seconds: 1),
+          curve: Curves.easeIn,
+          child: Container(
+            width: 100,
+            height: 100,
+            color: Colors.red,
+          ),
+        ),
+      ),
+    );
+  }
+}
+~~~
+### AnimatedPositioned
+~~~dart
+class MyHomePage extends StatefulWidget {
+  const MyHomePage({super.key});
+
+  @override
+  State<MyHomePage> createState() => _MyHomePageState();
+}
+
+class _MyHomePageState extends State<MyHomePage> {
+  bool flag = true;
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      floatingActionButton: FloatingActionButton(
+        child: const Icon(Icons.add),
+        onPressed: () {
+          setState(() {
+            flag = !flag;
+          });
+        },
+      ),
+      appBar: AppBar(
+        title: const Text('Title'),
+      ),
+      body: Stack(
+        children: [
+          ListView(
+            children: const [
+              ListTile(
+                title: Text("我是一个列表"),
+              ),
+              ListTile(
+                title: Text("我是一个列表"),
+              ),
+              ListTile(
+                title: Text("我是一个列表"),
+              ),
+              ListTile(
+                title: Text("我是一个列表"),
+              ),
+              ListTile(
+                title: Text("我是一个列表"),
+              ),
+              ListTile(
+                title: Text("我是一个列表"),
+              ),
+            ],
+          ),
+          AnimatedPositioned(
+            curve: Curves.linear,
+            right: flag ? 10 : 300,
+            top: flag ? 10 : 560,
+            duration: const Duration(seconds: 1, milliseconds: 500),
+            child: Container(
+              width: 60,
+              height: 60,
+              color: Colors.blue,
+            )
+          ),
+        ],
+      ),
+    );
+  }
+}
+~~~
+### AnimatedDefaultTextStyle
+~~~dart
+class MyHomePage extends StatefulWidget {
+  const MyHomePage({super.key});
+
+  @override
+  State<MyHomePage> createState() => _MyHomePageState();
+}
+
+class _MyHomePageState extends State<MyHomePage> {
+  bool flag = true;
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      floatingActionButton: FloatingActionButton(
+        child: const Icon(Icons.add),
+        onPressed: () {
+          setState(() {
+            flag = !flag;
+          });
+        },
+      ),
+      appBar: AppBar(
+        title: const Text('Title'),
+      ),
+      body: Center(
+        child: Container(
+          alignment: Alignment.center,
+          width: 300,
+          height: 300,
+          color: Colors.blue,
+          child: AnimatedDefaultTextStyle(
+            duration: const Duration(seconds: 1),
+            style: TextStyle(fontSize: flag ? 20 : 50, color: Colors.black),
+            child: const Text("你好Flutter"),
+          ),
+        ),
+      ),
+    );
+  }
+}
+~~~
+### AnimatedSwitcher
+~~~dart
+class MyHomePage extends StatefulWidget {
+  const MyHomePage({super.key});
+
+  @override
+  State<MyHomePage> createState() => _MyHomePageState();
+}
+
+class _MyHomePageState extends State<MyHomePage> {
+  bool flag = true;
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      floatingActionButton: FloatingActionButton(
+        child: const Icon(Icons.add),
+        onPressed: () {
+          setState(() {
+            flag = !flag;
+          });
+        },
+      ),
+      appBar: AppBar(
+        title: const Text('Title'),
+      ),
+      body: Center(
+        child: Container(
+          alignment: Alignment.center,
+          width: 300,
+          height: 220,
+          color: Colors.yellow,
+          child: AnimatedSwitcher(
+            //当子元素改变的时候会触发动画
+            transitionBuilder: ((child, animation) {
+              //可以改变动画效果
+              return ScaleTransition(
+                scale: animation,
+                child: FadeTransition(
+                  opacity: animation,
+                  child: child,
+                ),
+              );
+            }),
+            duration: const Duration(seconds: 1),
+            child: flag
+              ? const CircularProgressIndicator()
+              : Image.network(
+                  "https://www.itying.com/images/flutter/2.png",
+                  fit: BoxFit.cover,
+                )
+          )
+        ),
+      ),
+    );
+  }
+}
+~~~
+### Hero
+`Hero` 动画是一种可以在页面切换时实现平滑过渡效果的动画。它通常用于在不同页面之间共享和过渡图片、文本或其他小部件。
+
+[photo_view](https://pub.dev/packages/photo_view) 插件支持预览图片，可放大、缩小、滑动图片。
+
+`pubspec.yaml` 的 `dependencies` 中添加
+~~~yaml
+photo_view: ^0.14.0
+~~~
+单张图片的预览
+~~~dart
+import 'package:photo_view/photo_view.dart';
+
+@override
+Widget build(BuildContext context) {
+  return Container(
+    child: PhotoView(
+      imageProvider: AssetImage("assets/large-image.jpg"),
+    )
+  );
+}
+~~~
+多张图片的预览
+~~~dart
+import 'package:photo_view/photo_view_gallery.dart';
+
+PhotoViewGallery.builder(
+  itemCount: 5,
+  builder: ((context, index) {
+    return PhotoViewGalleryPageOptions(
+    imageProvider: NetworkImage(listData[index]["imageUrl"]));
+  })
+)
+~~~
+~~~dart
+import 'package:photo_view/photo_view_gallery.dart';
+
+PhotoViewGallery.builder(
+  scrollPhysics: const BouncingScrollPhysics(),
+  builder: (BuildContext context, int index) {
+    return PhotoViewGalleryPageOptions(
+      imageProvider: NetworkImage(widget.imageItems[index]["imageUrl"]),
+    );
+  },
+  scrollDirection: widget.direction,
+  itemCount: widget.imageItems.length,
+  backgroundDecoration: const BoxDecoration(color: Colors.black),
+  pageController: PageController(initialPage: 1),
+  onPageChanged: (index) => setState(() {
+      currentIndex = index;
+    }
+  )
+)
+~~~
+`PhotoViewGallery.builder` 属性：
+|属性 |描述|
+|---|--|
+|scrollPhysics |BouncingScrollPhysics() 滑动到边界的时候有弹跳的效果|
+|scrollDirection |Axis.horizontal 水平 、Axis.vertical垂直方向|
+|backgroundDecoration |背景颜色|
+|builder |builder函数 根据配置的itemCount渲染函数|
+|itemCount |数量|
+|pageController |PageController(initialPage: 1)|
+|onPageChanged |onPageChanged触发的方法|
+
+**使用示例：**
+~~~dart
+// /res/listData.dart 模拟数据
+List listData=[
+  {
+      "title": 'Candy Shop',
+      "author": 'Mohamed Chahin',
+      "imageUrl": 'https://www.itying.com/images/flutter/1.png',
+  },
+    {
+      "title": 'Childhood',
+      "author": 'Google',
+      "imageUrl": 'https://www.itying.com/images/flutter/2.png',
+  },
+]
+~~~
+`HeroPage` 页面
+~~~dart
+import 'package:flutter/material.dart';
+import 'package:photo_view/photo_view.dart';
+
+class HeroPage extends StatefulWidget {
+  final Map arguments;
+  const HeroPage({super.key, required this.arguments});
+
+  @override
+  State<HeroPage> createState() => _HeroPageState();
+}
+
+class _HeroPageState extends State<HeroPage> {
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () {
+        Navigator.pop(context);
+      },
+      child: Hero(
+        tag: widget.arguments["imageUrl"],
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          body: Center(
+            child: AspectRatio(
+              aspectRatio: 16 / 9,
+              child: PhotoView(
+                imageProvider: NetworkImage(widget.arguments["imageUrl"]),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+~~~
+路由
+~~~dart
+import 'package:flutter/cupertino.dart';
+import '../pages/hero.dart';
+
+final Map<String,Function> routes = {
+  '/hero': (contxt,{arguments}) => HeroPage(arguments:arguments), 
+};
+
+var onGenerateRoute = (RouteSettings settings) {
+  // 统一处理
+  final String? name = settings.name;
+  final Function? pageContentBuilder = routes[name];
+  if (pageContentBuilder != null) {
+    if (settings.arguments != null) {
+      final Route route = CupertinoPageRoute(
+          builder: (context) =>
+              pageContentBuilder(context, arguments: settings.arguments));
+      return route;
+    } else {
+      final Route route =
+          CupertinoPageRoute(builder: (context) => pageContentBuilder(context));
+      return route;
+    }
+  }
+  return null;
+};
+~~~
+使用
+~~~dart
+import 'package:flutter/material.dart';
+import '../../res/listData.dart';
+
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  List<Widget> _getListData() {
+    var tempList = listData.map((value) {
+      return GestureDetector(
+        onTap: () {
+          Navigator.pushNamed(context, "/hero",
+              arguments: {"imageUrl": value['imageUrl']});
+        },
+        child: Container(
+          decoration: BoxDecoration(
+              border: Border.all(
+                  color: const Color.fromRGBO(233, 233, 233, 0.9), width: 1)),
+          child: Column(
+            children: <Widget>[
+              Hero(
+                tag: value['imageUrl'],
+                child: Image.network(value['imageUrl'])),
+              const SizedBox(height: 10),
+              Text(
+                value['title'],
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 16),
+              )
+            ],
+          ),
+        ),
+      );
+    });
+    return tempList.toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GridView.count(
+      crossAxisSpacing: 10.0, //水平子 Widget 之间间距
+      mainAxisSpacing: 10.0, //垂直子 Widget 之间间距
+      padding: const EdgeInsets.all(10),
+      crossAxisCount: 2, //一行的 Widget 数量
+      // childAspectRatio:0.7,  //宽度和高度的比例
+      children: _getListData(),
+    );
+  }
+}
+~~~
+### TweenAnimationBuilder
+`TweenAnimationBuilder` 用于创建自定义的动画效果。通过 `TweenAnimationBuilder`，您可以定义起始值和结束值，并在指定的时间内进行过渡。
+
+|属性 |描述|
+|---|--|
+|duration |动画过渡的持续时间|
+|tween |定义起始值和结束值的 Tween 对象，例如 `Tween<double>(begin: 0.0, end: 1.0)`|
+|builder |一个回调函数，在动画过程中被调用。它接收当前动画值和子部件作为参数，并返回一个小部件|
+|child(可选) |要包裹的子部件。这是静态不变的部分，不会随动画变化而改变|
+
+~~~dart
+class ColorTweenAnimation extends StatefulWidget {
+  @override
+  _ColorTweenAnimationState createState() => _ColorTweenAnimationState();
+}
+
+class _ColorTweenAnimationState extends State<ColorTweenAnimation> {
+  Color _startColor = Colors.red;
+  Color _endColor = Colors.blue;
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<Color>(
+      duration: Duration(seconds: 2),
+      tween: ColorTween(begin: _startColor, end: _endColor),
+      builder: (BuildContext context, Color value, Widget? child) {
+        return Container(
+          color: value,
+          width: 200,
+          height: 200,
+        );
+      },
+      child: Text('Color Transition'),
+    );
+  }
+}
+~~~
 ## 路由
 `Flutter` 中的路由通俗的讲就是页面跳转。在 `Flutter` 中通过 `Navigator` 组件管理路由导航。
 并提供了管理堆栈的方法。如：`Navigator.push` 和 `Navigator.pop`。
@@ -4440,7 +5139,7 @@ var onGenerateRoute = (RouteSettings settings) {
   return null;
 };
 ~~~
-### 全局主题配置
+全局主题配置：
 ~~~dart
 return MaterialApp(
   debugShowCheckedModeBanner: false,
@@ -4648,6 +5347,405 @@ class _BoxState extends State<Box> {
   }
 }
 ~~~
+`globalKey.currentState` 可以获取子组件的状态，执行子组件的方法，`globalKey.currentWidget` 可以获
+取子组件的属性，`_globalKey.currentContext!.findRenderObject()` 可以获取渲染的属性。
+~~~dart
+//父Widget
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  final GlobalKey _globalKey = GlobalKey();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      floatingActionButton: FloatingActionButton(
+        child: const Icon(Icons.add),
+        onPressed: () {
+          //1、获取currentState Widget的属性（记住）
+          var boxState = _globalKey.currentState as _BoxState;
+          print(boxState._count);
+          setState(() {
+            boxState._count++;
+          });
+          //调用currentState Widget的方法
+          boxState.run();
+
+          //2、获取子Widget (了解)
+          var boxWidget = _globalKey.currentWidget as Box;
+          print(boxWidget
+              .color); //值：MaterialColor(primary value: Color(0xfff44336))
+
+          // 3、获取子组件渲染的属性（了解）
+
+          var renderBox =
+              _globalKey.currentContext!.findRenderObject() as RenderBox;
+          print(renderBox.size); //值：Size(100.0, 100.0)
+        },
+      ),
+      appBar: AppBar(
+        title: const Text('Title'),
+      ),
+      body: Center(
+        child: Box(key: _globalKey, color: Colors.red),
+      ),
+    );
+  }
+}
+
+//子Widget
+class Box extends StatefulWidget {
+  final Color color;
+  const Box({Key? key, required this.color}) : super(key: key);
+  @override
+  State<Box> createState() => _BoxState();
+}
+
+class _BoxState extends State<Box> {
+  int _count = 0;
+  void run() {
+    print("我是box的run方法");
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 100,
+      width: 100,
+      child: ElevatedButton(
+        style: ButtonStyle(
+            backgroundColor: MaterialStateProperty.all(widget.color)),
+        onPressed: () {
+          setState(() {
+            _count++;
+          });
+        },
+        child: Text(
+          "$_count",
+          style: Theme.of(context).textTheme.headline2,
+        ),
+      ),
+    );
+  }
+}
+~~~
+## 状态管理
+在 `Flutter` 中，还有其他的状态管理方法可供选择，以下是一些常见的状态管理方法。
+- **InheritedWidget 和 InheritedModel**：这些是 `Flutter` 提供的允许状态在组件树中向下传递的特殊类型的组件。它们可以帮助你在应用程序的不同层级之间共享状态。这种方法对于较小的应用程序或有限的状态共享需求较为合适。
+
+- **Provider**： 一个依赖注入和状态管理第三方库，它是在 `InheritedWidget` 基础上做了封装，有上面组件的能力，但是更简单易用。`Provider` 可以监听状态变化，并在需要时重新构建关联的组件。这种方法适用于各种规模的应用程序，具有良好的可扩展性和灵活性。
+
+- **Riverpod**： 一个相对较新的状态管理库，类似于 `Provider`，但提供了更多的功能和改进。`Riverpod` 允许你创建不可变的、可组合的和可测试的状态管理解决方案。这种方法适用于需要更高度可控和可测试性的应用程序。
+
+- **BLoC（Business Logic Component）**：一种基于响应式编程的状态管理方法。`BLoC` 将业务逻辑与 `UI` 分离，使你可以轻松地测试和重用代码。`BLoC` 通常与 `RxDart`（一种 `Dart` 的响应式编程库）一起使用，以提供强大的数据流处理能力。这种方法适用于需要处理复杂业务逻辑和大量数据流的应用程序。
+
+- **Redux**： 一种集中式状态管理库，它将应用程序的状态存储在一个单一的状态树中。`Redux` 使用纯函数（称为`reducers`）来处理状态更新，使你可以轻松地跟踪和管理应用程序的状态变化。这种方法适用于需要严格的状态管理和可预测性的应用程序。
+
+
+### InheritedWidget
+`InheritedWidget` 是一个基类，用于定义可以在 `Widget` 树中共享的数据。它是 `Flutter` `中实现数据共享的一种简单方式。InheritedWidget` 的子类可以从父级向子级传递数据，并且只有在数据发生变化时，才会通知子级进行更新。
+
+要使用 `InheritedWidget`，通常需要完成以下步骤：
+1. 创建一个继承自 `InheritedWidget` 的数据模型类，并在其中定义要共享的数据。
+2. 实现 `InheritedWidget` 的 `updateShouldNotify()` 方法，以确定是否通知子部件进行更新。
+3. 在需要访问共享数据的子部件中，使用 `BuildContext` 的 `dependOnInheritedWidgetOfExactType()` 方法来获取并订阅该数据模型。
+
+~~~dart
+class CounterModel extends InheritedWidget {
+  final int count;
+
+  CounterModel({
+    required this.count,
+    required Widget child,
+  }) : super(child: child);
+
+  static CounterModel? of(BuildContext context) {
+    return context.dependOnInheritedWidgetOfExactType<CounterModel>();
+  }
+
+  @override
+  bool updateShouldNotify(CounterModel oldWidget) {
+    return count != oldWidget.count;
+  }
+}
+
+class CounterButton extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final counterModel = CounterModel.of(context);
+    return ElevatedButton(
+      onPressed: () {
+        // 更新计数器数据
+        // 注意：这里修改了共享的数据，会触发依赖该数据的子部件进行更新
+        // 如果不需要更新依赖，可以在这里创建新的 CounterModel 对象
+        // 并将其传递给对应的子部件
+        counterModel!.count++;
+      },
+      child: Text('Increment'),
+    );
+  }
+}
+
+class CounterDisplay extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final counterModel = CounterModel.of(context);
+    return Text('Count: ${counterModel!.count}');
+  }
+}
+
+class MyApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return CounterModel(
+      count: 0,
+      child: MaterialApp(
+        title: 'My App',
+        home: Scaffold(
+          appBar: AppBar(
+            title: Text('InheritedWidget Example'),
+          ),
+          body: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                CounterDisplay(),
+                CounterButton(),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+~~~
+`CounterModel` 继承自 `InheritedWidget`，表示一个计数器数据模型。`CounterButton` 和 `CounterDisplay` 部件都通过 `CounterModel.of(context)` 获取共享的计数器数据，并相应地进行更新和展示。通过修改 `CounterModel` 对象中的 `count` 值，会自动触发依赖该数据的子部件进行更新。
+
+### InheritedModel
+`InheritedModel` 是在 `InheritedWidget` 的基础上进行了改进的进阶概念。与 `InheritedWidget` 一样，`InheritedModel` 也提供了共享数据和依赖管理的机制，但是相比于 `InheritedWidget`，`InheritedModel` 具备更精细的依赖控制能力。
+
+`InheritedModel` 在数据更新时可以选择性地通知特定的子部件进行更新，而不是通知整个子部件树。这对于在大规模数据结构中优化性能非常有用。
+
+使用 `InheritedModel` 需要完成以下步骤：
+1. 创建一个继承自 `InheritedModel` 的数据模型类，并定义要共享的数据。
+2. 实现 `InheritedModel` 的 `updateShouldNotifyDependent()` 方法，以确定是否通知特定的子部件进行更新。
+3. 在需要访问共享数据的子部件中，使用 `BuildContext` 的 `dependOnInheritedModel()` 方法来订阅特定的共享数据。
+
+~~~dart
+enum CounterAspect {
+  count,
+}
+
+class CounterModel extends InheritedModel<CounterAspect> {
+  final int count;
+
+  CounterModel({
+    required this.count,
+    required Widget child,
+  }) : super(child: child);
+
+  static CounterModel? of(BuildContext context, {required CounterAspect aspect}) {
+    return InheritedModel.inheritFrom<CounterModel>(context, aspect: aspect);
+  }
+
+  @override
+  bool updateShouldNotifyDependent(CounterModel oldWidget, Set<CounterAspect> dependencies) {
+    return dependencies.contains(CounterAspect.count) && count != oldWidget.count;
+  }
+}
+
+class CounterButton extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final counterModel = CounterModel.of(context, aspect: CounterAspect.count);
+    return ElevatedButton(
+      onPressed: () {
+        counterModel!.count++;
+      },
+      child: Text('Increment'),
+    );
+  }
+}
+
+class CounterDisplay extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final counterModel = CounterModel.of(context, aspect: CounterAspect.count);
+    return Text('Count: ${counterModel!.count}');
+  }
+}
+
+class MyApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return CounterModel(
+      count: 0,
+      child: MaterialApp(
+        title: 'My App',
+        home: Scaffold(
+          appBar: AppBar(
+            title: Text('InheritedModel Example'),
+          ),
+          body: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                CounterDisplay(),
+                CounterButton(),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+~~~
+`CounterAspect` 是一个枚举类型，用于定义共享数据的依赖方面。`CounterModel` 继承自 `InheritedModel`，并根据 `CounterAspect` 对数据进行划分。`CounterButton` 和 `CounterDisplay` 部件仅订阅 `CounterAspect.count`，因此只有在计数器数据更改时才会进行更新。
+
+### Provider
+`Provider` 是 `Flutter` 中一个非常流行的第三方状态管理库，它提供了一种简单而强大的方式来共享和更新数据。
+
+在使用 `Provider` 时，您可以将应用程序的状态分解成单独的小组件，并使用 `Provider` 来共享这些组件之间的数据。`Provider` 支持多种类型的数据共享，包括：
+- `ValueNotifier`：用于跟踪某个值的变化。
+- `ChangeNotifier`：用于跟踪多个值的变化。
+- `Stream`：用于从异步源中获取数据。
+
+~~~dart
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+class Counter with ChangeNotifier {
+  int _count = 0;
+
+  int get count => _count;
+
+  void increment() {
+    _count++;
+    notifyListeners();
+  }
+}
+
+class CounterApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Counter App',
+      home: ChangeNotifierProvider(
+        create: (_) => Counter(),
+        child: Scaffold(
+          appBar: AppBar(
+            title: Text('Counter App'),
+          ),
+          body: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  'You have pushed the button this many times:',
+                ),
+                Consumer<Counter>(
+                  builder: (context, counter, child) => Text(
+                    '${counter.count}',
+                    style: Theme.of(context).textTheme.headline3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          floatingActionButton: FloatingActionButton(
+            onPressed: () {
+              Provider.of<Counter>(context, listen: false).increment();
+            },
+            tooltip: 'Increment',
+            child: Icon(Icons.add),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+void main() {
+  runApp(CounterApp());
+}
+~~~
+`Counter` 类继承自 `ChangeNotifier`，用于跟踪计数器值的变化。在 `CounterApp` 部件的 `build` 方法中，我们使用 `ChangeNotifierProvider` 来创建一个 `Counter` 对象，并将其共享给应用程序的其他部件。我们使用 `Consumer` 来订阅计数器对象的变化，以便在计数器值发生更改时更新`UI`。通过使用 `Provider.of`，我们可以访问和更新共享的计数器数据。
+
+除了基本的 `Provider` 和 `Consumer`，`Provider` 还包括许多其他特性，如：
+- `MultiProvider`：用于组合多个 `Provider`。
+- `ProxyProvider`：允许您从一个 `Provider` 中提取数据并将其传递给另一个 `Provider`。
+- `Selector`：允许您选择 `Provider` 中的部分数据，以避免不必要的重建。
+
+### Riverpod
+`Riverpod` 是一个基于 `Provider` 的 `Flutter` 状态管理库，它提供了更简洁和强大的方式来共享和管理应用程序的状态。`Riverpod` 是由 `Provider` 的作者 `Remi Rousselet` 创建的，旨在提供更好的开发体验和更好的性能。
+
+使用 `Riverpod`，您可以将应用程序的状态分解成单独的小组件，并使用 `ProviderContainer` 来共享这些组件之间的数据。与 `Provider` 不同的是，`Riverpod` 引入了一些新概念和功能，如使用自动启动的计算器、`ScopedProvider`、`FamilyProvider` 等，以简化状态管理流程。
+
+~~~dart
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+final counterProvider = Provider<int>((ref) => 0);
+
+void main() {
+  runApp(
+    ProviderScope(
+      child: MyApp(),
+    ),
+  );
+}
+
+class MyApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Riverpod Example',
+      home: Scaffold(
+        appBar: AppBar(
+          title: Text('Riverpod Example'),
+        ),
+        body: Center(
+          child: Consumer(builder: (context, watch, child) {
+            final count = watch(counterProvider);
+            return Text('Count: $count');
+          }),
+        ),
+        floatingActionButton: FloatingActionButton(
+          onPressed: () {
+            context.read(counterProvider).state++;
+          },
+          child: Icon(Icons.add),
+        ),
+      ),
+    );
+  }
+}
+~~~
+我们创建了一个名为 `counterProvider` 的 `Provider`，它提供一个整数值并初始化为 `0`。在 `main()` 方法中，我们用 `ProviderScope` 包裹整个应用程序，以便在 `Flutter` 组件树中使用 `Provider`。
+
+在 `MyApp` 组件的 `build` 方法中，我们使用 `Consumer` 将 `counterProvider` 订阅到 `UI` 中，并在屏幕上显示计数器的值。当用户点击浮动操作按钮时，我们使用 `context.read` 方法直接访问 `counterProvider` 并增加其值。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
