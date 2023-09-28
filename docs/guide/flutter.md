@@ -2,7 +2,7 @@
  * @Author: 高江华 g598670138@163.com
  * @Date: 2023-04-11 16:57:52
  * @LastEditors: 高江华
- * @LastEditTime: 2023-09-27 15:25:52
+ * @LastEditTime: 2023-09-28 14:19:03
  * @Description: file content
 -->
 # Flutter
@@ -5733,11 +5733,367 @@ class MyApp extends StatelessWidget {
 在 `MyApp` 组件的 `build` 方法中，我们使用 `Consumer` 将 `counterProvider` 订阅到 `UI` 中，并在屏幕上显示计数器的值。当用户点击浮动操作按钮时，我们使用 `context.read` 方法直接访问 `counterProvider` 并增加其值。
 
 
+## GetX
+GetX 是一款针对 Flutter 应用程序开发的轻量级库，提供了多种功能和工具，包括状态管理、路由导航、依赖注入和国际化等。
 
+[文档地址](https://pub.dev/packages/get)
 
+### 功能和特点：
+- **状态管理**：`GetX` 提供了简单而强大的状态管理机制，通过使用可观察对象（`Observables`）和反应式编程概念，可以轻松管理和更新应用程序的状态。您可以使用 `GetX` 的 `GetXController` 类来创建控制器，并使用 `GetBuilder`、`Obx` 或 `GetX` 小部件来监听和更新状态。
 
+- **路由导航**：`GetX` 提供了灵活且易用的路由导航功能，支持命名路由、参数传递、页面转场动画等。您可以使用 `GetMaterialApp` 替代 `Flutter` 的 `MaterialApp` 并定义路由表，使用 `Get.to`、`Get.off` 或 `Get.toNamed` 等方法来导航到不同的页面。
 
+- **依赖注入**：`GetX` 内置了一个简单但功能强大的依赖注入系统，可以帮助您更好地组织和管理应用程序中的依赖关系。您可以使用 `Get.put`、`Get.lazyPut` 或 `Get.create` 等方法将类或实例注册为单例或临时依赖项，并在需要时获取它们。
 
+- **网络请求**：`GetX` 提供了用于简化网络请求的工具，包括内置的 `GetConnect` 类和对 `Dio`、`Http` 等第三方库的集成支持。您可以使用 `GetX` 的网络请求功能轻松地进行数据获取和提交。
+
+- **国际化**：`GetX` 通过 `GetMaterialApp` 和 `GetBuilder` 的参数，支持应用程序的多语言和国际化。您可以定义不同的本地化资源文件，并通过 `GetX` 的 `Get.locale` 属性在应用程序中切换语言。
+
+- **响应式工具**：`GetX` 提供了一些辅助工具，用于快速开发反应式应用程序。其中包括 `GetX` 小部件、`GetBuilder`、`Obx` 和 `GetXControllerMixin` 等，它们使得开发过程更加简单和高效。
+::: tip
+`GetX` 注重性能和开发效率，提供了优秀的开发工具和简洁的 `API`，可以帮助开发者更轻松地构建复杂的 `Flutter` 应用程序。您可以在 `GetX` 的官方文档中找到更多详细的示例、教程和用法说明。
+:::
+
+### 初始化
+**安装**
+~~~shell
+flutter pub add get
+~~~
+**导入**
+~~~dart
+import 'package:get/get.dart';
+
+void main() => runApp(GetMaterialApp(home: Home()));
+~~~
+
+### 状态管理
+`Get` 有两种不同的状态管理器：简单状态管理器（我们称之为 `GetBuilder`）和反应式状态管理器（`GetX/Obx`）
+
+**简单状态管理示例（使用GetX）：**
+~~~dart
+import 'package:flutter/material.dart';
+import 'package:get/get.dart';
+
+class CounterController extends GetxController {
+  int count = 0;
+
+  void increment() {
+    count++;
+    update();
+  }
+}
+
+class Home extends StatelessWidget {
+  final CounterController counterController = Get.put(CounterController());
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('简单状态管理示例'),
+      ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            GetBuilder<CounterController>(
+              builder: (controller) {
+                return Text(
+                  '计数: ${controller.count}',
+                  style: TextStyle(fontSize: 24),
+                );
+              },
+            ),
+            SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: () => counterController.increment(),
+              child: Text('增加'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+~~~
+我们定义了一个 `CounterController` 控制器类，其中的 `count` 是一个普通的整数类型。在 `UI` 中，我们使用 `GetBuilder` 将文字部件包装起来，并在 `builder` 方法中获取 `CounterController` 的实例。当 `increment` 方法被调用时，我们手动更新控制器并触发 `UI` 的重建。
+
+**响应式状态管理示例（使用GetX）：**
+~~~dart
+import 'package:flutter/material.dart';
+import 'package:get/get.dart';
+
+class CounterController extends GetxController {
+  RxInt count = 0.obs;
+
+  void increment() {
+    count.value++;
+  }
+}
+
+class Home extends StatelessWidget {
+  final CounterController counterController = Get.put(CounterController());
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('响应式状态管理示例'),
+      ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            Obx(() {
+              return Text(
+                '计数: ${counterController.count.value}',
+                style: TextStyle(fontSize: 24),
+              );
+            }),
+            SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: () => counterController.increment(),
+              child: Text('增加'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+~~~
+我们将 `count` 的类型定义为 `RxInt`，这是 `GetX` 提供的可观察整数类型。在 `UI` 中，我们使用 `Obx` 来监听 `count` 的变化，并在变化时更新 `UI`。当点击按钮时，我们直接修改 `count.value` 来增加计数器的值，此时 `Obx` 会感知到 `count` 发生变化并重新构建 `UI`。
+
+### 路由管理
+**路由跳转的方法：**
+- `Get.toNamed('/about')`：
+  根据路由名称进行导航跳转，`arguments` 用于传递参数给目标页面。
+  ~~~dart
+  RaisedButton(
+    onPressed: () => Get.toNamed('/about', arguments: {'id': 1}),
+    child: Text('关于'),
+  ),
+  ~~~
+- `Get.to(About())`
+  根据页面实例直接进行导航，`arguments` 用于传递参数给目标页面。
+  ~~~dart
+  RaisedButton(
+    onPressed: () => Get.to(About(), arguments: {'id': 1}),
+    child: Text('关于'),
+  ),
+  ~~~
+- `Get.offNamed('/about')`：
+  关闭当前页面，并导航跳转到指定路由名称页面，`arguments` 用于传递参数给目标页面。
+  ~~~dart
+  RaisedButton(
+    onPressed: () => Get.offNamed('/about', arguments: {'id': 1}),
+    child: Text('关于'),
+  ),
+  ~~~
+- `Get.off(About())`：
+  关闭当前页面，并导航跳转到指定路由名称页面，`arguments` 用于传递参数给目标页面。
+  ~~~dart
+  RaisedButton(
+    onPressed: () => Get.off(About(), arguments: {'id': 1}),
+    child: Text('关于'),
+  ),
+  ~~~
+- `Get.offAllNamed('/about')`：
+  关闭所有页面，并导航跳转到指定路由名称页面，`arguments` 用于传递参数给目标页面。
+  ~~~dart
+  RaisedButton(
+    onPressed: () => Get.offAllNamed('/about', arguments: {'id': 1}),
+    child: Text('关于'),
+  ),
+  ~~~
+- `Get.offAll(About())`：
+  关闭当前所有页面，并导航到指定的页面实例。`arguments` 用于传递参数给目标页面。
+  ~~~dart
+  RaisedButton(
+    onPressed: () => Get.offAll(About()，arguments: {'id': 1}),
+    child: Text('关于'),
+  ),
+  ~~~
+- `Get.back()`：
+  返回上一级页面。
+  ~~~dart
+  RaisedButton(
+    onPressed: () => Get.back(),
+    child: Text('返回'),
+  ),
+  ~~~
+- `Get.until((route) => route.isFirst)`：
+  返回到导航堆栈中的某个页面，直到满足某个条件为止。
+  ~~~dart
+  RaisedButton(
+    onPressed: () => Get.until((route) => route.isFirst), // 返回到导航堆栈中的第一个页面
+    child: Text('返回'),
+  ),
+  ~~~
+- `Get.offNamedUntil('/about', (route) => route.isFirst)`：
+  导航到一个命名路由，并从导航堆栈中移除所有的先前路由，直到满足某个条件为止。
+  ~~~dart
+  // 在这个示例中，应用程序将导航到 '/about' 路由，并从堆栈中移除所有的先前路由，直到到达第一个路由。
+  RaisedButton(
+    onPressed: () => Get.offNamedUntil('/about', (route) => route.isFirst),
+    child: Text('返回'),
+  ),
+  ~~~
+- `Get.offUntil(About(), (route) => false)`：
+  导航到一个新的页面，并从导航堆栈中移除所有的先前页面，直到满足某个条件为止。
+  ~~~dart
+  // 在这个示例中，应用程序将导航到 About 的实例的页面，并从堆栈中移除所有的先前页面，因为回调函数始终返回 false。
+  RaisedButton(
+    onPressed: () => Get.offUntil(About(), (route) => false),
+    child: Text('返回'),
+  ),
+  ~~~
+
+**路由整体示例：**
+~~~dart
+import 'package:flutter/material.dart';
+import 'package:get/get.dart';
+
+void main() {
+  runApp(MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return GetMaterialApp(
+      title: 'GetX 路由管理示例',
+      initialRoute: '/',
+      defaultTransition: Transition.fade,
+      getPages: [
+        GetPage(name: '/', page: () => HomePage()),
+        GetPage(name: '/about', page: () => AboutPage()),
+        GetPage(name: '/settings', page: () => SettingsPage()),
+      ],
+      unknownRoute: GetPage(name: '/not-found', page: () => NotFoundPage()),
+    );
+  }
+}
+
+// 首页
+class HomePage extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('首页'),
+      ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              '这是首页',
+              style: TextStyle(fontSize: 24),
+            ),
+            SizedBox(height: 16),
+            RaisedButton(
+              onPressed: () => Get.toNamed('/about'),
+              child: Text('关于'),
+            ),
+            RaisedButton(
+              onPressed: () => Get.toNamed('/settings'),
+              child: Text('设置'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// 关于页面
+class AboutPage extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('关于'),
+      ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              '这是关于页面',
+              style: TextStyle(fontSize: 24),
+            ),
+            SizedBox(height: 16),
+            RaisedButton(
+              onPressed: () => Get.back(),
+              child: Text('返回'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// 设置页面
+class SettingsPage extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('设置'),
+      ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              '这是设置页面',
+              style: TextStyle(fontSize: 24),
+            ),
+            SizedBox(height: 16),
+            RaisedButton(
+              onPressed: () => Get.offAllNamed('/'),
+              child: Text('返回首页'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// 404 页面
+class NotFoundPage extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('404'),
+      ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              '页面未找到',
+              style: TextStyle(fontSize: 24),
+            ),
+            SizedBox(height: 16),
+            RaisedButton(
+              onPressed: () => Get.offAllNamed('/'),
+              child: Text('返回首页'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+~~~
+上述示例中，我们使用 `GetPage` 来定义了三个页面的路由：`HomePage`、`AboutPage` 和 `SettingsPage`，并将它们添加到 `getPages` 中。其中 `initialRoute` 指定了初始路由为 `/``，defaultTransition` 设置了默认的页面过渡效果。如果访问了未定义的路由，将会展示 `NotFoundPage`。
+
+### 依赖管理
 
 
 
