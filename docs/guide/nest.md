@@ -6476,7 +6476,270 @@ async function bootstrap() {
 }
 bootstrap();
 ~~~
+## Nest 中实现地理位置的附近功能
+在我们日常生活中会使用到寻找附近司机，附近充电宝，附近餐厅，附近旅馆，附近酒店等等。那么我可以使用 `redis` 的 `GEO` 能力来实现这个功能。
 
+接下来用代码实现下。创建个 `nest` 项目：
+~~~shell
+npm install g @nestjs/cli
+
+nest new nearby-search
+~~~
+安装 `redis` 包：
+~~~shell
+npm install --save redis
+~~~
+创建 `redis` 模块和 `service`：
+~~~shell
+nest g module redis
+nest g service redis
+~~~
+在 `RedisModule` 创建连接 `redis` 的 `provider`，导出 `RedisService`：
+~~~ts
+import { Module } from '@nestjs/common';
+import { createClient } from 'redis';
+import { RedisService } from './redis.service';
+
+@Module({
+  providers: [
+    RedisService,
+    {
+      provide: 'REDIS_CLIENT',
+      async useFactory() {
+        const client = createClient({
+            socket: {
+                host: 'localhost',
+                port: 6379
+            }
+        });
+        await client.connect();
+        return client;
+      }
+    }
+  ],
+  exports: [RedisService]
+})
+export class RedisModule {}
+~~~
+然后在 `RedisService` 里注入 `REDIS_CLIENT`，并封装一些操作 `redis` 的方法：
+~~~ts
+import { Inject, Injectable } from '@nestjs/common';
+import { RedisClientType } from 'redis';
+
+@Injectable()
+export class RedisService {
+
+  @Inject('REDIS_CLIENT') 
+  private redisClient: RedisClientType;
+  // 添加位置信息
+  async geoAdd(key: string, posName: string, posLoc: [number, number]) {
+      return await this.redisClient.geoAdd(key, {
+          longitude: posLoc[0],
+          latitude: posLoc[1],
+          member: posName
+      })
+  }
+  // 获取指定位置信息
+  async geoPos(key: string, posName: string) {
+    const res = await this.redisClient.geoPos(key, posName);
+
+    return {
+      name: posName,
+      longitude: res[0].longitude,
+      latitude: res[0].latitude
+    }
+  }
+  // 获取位置信息列表
+  async geoList(key: string) {
+    // 因为 geo 信息底层使用 zset 存储的，所以查询所有的 key 使用 zrange。
+    // zset 是有序列表，列表项会有一个分数，zrange 是返回某个分数段的 key，传入 0、-1 就是返回所有的。
+    const positions = await this.redisClient.zRange(key, 0, -1);
+
+    const list = [];
+    for(let i = 0; i < positions.length; i++) {
+      const pos = positions[i];
+      const res = await this.geoPos(key, pos);
+      list.push(res);
+    }
+    return list;
+  }
+  // 搜索附近的点
+  async geoSearch(key: string, pos: [number, number], radius: number) {
+    // 先用 geoRadius 搜索半径内的点，然后再用 geoPos 拿到点的经纬度返回。
+    const positions = await this.redisClient.geoRadius(key, {
+        longitude: pos[0],
+        latitude: pos[1]
+    }, radius, 'km');
+
+    const list = [];
+    for(let i = 0; i < positions.length; i++) {
+        const pos = positions[i];
+        const res = await this.geoPos(key, pos);
+        list.push(res);
+    }
+    return list;
+  }
+}
+~~~
+在 `AppController` 里注入 `RedisService`，然后添加一个路由：
+~~~ts
+import { BadRequestException, Controller, Get, Inject, Query } from '@nestjs/common';
+import { AppService } from './app.service';
+import { RedisService } from './redis/redis.service';
+
+@Controller()
+export class AppController {
+  constructor(private readonly appService: AppService) {}
+
+  @Inject(RedisService)
+  private redisService: RedisService;
+  // 添加位置信息
+  @Get('addPos')
+  async addPos(
+    @Query('name') posName: string,
+    @Query('longitude') longitude: number,
+    @Query('latitude') latitude: number
+  ) {
+    if(!posName || !longitude || !latitude) {
+      throw new BadRequestException('位置信息不全');
+    }
+    try {
+      await this.redisService.geoAdd('positions', posName, [longitude, latitude]);
+    } catch(e) {
+      throw new BadRequestException(e.message);
+    }
+    return {
+      message: '添加成功',
+      statusCode: 200
+    }
+  }
+  // 获取位置信息列表
+  @Get('allPos')
+  async allPos() {
+      return this.redisService.geoList('positions');
+  }
+  // 获取指定位置信息
+  @Get('pos')
+  async pos(@Query('name') name: string) {
+      return this.redisService.geoPos('positions', name);
+  }
+  // 搜索附近的点
+  @Get('nearbySearch')
+  async nearbySearch(
+      @Query('longitude') longitude: number,
+      @Query('latitude') latitude: number,
+      @Query('radius') radius: number
+  ) {
+    if(!longitude || !latitude) {
+      throw new BadRequestException('缺少位置信息');
+    }
+    if(!radius) {
+      throw new BadRequestException('缺少搜索半径');
+    }
+
+    return this.redisService.geoSearch('positions', [longitude, latitude], radius);
+  }
+}
+~~~
+在 `main.ts` 指定 `public` 目录为静态文件的目录：
+~~~ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { NestExpressApplication } from '@nestjs/platform-express';
+
+async function bootstrap() {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+
+  app.useStaticAssets('public');
+
+  await app.listen(3000);
+}
+bootstrap();
+~~~
+接下来要接入高德地图。创建新应用，选择 `web` 应用，就可以生成 `key` 了。
+
+然后创建 `public/index.html`:
+~~~html
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="initial-scale=1.0, user-scalable=no, width=device-width">
+    <title>附近的充电宝</title>
+  <link rel="stylesheet" href="https://a.amap.com/jsapi_demos/static/demo-center/css/demo-center.css" />
+    <script src="https://cache.amap.com/lbs/static/es5.min.js"></script>
+    <script type="text/javascript" src="https://cache.amap.com/lbs/static/addToolbar.js"></script>
+    <style>
+        html,
+        body,
+        #container {
+          width: 100%;
+          height: 100%;
+        }
+        
+        label {
+            width: 55px;
+            height: 26px;
+            line-height: 26px;
+            margin-bottom: 0;
+        }
+        button.btn {
+            width: 80px;
+        }
+    </style>
+</head>
+<body>
+<div id="container"></div>
+<script src="https://webapi.amap.com/maps?v=2.0&key=f96fa52474cedb7477302d4163b3aa09"></script>
+<script src="https://unpkg.com/axios@1.5.1/dist/axios.min.js"></script>
+<script>
+
+    const radius = 0.2;
+
+    axios.get('/nearbySearch', {
+        params: {
+            longitude: 116.397444,
+            latitude: 39.909183,
+            radius
+        }
+    }).then(res => {
+        const data = res.data;
+
+        var map = new AMap.Map('container', {
+            resizeEnable: true,
+            zoom: 6,
+            center: [116.397444, 39.909183]
+        });
+
+        data.forEach(item => {
+            var marker = new AMap.Marker({
+                icon: "https://webapi.amap.com/theme/v1.3/markers/n/mark_b.png",
+                position: [item.longitude, item.latitude],
+                anchor: 'bottom-center'
+            });
+            map.add(marker);
+        });
+
+
+        var circle = new AMap.Circle({
+            center: new AMap.LngLat(116.397444, 39.909183), // 圆心位置
+            radius: radius * 1000,
+            strokeColor: "#F33",  //线颜色
+            strokeOpacity: 1,  //线透明度
+            strokeWeight: 3,  //线粗细度
+            fillColor: "#ee2200",  //填充颜色
+            fillOpacity: 0.35 //填充透明度
+        });
+
+        map.add(circle);
+        map.setFitView();
+    })
+        
+</script>
+</body>
+</html>
+~~~
 ## 会议室预订系统
 首先，用户分为普通用户和管理员两种，各自有不同的功能：
 - **普通用户**：可以注册，注册的时候会发邮件来验证身份，注册之后就可以登录系统。

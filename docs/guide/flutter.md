@@ -2,7 +2,7 @@
  * @Author: 高江华 g598670138@163.com
  * @Date: 2023-04-11 16:57:52
  * @LastEditors: 高江华
- * @LastEditTime: 2023-09-28 14:19:03
+ * @LastEditTime: 2023-10-05 11:59:53
  * @Description: file content
 -->
 # Flutter
@@ -6091,7 +6091,7 @@ class NotFoundPage extends StatelessWidget {
   }
 }
 ~~~
-上述示例中，我们使用 `GetPage` 来定义了三个页面的路由：`HomePage`、`AboutPage` 和 `SettingsPage`，并将它们添加到 `getPages` 中。其中 `initialRoute` 指定了初始路由为 `/``，defaultTransition` 设置了默认的页面过渡效果。如果访问了未定义的路由，将会展示 `NotFoundPage`。
+上述示例中，我们使用 `GetPage` 来定义了三个页面的路由：`HomePage`、`AboutPage` 和 `SettingsPage`，并将它们添加到 `getPages` 中。其中 `initialRoute` 指定了初始路由为 `/`，`defaultTransition` 设置了默认的页面过渡效果。如果访问了未定义的路由，将会展示 `NotFoundPage`。
 
 ### 依赖管理
 
