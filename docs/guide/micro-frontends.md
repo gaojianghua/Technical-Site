@@ -7800,3 +7800,260 @@ micro.start({
 
 当然 `tsc` 的功能和生态过于简单，本课程接下来会使用 `gulp-typescript` （利用 `TypeScript` 的 `API` 进行编译，具备类型检查和声明的生成能力）进行流式构建处理，从而方便后续可以借助 `Gulp` 的生态额外定制构建需求，例如文件压缩、合并、添加日志等。
 
+## 工程设计：按需加载
+在 `Web` 应用的开发中，通常需要考虑通过打包工具生成 `Bundle`，理论上 `Bundle` 越小，`HTTP` 的请求时间越少，可以在一定程度上增加用户体验。假设在 `Web` 应用中使用了 `Antd` 组件库，并且只用到了其中的 `Button` 组件和 `Input` 组件，那么在设计时，应该只引入 `Button` 和 `Input` 相关的代码，从而避免引入整个组件库带来的构建体积增加，因此在设计库时往往需要考虑按需加载。以下几种情况需要考虑设计按需加载：
+- 可以按功能进行拆分（例如组件库），可以按需使用功能；
+- 可以按工具方法进行拆分（例如 `Lodash`），可以按需使用工具方法；
+- 可以按模块进行拆分（例如 `RxJS`），可以按需使用模块。
+
+当然并不是所有的库都需要实现按需加载，例如以下几种情况可以不考虑按需加载：
+- 设计的库足够简单，确定库的体积足够小，不会影响 `Web` 应用的加载性能；
+- 设计的库功能单一（例如请求库），大部分代码都会被使用；
+
+微前端框架库，单从库体积维度来考量，可以不做按需加载设计（例如 `qiankun` 的设计），当然本课程对微前端框架的设计按功能进行了解耦拆分（应用管理、隔离、性能优化和通信），在工程上考虑做一个按需加载设计，从而可以方便大家按解耦的功能模块进行逐一学习。如果大家在日常的开发中需要设计一个通用的工具库，完全可以参考本小节的设计思路。
+
+### Gulp 构建
+在上节课中，我们重点讲解了库构建的工具选型。为了使构建的库可以进行类型检查和声明文件自动生成，这节课我们会使用 `Gulp` 配合 `gulp-typescript` 实现库构建能力。
+
+`Gulp` 的流式构建可以很好地为多文件构建进行服务，各个文件可以通过构建管道进行重复构建，从而保证源文件目录和目标文件目录一一映射，这正是库设计中按需加载非常重要的一个构建特性。例如构建工具中的微前端框架目录设计：
+~~~shell
+├── src                            
+│   ├── index.js                 
+│   ├── core                     
+│   │   └── core.js              
+│   ├── sandbox                   
+│   │   ├── sandbox1.js          
+│   │   ├── sandbox2.js          
+│   │   └── sandbox3.js                      
+│   ├── opt                      
+│   │   ├── opt1.js              
+│   │   └── opt2.js              
+│   └── comm                     
+│       ├── comm1.js              
+│       └── comm2.js              
+├── gulpfile.js                   
+├── tsconfig.json                 
+└── package.json
+~~~
+在上述文件目录下，可以简单新增 Gulp 构建来实现：
+~~~ts
+// gulpfile.js
+const gulp = require("gulp");
+const ts = require("gulp-typescript");
+const merge = require("merge2");
+
+const task = {
+  // 构建 CommonJS 模块化规范
+  commonjs: {
+    name: "build commonjs",
+    tsconfig: {
+      // 指定输出的模块化标准，例如课程中常说的 CommonJS 和 ES Modules（ES2015/ES6/ES2020）
+      // 中文查看（模块概念）：https://www.tslang.cn/docs/handbook/modules.html
+      // 英文查看（模块编译示例）：https://www.typescriptlang.org/tsconfig/#module
+      module: "CommonJS",
+      // 指定输出的 JS 标准（ES3/ES5/ES6/.../ESNext）
+      // 在课程中已经讲解 ES5 能够兼容大部分的浏览器
+      target: "ES5",
+    },
+    dest: "lib/commonjs",
+  },
+  
+  // 构建 ES Module 模块化规范
+  esmodule: {
+    name: "build esmodule",
+    // 发布的 NPM 库包导入导出使用的是 ES Modules 规范，其余代码都是 ES5 标准
+    // 使用 ES Modules 规范可以启用 Tree Shaking 
+    // 输出 ES5 标准是为了配置 Babel 时可以放心屏蔽 node_modules 目录的代码转译
+    tsconfig: {
+      module: "ESNext",
+      target: "ES5",
+    },
+    dest: "lib/es",
+  },
+};
+
+function build(task) {
+  const tsProject = ts.createProject("tsconfig.json", task.tsconfig);
+  // tsProject.src() 默认会基于 tsconfig.json 中的 files、exclude 和 include 指定的源文件进行编译
+  const tsResult = tsProject.src().pipe(tsProject());
+  const tsDest = gulp.dest(task.dest, { overwrite: true });
+  return merge([tsResult.dts.pipe(tsDest), tsResult.js.pipe(tsDest)]);
+}
+
+gulp.task(task.commonjs.name, () => build(task.commonjs));
+gulp.task(task.esmodule.name, () => build(task.esmodule));
+gulp.task("default", gulp.parallel([task.commonjs.name, task.esmodule.name]));
+
+
+// tsconfig.json
+// 中文查看：https://www.tslang.cn/docs/handbook/tsconfig-json.html
+// 英文查看：https://www.typescriptlang.org/docs/handbook/tsconfig-json.html
+{
+  "compilerOptions": {
+    // 模块解析策略：Node 和 Classic
+    // 中文查看：https://www.tslang.cn/docs/handbook/module-resolution.html
+    // 英文查看：https://www.typescriptlang.org/docs/handbook/module-resolution.html
+    // 一般情况下都是使用 Node，简单理解为参考 Node 的 require 算法解析引入模块的路径
+    "moduleResolution": "node",
+    // 允许从没有设置默认导出的模块中默认导入
+    "allowSyntheticDefaultImports": true,
+    // 删除所有注释，除了以 /!* 开头的版权信息
+    "removeComments": true,
+    // 生成相应的 .d.ts 声明文件
+    "declaration": true,
+    // 启用所有严格类型检查选项。启用 --strict 相当于启用 --noImplicitAny, --noImplicitThis, --alwaysStrict， --strictNullChecks, --strictFunctionTypes 和 --strictPropertyInitialization
+    "strict": true,
+    // 禁止对同一个文件的不一致的引用
+    "forceConsistentCasingInFileNames": true,
+    // 报错时不生成输出文件
+    "noEmitOnError": true,
+    // 编译过程中需要引入的库文件的列表，其实就是开发态语法的支持程度配置
+    "lib": ["DOM", "ES2015.Promise", "ES6", "ESNext"],
+    // 允许使用 import 代替 import *
+    // 英文查看：https://www.typescriptlang.org/tsconfig#esModuleInterop
+    "esModuleInterop": true,
+    "module": "CommonJS",
+    // 解析非相对模块名的基准目录
+    "baseUrl": ".",
+    // 将每个文件作为单独的模块
+    "isolatedModules": true,
+    // 允许引入 .json 扩展的模块文件
+    "resolveJsonModule": true,
+    // 启动 decorators
+    "experimentalDecorators": true
+  },
+  // 编译器包含的文件列表，可以使用 glob 匹配模式
+  "include": ["src/**/*"],
+  // 编译器排除的文件列表
+  "exclude": ["node_modules"]
+}
+
+
+// package.json
+"scripts": {
+  "build": "gulp"
+},
+~~~
+执行 `npm run build` 进行构建，构建后会在 `lib` 目录下生成 `commonjs` 和 `es` 两个文件夹，分别代表生成 `CommonJS` 和 `ESModule` 模块化规范的输出：
+~~~shell
+[09:00:22] Using gulpfile ~/Desktop/Github/micro-framework/gulpfile.js
+[09:00:22] Starting 'default'...
+[09:00:22] Starting 'build commonjs'...
+[09:00:22] Starting 'build esmodule'...
+[09:00:24] Finished 'build esmodule' after 1.55 s
+[09:00:24] Finished 'build commonjs' after 1.55 s
+[09:00:24] Finished 'default' after 1.56 s
+~~~
+生成的目录结构如下所示：
+~~~shell
+lib
+├── commonjs                      
+│   ├── index.js                 
+│   ├── index.d.ts               
+│   ├── core                     
+│   │   ├── core.d.ts           
+│   │   └── core.js              
+│   ├── sandbox                   
+│   │   ├── sandbox1.d.ts       
+│   │   ├── sandbox1.js          
+│   │   ├── sandbox2.d.ts       
+│   │   ├── sandbox2.js          
+│   │   ├── sandbox3.d.ts       
+│   │   └── sandbox3.js                    
+│   ├── opt                      
+│   │   ├── opt1.d.ts           
+│   │   ├── opt1.js              
+│   │   ├── opt2.d.ts           
+│   │   └── opt2.js              
+│   └── comm                     
+│       ├── comm1.d.ts           
+│       ├── comm1.js              
+│       ├── comm2.d.ts           
+│       └── comm2.js              
+├── es                            
+│   ├── index.js                 
+│   ├── index.d.ts               
+│   ├── core                     
+│   │   ├── core.d.ts           
+│   │   └── core.js              
+│   ├── sandbox                   
+│   │   ├── sandbox1.d.ts       
+│   │   ├── sandbox1.js          
+│   │   ├── sandbox2.d.ts       
+│   │   ├── sandbox2.js          
+│   │   ├── sandbox3.d.ts       
+│   │   └── sandbox3.js                 
+│   ├── opt                      
+│   │   ├── opt1.d.ts           
+│   │   ├── opt1.js              
+│   │   ├── opt2.d.ts           
+│   │   └── opt2.js              
+│   └── comm                     
+│       ├── comm1.d.ts           
+│       ├── comm1.js              
+│       ├── comm2.d.ts           
+│       └── comm2.js
+~~~
+此时可以将整个构建的 `lib` 目录发布成 `NPM` 库包，并在 `lib` 目录下新增 `package.json`：
+~~~json
+// 可以设计构建脚本将 lib 目录平级的 package.json 拷贝到 lib 目录下
+{
+  "name": "micro-framework",
+  "version": "1.0.0",
+  "description": "",
+  
+  // 设置 CommonJS 的默认引入路径（不支持 Tree Shaking）
+  "main": "./lib/commonjs/index.js",
+  
+  // 设置 ES Modules 的默认引入路径（支持 Tree Shaking）
+  // 注意这里发布的包的规范：导入导出使用 ES Modules 规范，其余都是 ES5 语法
+  "module": "./lib/es/index.js",
+  
+  "scripts": {
+    "build": "gulp"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ziyi2/micro-framework.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/ziyi2/micro-framework/issues"
+  },
+  "homepage": "https://github.com/ziyi2/micro-framework#readme",
+  "dependencies": {
+    "@types/lodash": "^4.14.191",
+    "lodash": "^4.17.21"
+  },
+  "devDependencies": {
+    "gulp": "^4.0.2",
+    "gulp-typescript": "^6.0.0-alpha.1",
+    "merge2": "^1.4.1",
+    "typescript": "^4.9.5"
+  }
+}
+~~~
+发布 `NPM` 包后，可以在 `Web` 应用中通过如下方式进行引入：
+~~~ts
+// 总体引入方式
+// Web 应用所在打包工具如果支持识别 package.json 中的 module 字段，会优先使用 ES Modules 模块规范，并启用 Tree Shaking
+// Web 应用所在打包工具如果不支持识别 package.json 中的 module 字段，那么默认会识别 main 字段启用 CommonJS 规范
+import micro from 'micro-framework' 
+
+// 按需引入方式
+import sandbox1 from 'micro-framework/commonjs/sandbox/sandbox1'
+import sandbox1 from 'micro-framework/es/sandbox/sandbox1'
+~~~
+::: tip
+可以发现按需引入的方式没有 `Lodash` 来的简单方便，需要识别多层目录结构，那么是否可以设计一个构建脚本，将目录结构进行平铺发布呢？接下来的课程可能属于定制化内容，不算是一种通用的设计结构，感兴趣的同学可以继续了解。
+:::
+
+### 平铺构建
+
+
+
+
+
+
+
