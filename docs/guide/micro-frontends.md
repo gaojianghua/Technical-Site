@@ -8050,8 +8050,579 @@ import sandbox1 from 'micro-framework/es/sandbox/sandbox1'
 :::
 
 ### 平铺构建
+这里通过手动设计加深大家对于构建设计的理解，从而可以设计更加定制的构建脚本。平铺构建并不一定适合微前端框架的设计，但是非常适合类似于 `Lodash` 的工具库设计。
+
+如果大家希望将按需引入的路径变得更加简洁，例如：
+~~~ts
+// CommonJS 按需引入方式（类似于 Lodash 的引入方式）
+// 原有引入方式：import sandbox1 from 'micro-framework/commonjs/sandbox/sandbox1'
+import sandbox1 from 'micro-framework/sandbox1'
+// ES Modules 按需引入
+// 原有引入方式：import sandbox1 from 'micro-framework/es/sandbox/sandbox1'
+import sandbox1 from 'micro-framework-es/sandbox1'
+~~~
+此时可以将微前端框架库像 `Lodash` 一样发布成两个 NPM 库包，一个库包（`micro-framework`）支持 `CommonJS` 规范，另外一个库包（`micro-framework-es`）支持 `ES Modules` 规范，从而可以让开发者自主进行库包选择。
+
+为了实现上述功能，需要设计一个构建脚本，该脚本能够平铺目录结构。这里对 `Gulp` 构建进行更改，新增 `Node.js` 构建脚本和构建参数，从而可以包裹原有的 `gulp` 构建命令：
+~~~ts
+{
+  "main": "index.js",
+  "scripts": {
+    // package.json 下原有的构建命令
+    // "build": "gulp"
+    // 将其更改为使用 Node 脚本执行构建
+    "build": "ts-node build/build.ts"
+  },
+  // https://docs.npmjs.com/cli/v8/configuring-npm/package-json#config
+  // 构建配置，可以在代码中通过 process.env.xxx 获取
+  // 这里可以额外扩展其他构建配置项
+  "config": {
+    // 是否平铺
+    "flat": true
+  },
+  
+  // 由于需要设计 Node.js 脚本，这里用于安装依赖时提示 Node.js 版本要求
+  "engines": { "node": ">=16.18.1" },
+  "engineStrict": true
+}
+~~~
+为了支持使用 `ts-node`，需要在 `tsconfig.json` 中配置对 `Node` 的支持：
+~~~ts
+// tsconfig.json
+// 中文查看：https://www.tslang.cn/docs/handbook/tsconfig-json.html
+// 英文查看：https://www.typescriptlang.org/docs/handbook/tsconfig-json.html
+{
+  // ts-node 文档：https://github.com/TypeStrong/ts-node
+  // tsconfig extends：https://github.com/tsconfig/bases
+  "extends": "ts-node/node16/tsconfig.json",
+
+  "compilerOptions": {
+    // 模块解析策略：Node 和 Classic
+    // 中文查看：https://www.tslang.cn/docs/handbook/module-resolution.html
+    // 英文查看：https://www.typescriptlang.org/docs/handbook/module-resolution.html
+    // 一般情况下都是使用 Node，简单理解为参考 Node 的 require 算法解析引入模块的路径
+    "moduleResolution": "node",
+    // 允许从没有设置默认导出的模块中默认导入
+    "allowSyntheticDefaultImports": true,
+    // 删除所有注释，除了以 /!* 开头的版权信息
+    "removeComments": true,
+    // 生成相应的 .d.ts文件
+    "declaration": true,
+    // 启用所有严格类型检查选项。启用 --strict 相当于启用 --noImplicitAny, --noImplicitThis, --alwaysStrict， --strictNullChecks, --strictFunctionTypes 和 --strictPropertyInitialization
+    "strict": true,
+    // 禁止对同一个文件的不一致的引用
+    "forceConsistentCasingInFileNames": true,
+    // 报错时不生成输出文件
+    "noEmitOnError": true,
+    // 编译过程中需要引入的库文件的列表
+    "lib": ["DOM", "ES2015.Promise", "ES6", "ESNext"],
+    // 允许使用 import 代替 import *
+    // 英文查看：https://www.typescriptlang.org/tsconfig#esModuleInterop
+    "esModuleInterop": true,
+    "module": "CommonJS",
+    // 解析非相对模块名的基准目录
+    "baseUrl": ".",
+    // 将每个文件作为单独的模块
+    "isolatedModules": false,
+    // 允许引入 .json 扩展的模块文件
+    "resolveJsonModule": true,
+    // 启动 decorators
+    "experimentalDecorators": true
+  },
+  // 编译器包含的文件列表，可以使用 glob 匹配模式
+  "include": ["src/**/*"],
+  // 编译器排除的文件列表
+  "exclude": ["node_modules"]
+}
+~~~
+::: tip
+如果使用的是 `Node` 其他版本，可以查看 [Centralized Recommendations for TSConfig bases](https://github.com/tsconfig/bases) 的相关配置。
+:::
+将所有的构建和发布脚本放置在文件夹 `build` 下，方便后续的维护管理。构建脚本的目录结构设计如下所示：
+~~~shell
+build
+├── base.ts                      # 可以被构建、发布等脚本进行继承使用
+├── build.ts                     # 构建脚本
+├── config.ts                    # 配置，主要被 base 进行消费
+├── gulpfile.ts                  # Gulp 构建配置文件
+└── type.ts                      # 接口、枚举说明
+~~~
+接下来重点看一下平铺构建目录的脚本设计，`type.ts` 用于声明类型：
+~~~ts
+// type.ts
+import { Settings } from "gulp-typescript";
+
+export enum TargetTypeEnum {
+  CommonJS = "CommonJS",
+  ESModule = "ESModule",
+}
+
+export interface ITarget {
+  name: string;
+  type: TargetTypeEnum;
+  tsconfig: Settings;
+  dest: string;
+}
+~~~
+`config.ts` 用于配置 `Gulp` 构建任务的信息：
+~~~ts
+// config.ts
+import path from "path";
+import { TargetTypeEnum } from "./type";
+
+// 输出规范的目标集（这里可能命名成 gulpTasks 更合适）
+export const targets = [
+  {
+    name: "build commonjs",
+    type: TargetTypeEnum.CommonJS,
+    tsconfig: {
+      // 指定输出的模块化标准，例如课程中常说的 CommonJS 和 ES Modules（ES2015/ES6/ES2020）
+      // 中文查看（模块概念）：https://www.tslang.cn/docs/handbook/modules.html
+      // 英文查看（模块编译示例）：https://www.typescriptlang.org/tsconfig/#module
+      module: "CommonJS",
+      // 指定输出的 JS 标准（ES3/ES5/ES6/.../ESNext）
+      // 在课程中已经讲解 ES5 能够兼容大部分的浏览器
+      target: "ES5",
+    },
+    dest: path.join(__dirname, "../lib/commonjs"),
+  },
+  {
+    name: "build esmodule",
+    type: TargetTypeEnum.ESModule,
+    tsconfig: {
+      // 模块化输出 ES Modules 规范，其余代码编译成 ES5 标准
+      module: "ES2015",
+      target: "ES5",
+    },
+    dest: path.join(__dirname, "../lib/es"),
+  },
+];
+~~~
+`base.ts` 可以被构建和发布脚本（后续课程设计）共享：
+~~~ts
+// base.ts
+import path from "path";
+import { targets } from "./config";
+import { ITarget } from "./type";
+
+export class Base {
+  public rootPath: string = "";
+  public destPaths: string[] = [];
+
+  constructor() {
+    this.rootPath = path.join(__dirname, "../");
+    this.destPaths = targets.map((target) => target.dest);
+  }
+
+  getTargets(): ITarget[] {
+    return targets;
+  }
+
+  // 是否需要平铺
+  isFlat() {
+    // package.json 中的 config 参数
+    // https://docs.npmjs.com/cli/v8/configuring-npm/package-json#config
+    return process.env.npm_package_config_flat;
+  }
+}
+~~~
+`gulpfile.ts` 是 `Gulp` 的配置文件：
+~~~ts
+// gulpfile.ts
+import gulp from "gulp";
+import ts from "gulp-typescript";
+import merge2 from "merge2";
+import { Base } from "./base";
+import { ITarget } from "./type";
+
+class GulpBuild extends Base {
+  constructor() {
+    super();
+  }
+
+  build(target: ITarget) {
+    const tsProject = ts.createProject("../tsconfig.json", target.tsconfig);
+    // tsProject.src() 默认会基于 tsconfig.json 中的 files、exclude 和 include 指定的源文件进行编译
+    const tsResult = tsProject.src().pipe(tsProject());
+    const tsDest = gulp.dest(target.dest, { overwrite: true });
+    return merge2([tsResult.dts.pipe(tsDest), tsResult.js.pipe(tsDest)]);
+  }
+
+  run() {
+    const targets = this.getTargets();
+    targets.forEach((target) =>
+      gulp.task(target.name, () => this.build(target))
+    );
+    gulp.task("default", gulp.parallel(targets.map((target) => target.name)));
+  }
+}
+
+new GulpBuild().run();
+~~~
+`build.ts` 是核心的构建脚本，它首先会清空构建目录，其次会同步执行 `gulp` 命令（指定配置文件为 `gulpfile.ts`）进行构建，最后对构建后的文件进行平铺处理：
+~~~ts
+// build.ts
+import path from "path";
+import fs from "fs-extra";
+import shell from "shelljs";
+import glob from "glob";
+import { Base } from "./base";
+import { TargetTypeEnum } from "./type";
+
+// package.json 中的 config 参数
+// https://docs.npmjs.com/cli/v8/configuring-npm/package-json#config
+const flat = process.env.npm_package_config_flat;
+
+class Build extends Base {
+  constructor() {
+    super();
+  }
+
+  run() {
+    // 构建初始化
+    this.init();
+    // 同步执行构建
+    this.build();
+    // 平铺构建
+    this.flat();
+  }
+
+  init() {
+    // 清空 lib 目录下的 commonjs 和 es 文件夹
+    this.destPaths?.forEach((destPath) => {
+      fs.removeSync(destPath);
+      fs.emptyDirSync(destPath);
+    });
+  }
+
+  build() {
+    // 构建参数
+    // --gulpfile: 指定 gulpfile.ts 的文件路径
+    // --color: 构建时打印带颜色的日志
+    shell.exec(
+      `gulp --gulpfile ${path.join(__dirname, "gulpfile.ts")} --color `,
+      {
+        // 构建同步执行
+        async: false,
+        // 构建失败则退出进程（例如 TypeScript 类型检查失败），停止后续的平铺构建处理
+        fatal: true,
+      }
+    );
+  }
+
+  flat() {
+    if (!this.isFlat()) {
+      return;
+    }
+
+    // 对 commonjs 规范进行平铺处理（大家可以自行设计一下 ES Modules 的平铺处理）
+    const targets = this.getTargets();
+    const commonjsTarget = targets?.find(
+      (target) => target.type === TargetTypeEnum.CommonJS
+    );
+    if (!commonjsTarget) {
+      return;
+    }
+    const destPath = commonjsTarget.dest;
+    // 同步获取构建目录下的所有文件
+    // 例如：files:  [
+    //     'lib/commonjs/index.js',
+    //     'lib/commonjs/core/core.js',
+    //     ...
+    //   ]
+    const files = glob.globSync(`${destPath}/**/*.js`);
+
+    // 如果存在相同的文件名称，则清空构建目录，并退出构建处理
+    if (this.hasSameFileName(files)) {
+      this.init();
+      return process.exit(1);
+    }
+
+    // 进行构建文件的平铺处理
+    this.buildFlatFiles(files, destPath);
+
+    // 拷贝声明文件到一级目录下
+    this.copyDeclarationFiles(destPath);
+
+    // 清空构建的子文件夹
+    this.emptyBuildSubDir(destPath);
+  }
+
+  hasSameFileName(files: string[]): boolean {
+    // 目录平铺后必须确保不能产生同名文件，例如 lib/commonjs/index.js 和 lib/commonjs/core/index.js
+    const fileRepeatMap: { [key: string]: string[] } = {};
+    return files.some((file) => {
+      // 将 lib/commonjs/index.js 转化为 index.js
+      const fileName = file.substring(file.lastIndexOf("/") + 1);
+      const fileRepeatArr = fileRepeatMap[fileName];
+      // 存储 index.js 为文件名的文件路径数组，例如 { "index.js": ["lib/commonjs/index.js"] }
+      fileRepeatMap[fileName] = fileRepeatArr
+        ? [...fileRepeatArr, file]
+        : [file];
+      // 如果 index.js 的文件路径存在多个，则提示错误并退出进程，例如 { "index.js": ["lib/commonjs/index.js", "lib/commonjs/core/index.js" ] }
+      if (fileRepeatMap[fileName]?.length > 1) {
+        this.logError(`[编译失败] 编译不允许存在相同的文件名称: ${fileName}`);
+        this.logError(
+          `[编译失败] 相同的文件名称路径：${fileRepeatMap[fileName].join(", ")}`
+        );
+        return true;
+      }
+      return false;
+    });
+  }
+
+  buildFlatFiles(files: string[], destPath: string) {
+    // 如果没有同名文件，则进行文件平铺
+    files.forEach((file) => {
+      // 获取构建文件的目标代码
+      let code = fs.readFileSync(file).toString();
+
+      // 正则说明：
+      // (?<=require(")(.*?)(?=")) 主要分为三部分: (?<=require(")、(.*?)、(?="))
+      // (?<=require("): 反向肯定预查, ?<=pattern, 用于匹配以 require(" 开头的字符串，注意 require(" 是转义后的字符串，匹配的是 require("
+      // (.*?): 用于匹配最短路径的内容，其中 ? 用于非贪婪匹配, * 是贪婪匹配，? 是只能匹配 0 ~ 1 次
+      // (?=")): 正向肯定预查，?=pattern, 用于匹配以 ") 结尾的字符串，注意 ") 是转义后的字符串，匹配的是 ")
+
+      // 正则场景解释:
+      // 例如压缩后的代码： require("./core/core"),fs_1=__importDefault(require("fs")
+      // 通过 (.*) 匹配后默认会匹配到 ./core/core"),fs_1=__importDefault(require("fs
+      // 通过 (.*?) 匹配后默认会匹配到 ./core/core 和 fs
+      // 其中 ? 的作用用于贪婪匹配中的 0 ~ 1 次, 从而阻止了 * 的 0 ~ n 次贪婪匹配
+
+      // 平铺目录后需要将引入路径进行更改，因为平铺后目标文件的位置发送了变化，因此被引用的路径也需要改变
+      // 例如在 src/index.ts 中需要引入 core/core.ts，使用 gulp 构建后是 require("./core/core");
+      // 但是目录平铺之后 index.js 和 core.js 同级，因此希望将目标代码更改为 require("./core"); 需要去掉中间的目录路径 core
+
+      //   ├── src
+      //   │   ├── core/
+      //   │   │   ├── core1/
+      //   │   │   │   └── core1.ts
+      //   │   │   └── core.ts
+      //   │   └── index.ts
+      //   ├── lib
+      //   │   ├── commonjs/
+      //   │   │   ├── package.json
+      //   │   │   ├── core.ts
+      //   │   │   ├── core1.ts
+      //   │   │   └── index.ts
+
+      // 转换引入路径，例如: require('./core/core') => require('./core')
+      code = code.replace(/(?<=require(")(.*?)(?="))/g, (match) => {
+        if (!match) {
+          return match;
+        }
+        // 例如： match = './core/core'
+        const paths = match.split("/");
+        // 获取文件名
+        const fileName = paths.concat().pop();
+        // 不需要更改的引用路径的情况，例如 require("lodash")
+        if (!fileName || paths.length === 1) {
+          return match;
+        }
+        this.logInfo(
+          `[编译信息] 在文件 ${file} 中匹配和替换的 require 路径: ${match} => ./${fileName}`
+        );
+        // 平铺后直接引入同级目录下的文件
+        return `./${fileName}`;
+      });
+
+      // TODO: 如果需要生成 sourcemap，则 sourcemap 的路径也需要处理
+
+      // 删除当前目录下的目标文件，例如 lib/commonjs/core/core.js
+      fs.rmSync(file);
+
+      // 将 lib/commonjs/core/core.js 转化为 lib/commonjs/core.js
+      const fileName = file.substring(file.lastIndexOf("/") + 1);
+      // 生成平级文件的写入路径
+      const fileOutputPath = path.join(destPath, fileName);
+      // 写入更改后的目标代码
+      fs.writeFileSync(fileOutputPath, code);
+    });
+  }
+
+  copyDeclarationFiles(destPath: string) {
+    const files = glob.globSync(`${destPath}/**/*.d.ts`);
+    files.forEach((file) => {
+      // 将 lib/commonjs/index.js 转化为 index.js
+      const fileName = file.substring(file.lastIndexOf("/") + 1);
+      if (file !== path.join(destPath, fileName)) {
+        fs.copySync(file, path.join(destPath, fileName));
+        fs.rmSync(file);
+      }
+    });
+  }
+
+  emptyBuildSubDir(destPath: string) {
+    // 平铺完成后，匹配文件夹并删除空的文件夹
+    // 匹配文件夹：to match only directories, simply put a / at the end of the pattern.
+    // 反转以后可以从内到外进行文件夹删除（先删除内部的子文件夹）
+    const dirs = glob.globSync(`${destPath}/**/`).reverse();
+
+    dirs.forEach((dir) => {
+      const subdirs = fs.readdirSync(dir);
+      // 如果文件夹为空，则删除文件夹（注意从内到外进行删除，core/core1 的情况下先删除 core1 文件夹，再删除 core 文件夹）
+      if (!subdirs?.length) {
+        fs.rmdirSync(dir);
+      }
+    });
+  }
+}
+
+new Build().run();
+~~~
+::: tip
+如果 `build` 目录的设计非常通用，可以发布成 `NPM` 包进行处理（例如 `create-react-app` 中的 [react-scripts](https://github.com/facebook/create-react-app/tree/main/packages/react-scripts)），从而可以在各种需要快速创建按需加载的工具库项目中进行构建脚本的复用。除此之外，如果构建脚本的参数非常多，也可以将构建参数提供成配置文件的方式，例如在项目根目录中提供一个 `ziyi-sdk.config.js`，从而可以在构建脚本中引入声明的配置文件进行构建配置读取。
+:::
+上述构建脚本 `build.ts` 主要做了几件事情：
+- 构建脚本的参数处理，例如 `flat` 配置，从而可以满足更灵活的需求；
+- 使用 `shelljs` 同步执行 `gulp` 构建命令；
+- 构建完成后进行构建目录的平铺处理，从而简化按需引入的路径。
+
+执行 `npm run build` 后可以进行构建处理，如下所示：
+~~~shell
+npm run build
+
+> micro-framework@1.0.0 build
+> ts-node build/build.ts
+
+[09:06:56] Requiring external module ts-node/register
+[09:06:56] Working directory changed to ~/Desktop/Github/micro-framework/build
+[09:06:57] Using gulpfile ~/Desktop/Github/micro-framework/build/gulpfile.ts
+[09:06:57] Starting 'default'...
+[09:06:57] Starting 'build commonjs'...
+[09:06:57] Starting 'build esmodule'...
+[09:06:58] Finished 'build esmodule' after 709 ms
+[09:06:58] Finished 'build commonjs' after 710 ms
+[09:06:58] Finished 'default' after 711 ms
+[编译信息] 在文件 /Users/zhuxiankang/Desktop/Github/micro-framework/lib/commonjs/index.js 中匹配和替换的 require 路径:  ./comm/comm1 => ./comm1
+[编译信息] 在文件 /Users/zhuxiankang/Desktop/Github/micro-framework/lib/commonjs/index.js 中匹配和替换的 require 路径:  ./comm/comm2 => ./comm2
+[编译信息] 在文件 /Users/zhuxiankang/Desktop/Github/micro-framework/lib/commonjs/index.js 中匹配和替换的 require 路径:  ./core/core => ./core
+[编译信息] 在文件 /Users/zhuxiankang/Desktop/Github/micro-framework/lib/commonjs/index.js 中匹配和替换的 require 路径:  ./nav/nav => ./nav
+[编译信息] 在文件 /Users/zhuxiankang/Desktop/Github/micro-framework/lib/commonjs/index.js 中匹配和替换的 require 路径:  ./opt/opt1 => ./opt1
+[编译信息] 在文件 /Users/zhuxiankang/Desktop/Github/micro-framework/lib/commonjs/index.js 中匹配和替换的 require 路径:  ./opt/opt2 => ./opt2
+[编译信息] 在文件 /Users/zhuxiankang/Desktop/Github/micro-framework/lib/commonjs/index.js 中匹配和替换的 require 路径:  ./sandbox/sandbox1 => ./sandbox1
+[编译信息] 在文件 /Users/zhuxiankang/Desktop/Github/micro-framework/lib/commonjs/index.js 中匹配和替换的 require 路径:  ./sandbox/sandbox2 => ./sandbox2
+[编译信息] 在文件 /Users/zhuxiankang/Desktop/Github/micro-framework/lib/commonjs/index.js 中匹配和替换的 require 路径:  ./sandbox/sandbox3 => ./sandbox3
+[编译信息] 在文件 /Users/zhuxiankang/Desktop/Github/micro-framework/lib/commonjs/core/core.js 中匹配和替换的 require 路径:  ./core1/core1 => ./core1
+~~~
+此时会在 `lib` 目录下生成 `commonjs` 和 `es` 文件目录，其中 `commonjs` 做了平铺处理：
+~~~shell
+# 平铺前
+lib
+├── commonjs                      
+│   ├── index.js                 
+│   ├── index.d.ts               
+│   ├── core                     
+│   │   ├── core.d.ts           
+│   │   └── core.js              
+│   ├── sandbox                   
+│   │   ├── sandbox1.d.ts        
+│   │   ├── sandbox1.js          
+│   │   ├── sandbox2.d.ts        
+│   │   ├── sandbox2.js          
+│   │   ├── sandbox3.d.ts        
+│   │   └── sandbox3.js                      
+│   ├── opt                      
+│   │   ├── opt1.d.ts           
+│   │   ├── opt1.js              
+│   │   ├── opt2.d.ts           
+│   │   └── opt2.js              
+│   └── comm                     
+│       ├── comm1.d.ts           
+│       ├── comm1.js              
+│       ├── comm2.d.ts           
+│       └── comm2.js              
 
 
+# 平铺后
+lib
+├── commonjs                      
+│   ├── comm1.d.ts                
+│   ├── comm1.js                  
+│   ├── comm2.d.ts                
+│   ├── comm2.js                  
+│   ├── core.d.ts                
+│   ├── core.js                   
+│   ├── index.d.ts               
+│   ├── index.js     
+│   ├── nav.d.ts                 
+│   ├── nav.js    
+│   ├── op1.d.ts   
+│   ├── op1.js
+│   ├── op2.d.ts  
+│   ├── op2.js
+│   ├── sandbox1.d.ts
+│   ├── sandbox1.js  
+│   ├── sandbox2.d.ts
+│   ├── sandbox2.js  
+│   ├── sandbox3.d.ts
+│   └── sandbox3.js
+~~~
+需要注意，在设计的过程中一定要考虑检查同名文件，因为在 `commonjs` 下平铺后不应该存在两个同名文件，例如：
+~~~shell
+├── src                            
+│   ├── index.js                 
+│   ├── core                     
+│   │    └── index.js  # 同名文件，和 src/index.js 同名
+~~~
+执行构建时，需要将同名文件识别出来，并进行构建失败提醒：
+~~~shell
+npm run build
+
+> micro-framework@1.0.0 build
+> ts-node build/build.ts
+
+[09:40:47] Requiring external module ts-node/register
+[09:40:47] Working directory changed to ~/Desktop/Github/micro-framework/build
+[09:40:48] Using gulpfile ~/Desktop/Github/micro-framework/build/gulpfile.ts
+[09:40:48] Starting 'default'...
+[09:40:48] Starting 'build commonjs'...
+[09:40:48] Starting 'build esmodule'...
+[09:40:48] Finished 'build commonjs' after 641 ms
+[09:40:48] Finished 'build esmodule' after 642 ms
+[09:40:48] Finished 'default' after 643 ms
+[编译失败] 编译不允许存在相同的文件名称: index.js
+[编译失败] 相同的文件名称路径：/Users/zhuxiankang/Desktop/Github/micro-framework/lib/commonjs/index.js, /Users/zhuxiankang/Desktop/Github/micro-framework/lib/commonjs/core/index.js
+~~~
+当然使用 `gulp-typescript`，相对于 `swc` 以及 `babel` 的好处是可以在构建时进行类型检查，例如在 `src/index.ts` 中新增如下代码：
+~~~ts
+function a(b: number) {
+  console.log(b);
+}
+
+// a 函数明显要求传入 number 类型的数据
+a("111");
+~~~
+执行构建时，会直接报错并停止构建：
+~~~shell
+ npm run build
+
+> micro-framework@1.0.0 build
+> ts-node build/build.ts
+
+[09:49:05] Requiring external module ts-node/register
+[09:49:05] Working directory changed to ~/Desktop/Github/micro-framework/build
+[09:49:06] Using gulpfile ~/Desktop/Github/micro-framework/build/gulpfile.ts
+[09:49:06] Starting 'default'...
+[09:49:06] Starting 'build commonjs'...
+[09:49:06] Starting 'build esmodule'...
+../src/index.ts(15,3): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+TypeScript: 1 semantic error
+TypeScript: emit failed
+[09:49:06] 'build commonjs' errored after 314 ms
+[09:49:06] Error: TypeScript: Compilation failed
+    at Output.mightFinish (/Users/zhuxiankang/Desktop/Github/micro-framework/node_modules/gulp-typescript/release/output.js:131:43)
+    at Output.finish (/Users/zhuxiankang/Desktop/Github/micro-framework/node_modules/gulp-typescript/release/output.js:123:14)
+    at ProjectCompiler.inputDone (/Users/zhuxiankang/Desktop/Github/micro-framework/node_modules/gulp-typescript/release/compiler.js:97:29)
+    at CompileStream.end (/Users/zhuxiankang/Desktop/Github/micro-framework/node_modules/gulp-typescript/release/project.js:125:31)
+    at DestroyableTransform.onend (/Users/zhuxiankang/Desktop/Github/micro-framework/node_modules/readable-stream/lib/_stream_readable.js:577:10)
+    at Object.onceWrapper (node:events:627:28)
+    at DestroyableTransform.emit (node:events:525:35)
+    at DestroyableTransform.emit (node:domain:552:15)
+    at endReadableNT (/Users/zhuxiankang/Desktop/Github/micro-framework/node_modules/readable-stream/lib/_stream_readable.js:1010:12)
+    at processTicksAndRejections (node:internal/process/task_queues:83:21)
+[09:49:06] 'default' errored after 316 ms
+~~~
 
 
 
