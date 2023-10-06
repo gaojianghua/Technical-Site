@@ -2,7 +2,7 @@
  * @Author: 高江华 g598670138@163.com
  * @Date: 2023-04-11 16:57:52
  * @LastEditors: 高江华
- * @LastEditTime: 2023-10-05 11:59:53
+ * @LastEditTime: 2023-10-06 09:39:49
  * @Description: file content
 -->
 # Flutter
@@ -4781,6 +4781,25 @@ class _ColorTweenAnimationState extends State<ColorTweenAnimation> {
   }
 }
 ~~~
+## 生命周期
+1. **main()函数**：这是应用程序的入口点，它负责运行整个`Flutter`应用程序。
+
+2. **runApp()函数**：在`main`函数中调用，它用于启动`Flutter`应用程序，并加载应用程序的根组件（`Widget`）。
+
+3. **StatelessWidget的build()方法**：当调用`runApp()`函数后，`Flutter`会调用根组件的`build()`方法来构建应用程序的UI界面。
+
+4. **StatefulWidget的createState()方法**：当需要管理组件状态时，可以使用`StatefulWidget`，并在`createState()`方法中返回一个`State`对象。
+
+5. **State的initState()方法**：在`State`对象被创建后立即调用，可以在这里进行一些初始化操作，比如获取数据、订阅事件等。
+
+6. **State的build()方法**：与`StatelessWidget的build()`方法类似，用于构建组件的UI界面。
+
+7. **State的didChangeDependencies()方法**：在`State`对象依赖的信息发生变化时调用，可以在这里更新组件的状态。
+
+8. **State的didUpdateWidget()方法**：当组件的配置发生变化时调用，可以在这里对比新旧属性，做出相应的处理。
+
+9. **State的dispose()方法**：当组件被销毁时调用，可以在这里释放资源、取消订阅等清理操作。
+
 ## 路由
 `Flutter` 中的路由通俗的讲就是页面跳转。在 `Flutter` 中通过 `Navigator` 组件管理路由导航。
 并提供了管理堆栈的方法。如：`Navigator.push` 和 `Navigator.pop`。
@@ -6094,16 +6113,103 @@ class NotFoundPage extends StatelessWidget {
 上述示例中，我们使用 `GetPage` 来定义了三个页面的路由：`HomePage`、`AboutPage` 和 `SettingsPage`，并将它们添加到 `getPages` 中。其中 `initialRoute` 指定了初始路由为 `/`，`defaultTransition` 设置了默认的页面过渡效果。如果访问了未定义的路由，将会展示 `NotFoundPage`。
 
 ### 依赖管理
+`GetX` 提供了依赖注入功能，允许您在需要使用依赖的地方轻松获取它们。您可以使用 `Get.put()` 方法将一个对象注册到 `GetX` 的依赖容器中，并通过 `Get.find()` 方法来获取已注册的依赖。
 
+首先，我们创建一个 `UserService` 类，这个类将被注入到我们的应用程序中：
+~~~dart
+class UserService {
+  final String user = 'John Doe';
+}
+~~~
+然后，我们在 `main` 函数中使用 `Get.put` 方法将 `UserService` 实例注入到我们的应用程序中：
+~~~dart
+void main() {
+  Get.put(UserService());
+  runApp(MyApp());
+}
+~~~
+在 `MyApp` 类中，我们使用 `GetMaterialApp` 替换 `MaterialApp`：
+~~~dart
+class MyApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return GetMaterialApp(
+      home: HomePage(),
+    );
+  }
+}
+~~~
+在 `HomePage` 类中，我们使用 `Get.find` 方法获取 `UserService` 实例，并使用它来显示用户的名字：
+~~~dart
+class HomePage extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final userService = Get.find<UserService>();
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Home Page'),
+      ),
+      body: Center(
+        child: Text('User: ${userService.user}'),
+      ),
+    );
+  }
+}
+~~~
+在 `GetX` 中，`Get.lazyPut` 方法用于延迟初始化依赖，只有在第一次使用时才会创建依赖。`Get.delete` 方法用于删除依赖。
 
-
-
-
-
-
-
-
-
-
+首先，我们创建一个 `UserService` 类，这个类将被注入到我们的应用程序中：
+~~~dart
+class UserService {
+  final String user = 'John Doe';
+}
+~~~
+然后，我们在 `main` 函数中使用 `Get.lazyPut` 方法将 `UserService` 实例注入到我们的应用程序中：
+~~~dart
+void main() {
+  Get.lazyPut(() => UserService());
+  runApp(MyApp());
+}
+~~~
+在 `MyApp` 类中，我们使用 `GetMaterialApp` 替换 `MaterialApp`：
+~~~dart
+class MyApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return GetMaterialApp(
+      home: HomePage(),
+    );
+  }
+}
+~~~
+在 `HomePage` 类中，我们使用 `Get.find` 方法获取 `UserService` 实例，并使用它来显示用户的名字。然后，我们添加一个按钮，点击按钮时删除 `UserService` 实例：
+~~~dart
+class HomePage extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final userService = Get.find<UserService>();
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Home Page'),
+      ),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text('User: ${userService.user}'),
+            ElevatedButton(
+              child: Text('Delete User Service'),
+              onPressed: () {
+                Get.delete<UserService>();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+~~~
+在这个示例中，我们创建了一个 `UserService` 类，并使用 `Get.lazyPut` 方法将其实例注入到我们的应用程序中。然后，我们在 `HomePage` 类中获取 `UserService` 实例，并使用它来显示用户的名字。最后，我们添加了一个按钮，点击按钮时删除 `UserService` 实例。
 
 
