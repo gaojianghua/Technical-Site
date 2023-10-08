@@ -2,7 +2,7 @@
  * @Author: 高江华 g598670138@163.com
  * @Date: 2023-04-11 16:57:52
  * @LastEditors: 高江华
- * @LastEditTime: 2023-10-06 09:39:49
+ * @LastEditTime: 2023-10-08 12:08:00
  * @Description: file content
 -->
 # Flutter
@@ -6212,4 +6212,22 @@ class HomePage extends StatelessWidget {
 ~~~
 在这个示例中，我们创建了一个 `UserService` 类，并使用 `Get.lazyPut` 方法将其实例注入到我们的应用程序中。然后，我们在 `HomePage` 类中获取 `UserService` 实例，并使用它来显示用户的名字。最后，我们添加了一个按钮，点击按钮时删除 `UserService` 实例。
 
-
+## COCOPODS 换源
+- 进入镜像源目录：
+  ~~~shell
+  cd ~/.cocoapods/repos
+  ~~~
+- 删除原有的源：
+  ~~~shell
+  pod repo remove <镜像源名称>
+  ~~~
+- 安装清华的镜像源：
+  ~~~shell
+  pod repo add <镜像源名称>  https://mirrors.tuna.tsinghua.edu.cn/git/CocoaPods/Specs.git
+  # 或者
+  git clone https://mirrors.tuna.tsinghua.edu.cn/git/CocoaPods/Specs.git <镜像源名称>
+  ~~~
+- 在项目的 `podfile` 文件中添加:
+  ~~~shell
+  source 'https://mirrors.tuna.tsinghua.edu.cn/git/CocoaPods/Specs.git'
+  ~~~
