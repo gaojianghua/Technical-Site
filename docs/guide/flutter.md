@@ -2,7 +2,7 @@
  * @Author: 高江华 g598670138@163.com
  * @Date: 2023-04-11 16:57:52
  * @LastEditors: 高江华
- * @LastEditTime: 2023-10-08 12:08:00
+ * @LastEditTime: 2023-10-12 17:21:15
  * @Description: file content
 -->
 # Flutter
@@ -6231,3 +6231,50 @@ class HomePage extends StatelessWidget {
   ~~~shell
   source 'https://mirrors.tuna.tsinghua.edu.cn/git/CocoaPods/Specs.git'
   ~~~
+
+## 错误收集
+**PlatformException (PlatformException(channel-error, Unable to establish connection on channel., null, null))**
+- 原因：表示在 `Flutter` 应用程序中无法建立与平台（原生代码）之间的通信连接。
+- 解决：
+  
+  在 `ios` 下的 `Runner` 中的 `AppDelegate.swift` 文件中添加 `GeneratedPluginRegistrant.register(with: self.flutterEngine!)` ：
+  ~~~swift
+  import UIKit
+  import Flutter
+
+  @UIApplicationMain
+  class AppDelegate: FlutterAppDelegate {
+    override func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+      GeneratedPluginRegistrant.register(with: self.flutterEngine!)
+      
+      self.window = UIWindow(frame: UIScreen.main.bounds)
+      // 其他初始化配置...
+      
+      return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+    }
+  }
+  ~~~
+  在 `android > app > src > main > kotlin` 中的 `MainActivity.kt` 文件中添加 `registerWith(registrarFor("com.example.flutter_app"))` ：
+  ~~~kotlin
+  package com.example.flutter_shop
+
+  import io.flutter.embedding.android.FlutterActivity
+  import io.flutter.embedding.engine.FlutterEngine
+  import io.flutter.plugins.GeneratedPluginRegistrant
+
+  class MainActivity: FlutterActivity() {
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+      super.configureFlutterEngine(flutterEngine)
+      GeneratedPluginRegistrant.registerWith(flutterEngine)
+    }
+  }
+  ~~~
+
+
+
+
+
+
+
+
+
