@@ -2221,6 +2221,179 @@ Nest (NestJS) 是一个用于构建高效、可扩展的 Node.js 服务器端应
     }
   }
   ~~~
+## Nest 中使用 Prisma
+- 安装 prisma 包
+  ~~~shell
+  npm install prisma --save-dev
+  ~~~
+- 执行 init 创建 schema 文件
+  ~~~shell
+  npx prisma init
+  ~~~
+- 修改 .env 的配置
+  ~~~js
+  DATABASE_URL="mysql://root:guang@localhost:3306/prisma_test"
+  ~~~js
+- 修改 schema 里的 datasource 部分并创建 model
+  ~~~js
+  generator client {
+    provider = "prisma-client-js"
+  }
+
+  datasource db {
+    provider = "mysql"
+    url      = env("DATABASE_URL")
+  }
+
+  model Department {
+    id        Int    @id @default(autoincrement())
+    name      String  @db.VarChar(20)
+    createTime DateTime @default(now())
+    updateTime DateTime @updatedAt
+    employees     Employee[]
+  }
+
+  model Employee {
+    id         Int       @id @default(autoincrement())
+    name      String     @db.VarChar(20)
+    phone     String     @db.VarChar(30)  
+
+    deaprtmentId Int
+    department     Department      @relation(fields: [deaprtmentId], references: [id])
+  }
+  ~~~
+  这里的 Department、Employee 两个 model 之间是一对多的关系。
+
+- 执行 migrate reset 重置生成数据库
+  ~~~shell
+  npx prisma migrate reset 
+  ~~~
+- 然后创建新的 migration
+  ~~~shell
+  npx prisma migrate dev --name init
+  ~~~
+
+::: tip
+这时候数据库以及外键约束就创建好了。
+:::
+
+- 创建 Service
+  ~~~shell
+  nest g service prisma --flat --no-spec
+  ~~~
+- 修改 PrismaService，继承自 PrismaClient 如此便有了 crud 的 api。
+  ~~~js
+  import { Injectable, OnModuleInit } from '@nestjs/common';
+  import { PrismaClient } from '@prisma/client';
+
+  @Injectable()
+  export class PrismaService extends PrismaClient implements OnModuleInit {
+
+      constructor() {
+          super({
+              // 设置 PrismaClient 的 log 参数，也就是打印 sql 到控制台
+              log: [
+                  {
+                      emit: 'stdout',
+                      level: 'query'
+                  }
+              ]
+          })
+      }
+      // 在 onModuleInit 的生命周期方法里调用 $connect 来连接数据库
+      async onModuleInit() {
+          await this.$connect();
+      }
+  }
+  ~~~
+- 再创建两个 service
+  ~~~shell
+  nest g service department --flat --no-spec
+  nest g service employee --flat --no-spec
+  ~~~
+- 修改 DepartmentService、EmployeeService
+  ~~~js
+  import { Inject, Injectable } from '@nestjs/common';
+  import { PrismaService } from './prisma.service';
+  import { Prisma } from '@prisma/client';
+
+  @Injectable()
+  export class DepartmentService {
+
+      @Inject(PrismaService)
+      private prisma: PrismaService;
+      // 插入数据之后，再把 id 查询出来返回。
+      async create(data: Prisma.DepartmentCreateInput) {
+          return await this.prisma.department.create({
+              data,
+              select: {
+                id: true
+              }
+          });
+      }
+  }
+  ~~~
+  ~~~js
+  import { Inject, Injectable } from '@nestjs/common';
+  import { PrismaService } from './prisma.service';
+  import { Prisma } from '@prisma/client';
+
+  @Injectable()
+  export class EmployeeService {
+
+      @Inject(PrismaService)
+      private prisma: PrismaService;
+      // 插入数据之后，再把 id 查询出来返回。
+      async create(data: Prisma.EmployeeCreateInput) {
+          return await this.prisma.employee.create({
+              data,
+              select: {
+                  id: true
+              }
+          });
+      }
+  }
+  ~~~
+- 然后在 AppController 里注入这俩 service
+  ~~~js
+  import { Controller, Get, Inject } from '@nestjs/common';
+  import { AppService } from './app.service';
+  import { DepartmentService } from './department.service';
+  import { EmployeeService } from './employee.service';
+
+  @Controller()
+  export class AppController {
+    constructor(private readonly appService: AppService) {}
+
+    @Get()
+    getHello(): string {
+      return this.appService.getHello();
+    }
+
+    @Inject(DepartmentService)
+    private departmentService: DepartmentService;
+
+    @Inject(EmployeeService)
+    private employeeService: EmployeeService;
+
+    @Get('create')
+    async create() {
+      const department = await this.departmentService.create({
+        name: '技术部'
+      });
+      await this.employeeService.create({
+        name: '张三',
+        phone: '13222222222',
+        department: {
+          connect: {
+            id: department.id // 通过id关联
+          }
+        }
+      });
+      return 'done';
+    }
+  }
+  ~~~
 ## Nest 中使用 Redis
 - 安装 redis 包
   ~~~shell
@@ -6740,6 +6913,446 @@ bootstrap();
 </body>
 </html>
 ~~~
+## Nest 中实现短链服务
+**实现思路**：用 0、1、2、3、4、5 的递增 id 标识每个 url，把映射关系存到数据库里。在访问短链的时候从数据库中查出对应的长链接，返回 302 重定向即可。
+- 301 是永久重定向，就是重定向一次之后，下次浏览器就不会再访问短链，会直接访问长链接。
+  
+- 302 是临时重定向，下次访问短链依然会先访问短链服务，返回 302 后再重定向到长链。
+
+::: tip
+这两种都可以，301 的话，短链服务压力小，不过 302 每次都会先访问短链服务，这样可以记录链接的访问次数等数据。
+:::
+
+每个 url 的 id 我们会用 Base64 或者 Base62 编码：
+- base64：是 26 个大写字母、26 个小写字母、10 个数字、2 个特殊字符，一共 64 个字符。
+- base62：则是去掉了两个特殊字符，一共 62 个字符。
+
+::: tip
+因为 base62 可以使用更少的字符表示相同的数值，另外它使用了更多的字符集合，提供了一定程度的安全性，使得短链接更难以被猜测或穷举出来。所以做短链服务使用 base62 比较多。
+:::
+
+::: tip
+- 用递增 id + base62 作为压缩码，可以保证唯一，但是容易被人拿到其它短码，不安全。
+
+- 用 url 做 hash 之后取一部分然后 base62 做为压缩码，有碰撞的可能，不唯一。
+
+- 随机生成字符串再查表检测是否重复，可以保证唯一且不连续，但是性能不好。用提前批量生成的方式可以解决。
+:::
+
+- 创建 entity: src/entities/UniqueCode.ts
+  ~~~js
+  import { Column, Entity, PrimaryGeneratedColumn } from "typeorm";
+
+  @Entity()
+  export class UniqueCode {
+      
+      @PrimaryGeneratedColumn()
+      id: number;
+
+      @Column({
+          length: 10,
+          comment: '压缩码'
+      })
+      code: string;
+
+      @Column({
+          comment: '状态, 0 未使用、1 已使用'
+      })
+      status: number;
+  }
+  ~~~
+- 生成 server 类
+  ~~~shell
+  nest g service unique-code --flat --no-spec
+  # --flat 是不生成目录 --no-spec 是不生成测试代码
+  ~~~
+- 创建 src/utils.ts
+  ~~~js
+  import * as  base62 from "base62/lib/ascii";
+
+  export function generateRandomStr(len: number) {
+      let str = '';
+      for(let i = 0; i < len; i++) {
+          const num = Math.floor(Math.random() * 62);
+          str += base62.encode(num);
+      }
+      return str;
+  }
+  ~~~
+- 安装 base62 的包
+  ~~~shell
+  npm install base62
+  ~~~
+- 在 UniqueCodeService 中集成压缩码方法
+  ~~~js
+  import { Injectable } from '@nestjs/common';
+  import { InjectEntityManager } from '@nestjs/typeorm';
+  import { EntityManager } from 'typeorm';
+  import { generateRandomStr } from './utils';
+  import { UniqueCode } from './entities/UniqueCode';
+
+  @Injectable()
+  export class UniqueCodeService {
+
+      @InjectEntityManager()
+      private entityManager: EntityManager;
+      // 生成随机的长度为 6 的字符串，查下数据库，如果没查到，就插入数据，否则重新生成。
+      async generateCode() {
+          let str = generateRandomStr(6);
+
+          const uniqueCode = await this.entityManager.findOneBy(UniqueCode, {
+              code: str
+          });
+
+          if(!uniqueCode) {
+              const code = new UniqueCode();
+              code.code = str;
+              code.status = 0;
+
+              return await this.entityManager.insert(UniqueCode, code);
+          } else {
+              return this.generateCode();
+          }
+      }
+  }
+  ~~~
+- 安装定时任务的包
+  ~~~shell
+  npm install --save @nestjs/schedule
+  ~~~
+- 在 AppModule 中注册
+  ~~~js
+  import { ScheduleModule } form '@nestjs/schedule'
+
+  @Module({
+    imports: [
+      ScheduleModule.forRoot()
+    ]
+  })
+  ~~~
+- 加在 generateCode 上面进行声明
+  ~~~js
+  @Cron(CronExpression.EVERY_5_SECONDS)
+  ~~~
+- 创建 url 和压缩码对应关系的 entity ：src/entities/ShortLongMap.ts
+  ~~~js
+  import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn } from "typeorm";
+
+  @Entity()
+  export class ShortLongMap {
+    
+    @PrimaryGeneratedColumn()
+    id: number;
+
+    @Column({
+        length: 10,
+        comment: '压缩码'
+    })
+    shortUrl: string;
+
+    @Column({
+        length: 200,
+        comment: '原始 url'
+    })
+    longUrl: string;
+
+    @CreateDateColumn()
+    createTime: Date;
+  }
+  ~~~
+- 创建生成短链的 service 
+  ~~~shell
+  nest g service short-long-map --flat --no-spec
+  ~~~
+- 实现生成短链的方法
+  ~~~js
+  import { UniqueCodeService } from './unique-code.service';
+  import { Inject, Injectable } from '@nestjs/common';
+  import { InjectEntityManager } from '@nestjs/typeorm';
+  import { EntityManager } from 'typeorm';
+  import { ShortLongMap } from './entities/ShortLongMap';
+  import { UniqueCode } from './entities/UniqueCode';
+
+  @Injectable()
+  export class ShortLongMapService {
+
+      @InjectEntityManager()
+      private entityManager: EntityManager;
+
+      @Inject(UniqueCodeService)
+      private uniqueCodeService: UniqueCodeService;
+
+      async generate(longUrl: string) {
+          // 先从 unique-code 表里取一个压缩码来用
+          let uniqueCode = await this.entityManager.findOneBy(UniqueCode, {
+              status: 0
+          })
+          // 如果没有可用压缩码，那就生成一个
+          if(!uniqueCode) {
+              uniqueCode = await this.uniqueCodeService.generateCode();
+          }
+          const map = new ShortLongMap();
+          map.shortUrl = uniqueCode.code;
+          map.longUrl = longUrl;
+          // 在 short-long-map 表里插入这条新的短链映射
+          await this.entityManager.insert(ShortLongMap, map);
+          // 并且把用到的压缩码状态改为 1
+          await this.entityManager.update(UniqueCode, {
+              id: uniqueCode.id
+          }, {
+              status: 1
+          });
+          return uniqueCode.code;
+      }
+  }
+  ~~~
+- 在 AppController 里添加一个接口
+  ~~~js
+  import { ShortLongMapService } from './short-long-map.service';
+  import { Controller, Get, Inject, Query } from '@nestjs/common';
+  import { AppService } from './app.service';
+
+  @Controller()
+  export class AppController {
+    constructor(private readonly appService: AppService) {}
+
+    @Inject(ShortLongMapService)
+    private shortLongMapService: ShortLongMapService;
+
+    @Get()
+    getHello(): string {
+      return this.appService.getHello();
+    }
+
+    @Get('short-url')
+    async generateShortUrl(@Query('url') longUrl) {
+      return this.shortLongMapService.generate(longUrl);
+    }
+  }
+  ~~~
+- 在 service 里添加根据压缩码查询 longUrl 的方法
+  ~~~js
+  async getLongUrl(code: string) {
+    const map = await this.entityManager.findOneBy(ShortLongMap, {
+        shortUrl: code
+    });
+    if(!map) {
+        return null;
+    }
+    return map.longUrl;
+  }
+  ~~~
+- 在 AppController 里添加一个重定向的接口
+  ~~~js
+  @Get(':code')
+  @Redirect()
+  async jump(@Param('code') code) {
+      const longUrl = await this.shortLongMapService.getLongUrl(code);
+      if(!longUrl) {
+        throw new BadRequestException('短链不存在');
+      }
+      return {
+        url: longUrl,
+        statusCode: 302
+      }  
+  }
+  ~~~
+::: tip
+到这里就可以在浏览器中进行访问测试了，大功告成。
+:::
+## Nest 中实现大文件分片上传
+**分片上传流程**：前端对文件进行拆分为多个小文件，然后让它们并行上传。上传完成后通知后端进行合并。后端接收到合并的请就将这些小文件依次写入到一个空文件中并存储。
+- 前端：使用 `slice` 方法可以对 `Blob` 类型的数据按某个范围进行截取。
+  
+- 后端：`fs` 的 `createWriteStream` 方法支持指定 `start`，也就是从什么位置开始写入。
+
+**接下来进行实现**：
+- 在 AppController 添加一个路由
+  ~~~js
+  @Post('upload')
+  @UseInterceptors(FilesInterceptor('files', 20, {
+    dest: 'uploads'
+  }))
+  uploadFiles(@UploadedFiles() files: Array<Express.Multer.File>, @Body() body) {
+    // 读取请求体里的 files 文件字段传入该方法
+    console.log('body', body);
+    console.log('files', files);
+  }
+  ~~~
+- 安装 multer 包
+  ~~~shell
+  npm install -D @types/multer
+  ~~~
+- 添加 index.html 前端代码
+  ~~~html
+  <!DOCTYPE html>
+  <html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <script src="https://unpkg.com/axios@0.24.0/dist/axios.min.js"></script>
+    </head> 
+    <body>
+        <input id="fileInput" type="file"/>
+        <script>
+            const fileInput = document.querySelector('#fileInput');
+
+            const chunkSize = 20 * 1024;
+
+            fileInput.onchange =  async function () {
+
+                const file = fileInput.files[0];
+
+                console.log(file);
+
+                const chunks = [];
+                let startPos = 0;
+                while(startPos < file.size) {
+                    chunks.push(file.slice(startPos, startPos + chunkSize));
+                    startPos += chunkSize;
+                }
+                // 避免目录冲突，取一个随机字符串
+                const randomStr = Math.random().toString().slice(2,8)
+                const tasks = [];
+                chunks.map((chunk, index) => {
+                  const data = new FormData();
+                  data.set('name', randomStr + '_' + file.name + '-' + index)
+                  data.append('files', chunk);
+                  tasks.push(axios.post('http://localhost:3000/upload', data, {
+                    // 进度条
+                    onUploadProgress: function (axiosProgressEvent) {
+                      /*{
+                      loaded: number;
+                      total?: number;
+                      progress?: number; // in range [0..1]
+                      bytes: number; // how many bytes have been transferr estimated?: number; // estimated time in seconds rate?: number; // upload speed in bytes upload: true; // upload sign
+                      }*/
+                    }
+                  }));
+                })
+                // 并行进行上传
+                await Promise.all(tasks);
+                // 发送合并小文件的请求
+                axios.get('http://localhost:3000/merge?name=' + randomStr + '_' + file.name);
+            }
+        </script>
+    </body>
+    </html>
+  ~~~
+  ::: tip
+  这时前端进行文件上传，后端会收到多个小文件。
+  :::
+- 将文件移到单独的目录中
+  ~~~js
+  @Post('upload')
+  @UseInterceptors(FilesInterceptor('files', 20, {
+    dest: 'uploads'
+  }))
+  uploadFiles(@UploadedFiles() files: Array<Express.Multer.File>, @Body() body: { name: string }) {
+    console.log('body', body);
+    console.log('files', files);
+    // 用正则匹配出文件名
+    const fileName = body.name.match(/(.+)\-\d+$/)[1];
+    // 在 uploads 下创建 chunks_文件名 的目录
+    const chunkDir = 'uploads/chunks_'+ fileName;
+    // 同步检查目录是否存在
+    if(!fs.existsSync(chunkDir)){
+      // 不存在则创建此目录
+      fs.mkdirSync(chunkDir);
+    }
+    // 同步的将文件拷贝到指定目录中
+    fs.cpSync(files[0].path, chunkDir + '/' + body.name);
+    // 同步的将源文件删除
+    fs.rmSync(files[0].path);
+  }
+  ~~~
+- 添加一个 merge 的接口
+  ~~~js
+  @Get('merge')
+  merge(@Query('name') name: string) {
+      // 接收文件名
+      const chunkDir = 'uploads/chunks_'+ name;
+      // 同步查找对应的 chunks 目录
+      const files = fs.readdirSync(chunkDir);
+      // 下面是按照不同的 start 位置写入到同一个文件里
+      let startPos = 0;
+      let count = 0;
+      // 遍历所有的分块文件
+      files.map(file => {
+        // 获取当前分块文件的路径
+        const filePath = chunkDir + '/' + file;
+        // 创建一个可读流(fs.ReadStream)，用于读取当前分块文件的数据
+        const stream = fs.createReadStream(filePath);
+        // 将可读流的数据导入到可写流中
+        stream.pipe(fs.createWriteStream('uploads/' + name, {
+          // 指定写入目标文件的起始位置
+          start: startPos
+          // 导入完成后的事件
+        })).on('finish', () => {
+          // 累加已经完成上传合并的文件块数量
+          count ++;
+          // 检查是否已经上传了所有的文件块
+          if(count === files.length) {
+            // 如果所有文件块都已经上传合并完成，则删除分块文件所在的目录(chunkDir)
+            fs.rm(chunkDir, {
+              // 指定删除目录时递归删除所有子目录和文件
+              recursive: true
+            }, () =>{});
+          }
+        })
+        // 同步获取当前分块文件的大小，并将它累加到startPos变量中，用于确定下一个分块文件的起始位置。
+        startPos += fs.statSync(filePath).size;
+      })
+  }
+  ~~~
+
+
+
+
+
+
+
+
+
+
+## Nest 之 Compodoc 可视化依赖分析
+
+[Compodoc文档](https://compodoc.app/guides/options.html)
+
+`Nest` 项目会有很多模块，模块之间相互依赖，模块内有 `controller`、`service` 等。
+
+当项目复杂之后，模块之间的关系错综复杂。我们可以用 `compodoc` 生成一份文档，把依赖关系可视化。
+
+`compodoc` 本来是给 `angular` 项目生成项目文档的，但是因为 `angular` 和 `nest` 项目结构类似，所以也支持了 `nest`。
+
+- 安装 compodoc
+  ~~~shell
+  npm install --save-dev @compodoc/compodoc
+  ~~~
+- 生成一份文档
+  ~~~shell
+  npx @compodoc/compodoc -p tsconfig.json -s -o
+  #-p 是指定 tsconfig 文件
+  #-s 是启动静态服务器
+  #-o 是打开浏览器
+  ~~~
+- `--theme` 可以指定主题，一共有 `gitbook`、`aravel`、`original`、`material`、`postmark`、`readthedocs`、`stripe`、`vagrant` 这 8 个主题
+  ~~~shell
+  npx @compodoc/compodoc -p tsconfig.json -s -o --theme postmark
+  ~~~
+- compodoc 同样支持配置文件，项目下添加 .compodoc.json 的文件
+  ~~~json
+  {
+    "port": 8888,
+    "theme": "postmark"
+  }
+  ~~~
+- 再执行命令
+  ~~~shell
+  npx @compodoc/compodoc -p tsconfig.json -s -o -c .compodoc.json
+  ~~~
 ## 会议室预订系统
 首先，用户分为普通用户和管理员两种，各自有不同的功能：
 - **普通用户**：可以注册，注册的时候会发邮件来验证身份，注册之后就可以登录系统。
