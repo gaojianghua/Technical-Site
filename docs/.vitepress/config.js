@@ -116,6 +116,7 @@ function sidebarGuide() {
                 { text: 'Small Program', link: '/guide/small-program' },
                 { text: 'React Native', link: '/guide/react-native' },
                 { text: 'Flutter', link: '/guide/flutter' },
+                { text: 'Flutter Advanced', link: '/guide/flutter-advanced' },
                 { text: 'Taro', link: '/guide/taro' },
             ],
         },
