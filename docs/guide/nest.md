@@ -7308,7 +7308,85 @@ bootstrap();
   }
   ~~~
 
+## Nest 中使用 OSS 对象存储
+- 安装 `ali-oss`:
+  ~~~shell
+  npm install ali-oss
+  ~~~
+- 使用
+  ~~~js
+  const OSS = require('ali-oss')
+  // 参数都在阿里云后台中可以找到
+  const client = new OSS({
+      region: '', // 地域节点
+      bucket: '', // 存储桶名称
+      accessKeyId: '',  // 访问密钥ID
+      accessKeySecret: '',  // 访问秘钥
+  });
+  // 上传
+  async function put () {
+    try {
+      // 第一个参数是存储到oss中的名称，第二个是本地图片的路径
+      const result = await client.put('logo.png', './logo.png');
+      console.log(result);
+    } catch (e) {
+      console.log(e);
+    }
+  }
+  // 下载
+  async function get () {
+    // 第一个参数是存储在oss中的图片名称，第二个是下载到本地后的图片名称
+    await client.get('logo.png', 'main.png')
+  }
 
+  put();
+  get();
+  ~~~
+
+**使用 minio 搭建私有化对象存储服务**
+
+
+
+
+
+
+
+
+**操作 minio 的上传下载**
+- 安装 minio：
+  ~~~shell
+  npm install minio
+  ~~~
+- 使用
+  ~~~js
+  const Minio = require('minio')
+  const fs = require('fs');
+
+  var minioClient = new Minio.Client({
+    endPoint: 'localhost',
+    port: 9000,
+    useSSL: false,
+    accessKey: '',
+    secretKey: '',
+  })
+
+  function put() {
+      minioClient.fPutObject('aaa', 'hello.png', './smile.png', function (err, etag) {
+          if (err) return console.log(err)
+          console.log('上传成功');
+      });
+  }
+
+  function get() {
+      minioClient.getObject('aaa', 'hello.png', (err, stream) => {
+          if (err) return console.log(err)
+          stream.pipe(fs.createWriteStream('./xxx.png'));
+      });
+  }
+
+  get();
+  put();
+  ~~~
 
 
 
