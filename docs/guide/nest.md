@@ -7345,6 +7345,7 @@ bootstrap();
 
 **使用 minio 搭建私有化对象存储服务**
 
+[官方文档](https://min.io/docs/minio/linux/developers/javascript/minio-javascript.html)
 
 
 
