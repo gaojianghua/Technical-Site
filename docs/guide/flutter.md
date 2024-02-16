@@ -2,7 +2,7 @@
  * @Author: 高江华 g598670138@163.com
  * @Date: 2023-04-11 16:57:52
  * @LastEditors: 高江华
- * @LastEditTime: 2023-12-16 10:15:53
+ * @LastEditTime: 2024-02-02 17:44:50
  * @Description: file content
 -->
 # Flutter
@@ -5750,6 +5750,43 @@ class MyApp extends StatelessWidget {
 我们创建了一个名为 `counterProvider` 的 `Provider`，它提供一个整数值并初始化为 `0`。在 `main()` 方法中，我们用 `ProviderScope` 包裹整个应用程序，以便在 `Flutter` 组件树中使用 `Provider`。
 
 在 `MyApp` 组件的 `build` 方法中，我们使用 `Consumer` 将 `counterProvider` 订阅到 `UI` 中，并在屏幕上显示计数器的值。当用户点击浮动操作按钮时，我们使用 `context.read` 方法直接访问 `counterProvider` 并增加其值。
+
+
+### Bloc
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 ## GetX
