@@ -2,7 +2,7 @@
  * @Author: 高江华 g598670138@163.com
  * @Date: 2023-06-29 11:45:51
  * @LastEditors: 高江华
- * @LastEditTime: 2024-02-18 15:09:46
+ * @LastEditTime: 2024-02-19 14:14:29
  * @Description: file content
 -->
 # Electron
@@ -616,7 +616,7 @@ console.log(clipboard.readText('selection'));
 ### Node.js 调用原生能力
 虽然 `Electron` 已经为我们提供了大量的跨平台的 `Native APIs`，但是依然不能涵盖到桌面端应用开发的方方面面，接下来的内容将会简要介绍 `node` 调用原生能力的几种方式和方法。
 
-#### 1. 使用 C++ 构建 node 原生模块
+#### 1. 使用 `C++` 构建 node 原生模块
 作为前端开发者而言，都或多或少依赖一些 `native addon`。在前端中比较常见的比如 `node-sass`、 `node-canvas`、 `sharp` 等。在介绍使用 `C++` 构建原生模块前，我们需要先储备一些基础知识。
 
 ##### 1.1 原生模块的本质
@@ -635,7 +635,7 @@ console.log(clipboard.readText('selection'));
 
 > 更多在 `Windows` 下安装 `node-gyp` 构建环境的教程可以参考这篇文章：[windows 下 node-gyp 的环境配置](https://juejin.cn/post/7118412140582535175)。
 
-##### 1.3 编写 C++ 扩展的几种方式
+##### 1.3 编写 `C++` 扩展的几种方式
 **NAN（Native Abstractions for Node.js）**
 
 [NAN](https://github.com/nodejs/nan)（`Node.js` 的原生抽象）是一个库，提供了一组跨不同版本的 `Node.js API` 的抽象层。它的目标是帮助开发者编写跨版本兼容的 `Node.js C++` 插件。由于 `Node.js` 的 `API` 在不同版本之间可能会变化，`NAN` 提供了一种方式来编写稳定的跨版本插件。
@@ -709,7 +709,7 @@ console.log(clipboard.readText('selection'));
 }
 ~~~
 接下来编写 `hello.cc` 文件：
-~~~c++
+~~~txt
 #include <napi.h>
 
 Napi::String Method(const Napi::CallbackInfo& info) {
@@ -1044,26 +1044,43 @@ const appIcon = new Tray(path.join(__static, icon));
 ### 应用程序上的差异
 在 `macOS` 中，未签名的应用可能会面临一些安全提示和限制。其中一个问题是在安装前需要用户确认并授权运行该应用。这是 macOS 的安全特性，用以确保用户知晓并授权运行未签名的应用程序，关于如何对 `Electron` 应用程序签名和公正可以在 **《通用篇：Electron 应用打包》** 章节详细阅读。
 
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/Electron/4406d6d770444b62867eff8dd2c2508a.webp)
 
+另一种处理方式是，在终端运行以下指令：
+~~~bash
+sudo spctl --master-disable // 关闭限制，安装前运行一次即可
+~~~
+另一个则是在 `Mac M1、M2` 系统架构中，安装后打开会提示文件已损坏。
 
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/Electron/0507e4e22b684821aa8a00c861408afd.webp)
 
+该问题的处理方案并不麻烦。
+~~~bash
+sudo xattr -r -d com.apple.quarantine /Applications/[your app name].app
+~~~
 
+### 申请管理员权限
+在 `Windows` 中，如果软件需要管理员权限运行，只需要在打包时声明 `requestedExecutionLevel` 为 `requireAdministrator`。这将弹出一个 `UAC` 提示框，请求用户授予管理员权限运行软件。
+~~~js
+// 打包配置
+electronBuilder: {
+  win: {
+    requestedExecutionLevel: 'requireAdministrator',
+  }
+}
+~~~
+而在 `macOS` 和 `Linux` 下，如果需要软件以 `root` 权限运行，需要使用 `sudo` 命令来获取权限。具体来说，可以使用以下命令运行软件，并输入 `sudo` 密码：
+~~~shell
+sudo /path/to/your/app/executable
+~~~
+当然这种方式不是很好，推荐在需要输入指令时再调用 `sudo` 密码确认框。当然，如果你需要单独申请 `Mac` 上的特定权限，比如 `文件夹访问`、`屏幕录制` 权限等等，也可以试试这个库：[node-mac-permissions](https://github.com/codebytere/node-mac-permissions)。
 
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/Electron/cd72d5b3aef24df791ec3d35372b573a.webp)
 
+## 基础篇：Electron 菜单和托盘
+菜单、托盘是桌面端应用必备的功能之一，我们通常会在菜单上配置应用常用的：偏好设置、显示隐藏、打开文件等功能，在托盘内设置：退出、重启、帮助等辅助性功能，帮助用户方便快捷地控制应用的一些系统功能。系统托盘实际上也是一个菜单，通过点击鼠标触发。
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+### 应用菜单（Menu）
 
 
 
