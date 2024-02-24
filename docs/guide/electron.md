@@ -2,7 +2,7 @@
  * @Author: 高江华 g598670138@163.com
  * @Date: 2023-06-29 11:45:51
  * @LastEditors: 高江华
- * @LastEditTime: 2024-02-19 14:14:29
+ * @LastEditTime: 2024-02-24 10:25:43
  * @Description: file content
 -->
 # Electron
@@ -1081,22 +1081,71 @@ sudo /path/to/your/app/executable
 菜单、托盘是桌面端应用必备的功能之一，我们通常会在菜单上配置应用常用的：偏好设置、显示隐藏、打开文件等功能，在托盘内设置：退出、重启、帮助等辅助性功能，帮助用户方便快捷地控制应用的一些系统功能。系统托盘实际上也是一个菜单，通过点击鼠标触发。
 
 ### 应用菜单（Menu）
+`Electron` 里的菜单大体上分为三类：应用菜单、上下文菜单和 `Dock` 菜单（仅针对 `OSX` 系统）。这里以 `VSCode` 为例，来分别介绍这几种菜单的含义。打开 `VSCode` 编辑器，可以通过下图，很清晰地发现 3 个菜单所处的位置。
 
+**MacOS：**
 
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/Electron/545bed746d1f4a1790ece84245003960.webp)
 
+**Windows：**
 
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/Electron/8ebde811286c4a678c5001a291e3729.webp)
 
+#### 1. 应用内菜单
+原生应用菜单可以理解为应用窗口菜单，在 `MacOS` 上，选中应用后，应用内菜单出现在桌面的左上方。在 `Windows` 和 `Linux` 上，`Menu` 将会被设置成窗口顶部菜单。在 `Electron` 中，通常会使用 `Menu.setApplicationMenu(menu)` 函数来设置应用内菜单：
+~~~js
+import { Menu } from 'electron'
 
+function createMenu () {
+  const template = [
+    {
+      label: '菜单一',
+      submenu: [
+        {
+          label: '功能一'
+        },
+        {
+          label: '功能二'
+        }
+      ]
+    },
+    {
+      label: '菜单二',
+      submenu: [
+        {
+          label: '功能一'
+        },
+        {
+          label: '功能二'
+        }
+      ]
+    }
+  ];
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+}
+~~~
+通过以上代码设置完成一个应用菜单后，在 `macOS` 下的效果如下：
 
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/Electron/4774a347265c49e1861ed9aa413f33e4.webp)
 
+可以看到第一个菜单的标题是 `Electron` 而不是我们设置的标题 菜单一。这是因为：在 `macOS` 中应用程序菜单的第一个项目的标签总是你的应用程序的名字，无论你设置什么标签。如果你想展示成自己的标题，`Electron` 官方给了一种修改 Info.plist 的方法：[About Information Property List Files](https://developer.apple.com/library/ios/documentation/general/Reference/InfoPlistKeyReference/Articles/AboutInformationPropertyListFiles.html)。除此之外，你也可以重新修改一下 `template` 的格式：
 
-
-
-
-
-
-
-
+~~~js
+if (process.platform === 'darwin') {
+  template.unshift({
+    label: app.getName(),
+    submenu: [
+      {
+        label: 'Quit',
+        click() {
+          app.quit();
+        }
+      }
+    ]
+  });
+}
+~~~
 
 
 
