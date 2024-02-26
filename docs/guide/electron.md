@@ -2,7 +2,7 @@
  * @Author: 高江华 g598670138@163.com
  * @Date: 2023-06-29 11:45:51
  * @LastEditors: 高江华
- * @LastEditTime: 2024-02-24 10:25:43
+ * @LastEditTime: 2024-02-26 15:22:34
  * @Description: file content
 -->
 # Electron
@@ -1146,32 +1146,106 @@ if (process.platform === 'darwin') {
   });
 }
 ~~~
+这样，其实我们就相当于设置了三个菜单，同时，菜单一和菜单二都可以展示出来：
 
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/Electron/f9e07d7914ec4968bf0114f20627127f.webp)
 
+上述代码中，对于 `template` [菜单项](https://www.electronjs.org/zh/docs/latest/api/menu-item)字段内有很多配置项，具体的字段也可以直接阅读官方文档，针对每个字段都有详细的解释。
 
+#### 2. 上下文菜单
+上下文菜单（`context menu`）就是我们通常说的右键菜单，需要注意的是：上下文菜单，需要在渲染进程中进行实现，可以通过 `IPC` 发送所需的信息到主进程，并让主进程代替渲染进程显示菜单：
+~~~js
+// 主进程 main/index.js
+ipcMain.on('show-context-menu', (event) => {
+  const template = [
+    {
+      label: '菜单一',
+      click: () => {
+        // 发送点击菜单一事件到渲染进程
+        event.sender.send('context-menu-command', 'menu-item-1')
+      }
+    },
+    { type: 'separator' },
+    {
+      label: '菜单二',
+      type: 'checkbox',
+      checked: true
+    }
+  ]
+  const menu = Menu.buildFromTemplate(template)
+  menu.popup({
+    window: BrowserWindow.fromWebContents(event.sender)
+  })
+})
+~~~
+~~~js
+// 渲染进程 renderer/main.js
+window.addEventListener("contextmenu", (e) => {
+  e.preventDefault();
+  electron.ipcRenderer.send("show-context-menu");
+});
+electron.ipcRenderer.on("context-menu-command", (e, command) => {
+  // todo
+});
+~~~
 
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/Electron/0a053ff5cbd846fcbb323ee8363af9cc.webp)
 
+#### 3. Dock 菜单（仅 MacOS 可用）
+`Dock` 的菜单实现也是在主进程中，可以通过 `app.dock.setMenu` 这个 `API` 来直接创建：
+~~~js
+// main.js
+const createDockMenu = () => {
+  const dockTempalte = [
+    {
+      label: '菜单一',
+      click () {
+        console.log('New Window');
+      }
+    }, {
+      label: '菜单二',
+      submenu: [
+        { label: 'Basic' },
+        { label: 'Pro' }
+      ]
+    },
+    {
+      label: '其他...'
+    }
+  ];
 
+  const dockMenu = Menu.buildFromTemplate(dockTempalte);
+  app.dock.setMenu(dockMenu);
+}
+~~~
 
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/Electron/5ad9b74fb0d848ff9fc5346e12bcc27a.webp)
 
+### 应用托盘（Tray）
+实现应用托盘主要依托于 `Electron` 的 [Tray](https://www.electronjs.org/zh/docs/latest/api/tray) 模块，在 `MacOS` 和 `Ubuntu`，托盘将位于屏幕右上角上，靠近你的电池和 `wifi` 图标。在 `Windows` 上，托盘通常位于右下角。
 
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/Electron/43764716d69b405ab6b58d90dc35a586.webp) ![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/Electron/fa14033646ca4fe08aa2488e2a97a5f3.webp)
 
+我们来看一下 `Windows` 下一个简单的应用托盘的实现方式：
+~~~js
+// 主进程
+import {app, Menu, Tray} from 'electron';
 
+let tray = new Tray('public/icon.ico');
+const contextMenu = Menu.buildFromTemplate([
+  {
+    label: '退出',
+    click: function(){
+      app.quit();
+    }
+  }
+]);
+tray.setToolTip('应用标题');
+tray.setContextMenu(contextMenu);
+~~~
+在 `Rubick` 中，应用托盘实现的源码见: [Tray](https://github.com/rubickCenter/rubick/blob/master/src/main/common/tray.ts)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+## 实战篇：开发环境搭建
 
 
 
