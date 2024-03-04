@@ -2,7 +2,7 @@
  * @Author: 高江华 g598670138@163.com
  * @Date: 2023-06-29 11:45:51
  * @LastEditors: 高江华
- * @LastEditTime: 2024-02-26 15:22:34
+ * @LastEditTime: 2024-03-04 17:03:01
  * @Description: file content
 -->
 # Electron
@@ -1246,6 +1246,115 @@ tray.setContextMenu(contextMenu);
 在 `Rubick` 中，应用托盘实现的源码见: [Tray](https://github.com/rubickCenter/rubick/blob/master/src/main/common/tray.ts)
 
 ## 实战篇：开发环境搭建
+`electron-vite` 是一个新型 `Electron` 开发构建工具，旨在为 `Electron` 提供更快、更精简的开发体验，它是基于 `vite` 构建 `Electron` 应用的。
 
+我们可以使用 `@quick-start/electron` 工具快速创建一个 `electron-vite` 的应用：
+~~~bash
+npm create @quick-start/electron
+~~~
+然后按照提示进行下一步即可：
+~~~bash
+✔ Project name: … <electron-app>
+✔ Select a framework: › vue
+✔ Add TypeScript? … No / Yes
+✔ Add Electron updater plugin? … No / Yes
+✔ Enable Electron download mirror proxy? … No / Yes
+
+Scaffolding project in ./<electron-app>...
+Done.
+~~~
+安装依赖：
+~~~bash
+npm i
+~~~
+启动:
+~~~bash
+npm run dev
+~~~
+
+### 主进程启动项目
+创建的项目需要通过唯一的主进程进行应用程序的启动。
+
+主进程的第一步操作就是监听 `app ready` 事件，来创建窗口：
+~~~js
+// main/index.js
+app.whenReady().then(() => {
+  // 创建窗口。
+  createWindow()
+})
+~~~
+接下来，我们需要通过 `createWindow` 函数构造一个简单的窗口：
+~~~js
+// main/index.js
+function createWindow() {
+  // 创建窗口
+  const mainWindow = new BrowserWindow({
+    width: 900,
+    height: 670,
+    show: false,
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false
+    }
+  })
+
+  mainWindow.on('ready-to-show', () => {
+    mainWindow.show()
+  })
+
+  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+   // 开发环境，通过 loadURL 加载 devServer
+   mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+  } else {
+    // 生产环境，加载构建后的文件
+    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+  }
+}
+~~~
+需要注意的是，我们在窗口初始化时，指定了 `show: false` 的参数，意味着窗口创建完成后不会立即显示。然后通过监听 `mainWindow.on('ready-to-show')` 的事件触发后再通过 `mainWindow.show()` 方法来显示窗口。
+
+这样做是因为 `Electron` 中的 `ready-to-show` 事件表示窗口内容已经加载完成且应用程序准备好显示给用户。在等待 `ready-to-show` 事件触发后再调用 `window.show()`，可以确保用户看到的是完全加载并准备好的界面，避免了展示未完成的内容。
+
+最后，通过监听 `app.on('window-all-close')` 事件，来处理非 `macOS` 下的所有窗口关闭后的逻辑：退出整个 `electron` 应用。
+~~~js
+// main/index.js
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') {
+    app.quit()
+  }
+})
+~~~
+这是因为在 `windows` 平台上，通常我们把应用的窗口都关了之后也就默认把这个应用给退出了。而如果在 `macOS` 系统上却不是这样。我们把应用的窗口关闭了，但是并非完全退出这个应用。
+
+## 实战篇：自定义窗口的拖拽和缩放
+默认情况，在构建 `Electron BrwoserWindow` 的时候，会使用系统自带的原生窗口样式，比如在 `MacOS` 下的样式：
+
+![](https://technical-site.oss-cn-hangzhou.aliyuncs.com/Electron/7c22f69a7e7f42949aef85e71d0abcbb.webp)
+
+在有些情况下，操作系统的原生窗口并不能符合我们的一些视觉和交互需求。所以，在使用 `electron` 创建桌面应用的时候，有时候我们希望能完全掌控窗口的样式，而隐藏掉系统提供的窗口边框和标题栏等。这个时候就需要用到自定义窗口。
+
+### 无边框窗口的拖拽
+无边框窗口是不带外壳（包括窗口边框、工具栏等），只含有网页内容的窗口。要创建无边框窗口，需在 `BrowserWindow` 的构造中将 `frame` 参数设置为 `false`：
+~~~js
+// main.js
+const { BrowserWindow } = require('electron')
+const win = new BrowserWindow({ frame: false })
+~~~
+默认情况下，无边框窗口是不可以拖拽的。使用 electron-drag 库实现拖拽。
+
+[electron-drag](https://github.com/kapetan/electron-drag) 模块使用 `osx-mouse` 或 `win-mouse` 模块来跟踪整个屏幕上的鼠标位置，从而实现了一致的窗口拖动，同时受影响的元素仍能够接收 `DOM` 事件。使用方式也非常方便：
+~~~js
+// app.vue
+import drag from 'electron-drag-latest';
+
+const undrag = drag('#app');
+
+// 如果不需要拖拽，调用 undrag 函数
+// undrag()
+~~~
+但需要注意的是，`electron-drag` 仅支持 `macOS` 和 `windows` 操作系统，其他平台都不支持。因此，我们可以在不支持的平台上使用第二种方案来实现。
+
+> 注意：`electron-drag` 因为依赖了 `osx-mouse` 或 `win-mouse` 模块，而这两个模块都是需要进行 `C++` 额外本地编译的，所以你可能还需要用 `electron-rebuild` 进行重新编译。
 
 
